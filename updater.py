@@ -36,7 +36,7 @@ from config import APP_DIR
 
 GITHUB_OWNER = "cfunkz"             # GitHub username or org
 GITHUB_REPO = "pythonator"          # Repository name
-CURRENT_VERSION = "0.2.2"           # Must match __init__.py
+CURRENT_VERSION = "0.0.1"           # Must match __init__.py
 
 # Set to False to disable update checking entirely
 UPDATES_ENABLED = True
