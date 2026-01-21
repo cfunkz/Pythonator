@@ -4,7 +4,7 @@ import json, re, sys
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 # Paths
 def _app_dir() -> Path:
