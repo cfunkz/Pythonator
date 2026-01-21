@@ -131,16 +131,31 @@ class ProcessManager(QObject):
         self._on_finished(name, code, crashed and not user_stop)
 
     def _force_kill(self, name: str, pid: int) -> None:
-        if not (s := self._procs.get(name)) or s.process.state() == QProcess.ProcessState.NotRunning: return
+        if not (s := self._procs.get(name)) or s.process.state() == QProcess.ProcessState.NotRunning:
+            return
+
         if os.name == "nt":
             if pid:
-                try: subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, timeout=5)
-                except: pass
+                try:
+                    # Non-blocking: do NOT subprocess.run() on the UI thread
+                    QProcess.startDetached(
+                        "taskkill",
+                        ["/PID", str(pid), "/T", "/F"],
+                    )
+                except Exception:
+                    pass
+
+            # Still do Qt kill as a fallback
             s.process.kill()
-        elif pid and s.use_pgroup:
-            try: os.killpg(pid, signal.SIGKILL)
-            except: s.process.kill()
-        else: s.process.kill()
+            return
+        
+        if pid and s.use_pgroup:
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except Exception:
+                s.process.kill()
+        else:
+            s.process.kill()
 
     def _log(self, name: str, msg: str, color: str = "0") -> None:
         self._on_output(name, f"\x1b[{color}m{msg}\x1b[0m\n")
