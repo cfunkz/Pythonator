@@ -1,27 +1,12 @@
-"""
-Log buffer - In-memory ring buffer with file persistence.
-
-Design:
-- Timestamps are added when lines complete (newline received)
-- Partial lines are buffered until complete
-- File stores PLAIN TEXT (no ANSI codes) for external readability
-- ANSI codes are only added when rendering in the app
-"""
+"""Log buffer - Ring buffer with timestamps and file persistence."""
 from __future__ import annotations
-
 from collections import deque
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
-
-from config import (
-    LOGS_DIR, MAX_LOG_LINES, HISTORY_CHUNK,
-    normalize_text, strip_ansi
-)
-
+from config import LOGS_DIR, MAX_LOG_LINES, HISTORY_CHUNK, normalize, strip_ansi
 
 class LogBuffer:
-    """Ring buffer with timestamping and file persistence."""
     __slots__ = ("name", "lines", "file", "_cache", "_mtime", "_partial")
 
     def __init__(self, name: str):
@@ -34,130 +19,63 @@ class LogBuffer:
         self._partial: str = ""
 
     def append(self, text: str) -> tuple[str, str]:
-        """
-        Append raw output.
-        
-        Returns:
-            (display_text, file_text): Text with ANSI for display, plain for file
-        """
-        if not text:
-            return "", ""
-
-        text = normalize_text(text)
+        if not text: return "", ""
+        text = normalize(text)
         data = self._partial + text
         self._partial = ""
-
-        # Buffer incomplete lines until newline arrives
-        if "\n" not in data:
-            self._partial = data
-            return "", ""
-
+        if "\n" not in data: self._partial = data; return "", ""
+        
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         parts = data.splitlines(keepends=True)
-
-        # Keep trailing partial for next append
-        if parts and not parts[-1].endswith("\n"):
-            self._partial = parts.pop()
-
-        display_lines = []
-        file_lines = []
+        if parts and not parts[-1].endswith("\n"): self._partial = parts.pop()
         
+        display, file_out = [], []
         for part in parts:
             content = part.rstrip("\n")
-            plain_content = strip_ansi(content)
-            
-            # Display version with colored timestamp
-            display_line = f"[\x1b[94m{ts}\x1b[0m] {content}\n"
-            # File version without ANSI codes
-            file_line = f"[{ts}] {plain_content}\n"
-            
-            self.lines.append(display_line)
-            display_lines.append(display_line)
-            file_lines.append(file_line)
-
-        display_result = "".join(display_lines)
-        file_result = "".join(file_lines)
+            disp = f"[\x1b[94m{ts}\x1b[0m] {content}\n"
+            self.lines.append(disp)
+            display.append(disp)
+            file_out.append(f"[{ts}] {strip_ansi(content)}\n")
         
         self._cache = None
-
-        # Persist plain text to file
         try:
-            with open(self.file, "a", encoding="utf-8", newline="\n") as f:
-                f.write(file_result)
-        except OSError:
-            pass
+            with open(self.file, "a", encoding="utf-8", newline="\n") as f: f.write("".join(file_out))
+        except: pass
+        return "".join(display), "".join(file_out)
 
-        return display_result, file_result
-
-    def get_recent(self) -> str:
-        """Get buffered content (recent lines with ANSI for display)."""
-        return "".join(self.lines)
+    def get_recent(self) -> str: return "".join(self.lines)
 
     def _read_file(self) -> list[str]:
-        """Read file with mtime caching."""
-        if not self.file.exists():
-            return [line.rstrip("\n") for line in self.lines]
+        if not self.file.exists(): return [l.rstrip("\n") for l in self.lines]
         try:
             mtime = self.file.stat().st_mtime
-            if self._cache is not None and mtime == self._mtime:
-                return self._cache
-            content = self.file.read_text(encoding="utf-8", errors="replace")
-            self._cache = normalize_text(content).splitlines()
+            if self._cache and mtime == self._mtime: return self._cache
+            self._cache = normalize(self.file.read_text(encoding="utf-8", errors="replace")).splitlines()
             self._mtime = mtime
             return self._cache
-        except OSError:
-            return [line.rstrip("\n") for line in self.lines]
+        except: return [l.rstrip("\n") for l in self.lines]
 
-    def line_count(self) -> int:
-        """Total lines in file."""
-        return len(self._read_file())
+    def line_count(self) -> int: return len(self._read_file())
+
+    def _colorize(self, line: str) -> str:
+        if line.startswith("["):
+            b = line.find("]")
+            if b > 0: return f"[\x1b[94m{line[1:b]}\x1b[0m]{line[b+1:]}"
+        return line
 
     def search(self, pattern: str) -> tuple[str, int]:
-        """Case-insensitive search. Returns (text, count)."""
         p = pattern.lower()
         matches = [l for l in self._read_file() if p in l.lower()]
-        if not matches:
-            return "", 0
-        # Add color to timestamps when displaying search results
-        result = []
-        for line in matches:
-            # Colorize timestamp in search results
-            if line.startswith("["):
-                bracket_end = line.find("]")
-                if bracket_end > 0:
-                    ts = line[1:bracket_end]
-                    rest = line[bracket_end+1:]
-                    line = f"[\x1b[94m{ts}\x1b[0m]{rest}"
-            result.append(f"{line}\n")
-        return "".join(result), len(matches)
+        return ("".join(f"{self._colorize(l)}\n" for l in matches), len(matches)) if matches else ("", 0)
 
     def load_chunk(self, end: int, size: int = HISTORY_CHUNK) -> tuple[str, int]:
-        """Load history chunk ending at `end`. Returns (text, start_line)."""
         lines = self._read_file()
-        if not lines or end <= 0:
-            return "", 0
+        if not lines or end <= 0: return "", 0
         start = max(0, end - size)
         chunk = lines[start:end]
-        if not chunk:
-            return "", 0
-        
-        # Colorize timestamps for display
-        result = []
-        for line in chunk:
-            if line.startswith("["):
-                bracket_end = line.find("]")
-                if bracket_end > 0:
-                    ts = line[1:bracket_end]
-                    rest = line[bracket_end+1:]
-                    line = f"[\x1b[94m{ts}\x1b[0m]{rest}"
-            result.append(f"{line}\n")
-        return "".join(result), start
+        return ("".join(f"{self._colorize(l)}\n" for l in chunk), start) if chunk else ("", 0)
 
     def clear(self) -> None:
-        """Clear buffer and file."""
-        self.lines.clear()
-        self._cache = None
-        try:
-            self.file.write_text("", encoding="utf-8")
-        except OSError:
-            pass
+        self.lines.clear(); self._cache = None
+        try: self.file.write_text("", encoding="utf-8")
+        except: pass

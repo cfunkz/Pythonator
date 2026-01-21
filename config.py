@@ -1,64 +1,34 @@
-"""
-Configuration and data models for Pythonator.
-
-Single source of truth for paths, tuning constants, and bot configuration.
-"""
+"""Configuration, data models, and shared styles."""
 from __future__ import annotations
-
-import json
-import re
-from dataclasses import dataclass, asdict, field
-from typing import Optional
+import json, re, sys
+from dataclasses import dataclass, asdict
 from pathlib import Path
-import sys
-# =============================================================================
-# Paths - Use script directory for portability
-# =============================================================================
 
-def get_app_dir() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parent
+__version__ = "1.0.0"
 
-APP_DIR = get_app_dir()
+# Paths
+def _app_dir() -> Path:
+    return Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
+
+APP_DIR = _app_dir()
 CONFIG_FILE = APP_DIR / "bots.json"
 LOGS_DIR = APP_DIR / "logs"
 
-# =============================================================================
-# Performance Tuning
-# =============================================================================
+# Tuning
+MAX_LOG_LINES = 50_000
+FLUSH_INTERVAL_MS = 100
+STATS_INTERVAL_MS = 1000
+HISTORY_CHUNK = 5000
+KILL_TIMEOUT_MS = 500
+MAX_FLUSH_CHARS = 50_000
 
-MAX_LOG_LINES = 50_000          # Ring buffer capacity
-MAX_CONSOLE_LINES = 0           # 0 = unlimited visual lines
-FLUSH_INTERVAL_MS = 100         # Log refresh rate (100ms = 10fps)
-STATS_INTERVAL_MS = 1000        # CPU/RAM polling (1Hz)
-HISTORY_CHUNK = 5_000           # Lines per "Load Older" click
-KILL_TIMEOUT_MS = 500           # Grace period before SIGKILL
-MAX_FLUSH_CHARS = 50_000        # Limit chars per flush to prevent freeze
-
-# =============================================================================
-# ANSI Handling
-# =============================================================================
-
-ANSI_ESCAPE_PATTERN = re.compile(r'\x1b\[[0-9;]*[A-Za-z]')
-
-
-def strip_ansi(text: str) -> str:
-    """Remove all ANSI escape sequences from text."""
-    return ANSI_ESCAPE_PATTERN.sub('', text)
-
-
-def normalize_text(text: str) -> str:
-    """Normalize line endings and strip null bytes."""
-    return text.replace("\x00", "").replace("\r\n", "\n").replace("\r", "\n")
-
-# =============================================================================
-# Data Model
-# =============================================================================
+# ANSI
+ANSI_RE = re.compile(r'\x1b\[[0-9;]*[A-Za-z]')
+strip_ansi = lambda t: ANSI_RE.sub('', t)
+normalize = lambda t: t.replace("\x00", "").replace("\r\n", "\n").replace("\r", "\n")
 
 @dataclass
 class Bot:
-    """Bot configuration with optional custom Python interpreter."""
     name: str
     entry: str = ""
     reqs: str = ""
@@ -66,25 +36,32 @@ class Bot:
     custom_cmd: bool = False
     python_path: str = ""
 
-
 def load_config() -> dict[str, Bot]:
-    """Load bots from JSON. Returns empty dict on error."""
-    if not CONFIG_FILE.exists():
-        return {}
+    if not CONFIG_FILE.exists(): return {}
     try:
         data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        defaults = {"custom_cmd": False, "python_path": ""}
-        return {name: Bot(**{**defaults, **cfg}) for name, cfg in data.items()}
-    except (json.JSONDecodeError, TypeError, KeyError):
-        return {}
-
+        return {n: Bot(**{**{"custom_cmd": False, "python_path": ""}, **c}) for n, c in data.items()}
+    except: return {}
 
 def save_config(bots: dict[str, Bot]) -> None:
-    """Persist bots to JSON."""
-    try:
-        CONFIG_FILE.write_text(
-            json.dumps({n: asdict(b) for n, b in bots.items()}, indent=2),
-            encoding="utf-8"
-        )
-    except OSError:
-        pass
+    try: CONFIG_FILE.write_text(json.dumps({n: asdict(b) for n, b in bots.items()}, indent=2), encoding="utf-8")
+    except: pass
+
+# Shared styles
+STYLE = """
+QToolTip { background: #252525; color: #ddd; border: 1px solid #444; padding: 4px; border-radius: 2px; }
+QScrollBar:vertical { background: #1a1a1a; width: 12px; }
+QScrollBar::handle:vertical { background: #404040; min-height: 20px; border-radius: 4px; margin: 2px; }
+QScrollBar::handle:vertical:hover { background: #505050; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+QScrollBar:horizontal { background: #1a1a1a; height: 12px; }
+QScrollBar::handle:horizontal { background: #404040; min-width: 20px; border-radius: 4px; margin: 2px; }
+QScrollBar::handle:horizontal:hover { background: #505050; }
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
+"""
+BTN = """QPushButton { padding: 4px 10px; border: 1px solid #333; border-radius: 2px; background: #252525; }
+QPushButton:hover { background: #303030; border-color: #444; }
+QPushButton:pressed { background: #202020; }
+QPushButton:disabled { color: #555; background: #1a1a1a; }"""
+INPUT = """QLineEdit, QPlainTextEdit { padding: 4px 8px; border: 1px solid #333; border-radius: 2px; background: #1a1a1a; }
+QLineEdit:focus, QPlainTextEdit:focus { border-color: #4688d8; }"""
