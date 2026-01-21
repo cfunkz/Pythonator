@@ -28,26 +28,6 @@ At its core, Pythonator is a **local Python process manager with a GUI**.
 
 ---
 
-## Table of Contents
-
-**Sections**
-[Screenshots](#screenshots) ·
-[Capabilities](#capabilities) ·
-[What it does](#what-it-does) ·
-[Why it exists](#why-it-exists) ·
-[File structure](#file-structure) ·
-[Requirements](#requirements)
-
-**Running the application**
-[Run from source](#option-1-run-from-source-any-platform) ·
-[Windows executable](#option-2-windows-executable-no-python-required-for-the-app-itself)
-
-**Other**
-[Platform notes](#platform-notes) ·
-[Typical workflow](#typical-workflow)
-
----
-
 ## Screenshots
 
 <p align="center">
