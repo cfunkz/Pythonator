@@ -12,7 +12,6 @@
 
 <p align="center" style="margin-top: 12px;">
   <a href="https://ko-fi.com/cfunkz81112">
-    <img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support Pythonator on Ko-fi" height="48">
     <br><strong>Buy me a coffee ☕</strong>
   </a>
 </p>
