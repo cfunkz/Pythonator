@@ -91,12 +91,10 @@ It’s especially useful for:
 ### How to run it
 
 ```bash
-git clone <your-repo-url>
-cd <your-repo-folder>
+git clone https://github.com/cfunkz/Pythonator.git
+cd Pythonator
 python app.py
 ```
-
-No installer, no magic — just run it.
 
 ---
 
