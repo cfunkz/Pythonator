@@ -5,7 +5,7 @@ It is designed for developers who want predictable process control, readable log
 
 At its core, Pythonator is a **local Python process manager with a GUI**.
 
-<p align="left">
+<p align="center">
   <img alt="Python" src="https://img.shields.io/badge/Python-3.13%2B-blue" />
   <img alt="PyQt6" src="https://img.shields.io/badge/UI-PyQt6-41CD52" />
   <img alt="License" src="https://img.shields.io/badge/License-MIT-black" />
