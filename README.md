@@ -12,7 +12,7 @@
 
 <p align="center" style="margin-top: 12px;">
   <a href="https://ko-fi.com/cfunkz81112">
-    <br><strong>Buy me a coffee ☕</strong>
+    <strong>Buy me a coffee ☕</strong>
   </a>
 </p>
 
