@@ -30,17 +30,31 @@ At its core, Pythonator is a **local Python process manager with a GUI**.
 
 ## Table of Contents
 
-- [Screenshots](#screenshots)
-- [Capabilities](#capabilities)
-- [What it does](#what-it-does)
-- [Why it exists](#why-it-exists)
-- [File structure](#file-structure)
-- [Requirements](#requirements)
-- [Running the application](#running-the-application)
-  - [Option 1: Run from source (any platform)](#option-1-run-from-source-any-platform)
-  - [Option 2: Windows executable (no Python required for the app itself)](#option-2-windows-executable-no-python-required-for-the-app-itself)
-- [Platform notes](#platform-notes)
-- [Typical workflow](#typical-workflow)
+<ul>
+  <li><a href="#screenshots">Screenshots</a></li>
+  <li><a href="#capabilities">Capabilities</a></li>
+  <li><a href="#what-it-does">What it does</a></li>
+  <li><a href="#why-it-exists">Why it exists</a></li>
+  <li><a href="#file-structure">File structure</a></li>
+  <li><a href="#requirements">Requirements</a></li>
+  <li>
+    <a href="#running-the-application">Running the application</a>
+    <ul>
+      <li>
+        <a href="#option-1-run-from-source-any-platform">
+          Option 1: Run from source (any platform)
+        </a>
+      </li>
+      <li>
+        <a href="#option-2-windows-executable-no-python-required-for-the-app-itself">
+          Option 2: Windows executable (no Python required for the app itself)
+        </a>
+      </li>
+    </ul>
+  </li>
+  <li><a href="#platform-notes">Platform notes</a></li>
+  <li><a href="#typical-workflow">Typical workflow</a></li>
+</ul>
 
 ---
 
