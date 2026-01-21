@@ -1,4 +1,4 @@
-<p align="left">
+<p align="center">
   <img alt="Python" src="https://img.shields.io/badge/Python-3.13%2B-blue" />
   <img alt="PyQt6" src="https://img.shields.io/badge/UI-PyQt6-41CD52" />
   <img alt="License" src="https://img.shields.io/badge/License-MIT-black" />
@@ -13,7 +13,6 @@
 <p align="center" style="margin-top: 12px;">
   <a href="https://ko-fi.com/cfunkz81112">
     <img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support Pythonator on Ko-fi" height="48">
-    <br><strong>Buy me a coffee ☕</strong>
   </a>
 </p>
 # Pythonator
