@@ -149,7 +149,7 @@ For Windows users, a prebuilt executable is available.
 3. Extract it
 4. Run `Pythonator.exe`
 
-No Python installation is required **to run the application itself**.
+No Python environment is required **to run the application itself**.
 
 > ⚠️ Note:
 > To run Python scripts *inside* Pythonator, you will still need a Python installation or a configured Python interpreter path.
