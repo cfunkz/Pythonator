@@ -14,7 +14,7 @@ Think of it as a local “script runner” with a GUI.
 
 ## Screenshots
 <p align="center">
-  <img src="screenshots/main.png" alt="Pythonator - Main window" width="92%">
+  <img src="screenshots/image.png" alt="Pythonator - Main window" width="92%">
 </p>
 
 <p align="center">
