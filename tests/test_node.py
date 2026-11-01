@@ -7,6 +7,7 @@ import os
 import shutil
 from pathlib import Path
 
+import psutil
 import pytest
 
 from pythonator.core.launch import (
@@ -201,8 +202,18 @@ def test_npm_run_stops_with_its_whole_tree(via: str, tmp_path: Path, qapp: objec
     runner = svc.runner if via == "service" else svc.task
     assert runner is not None
     tree = _process_tree(runner.pid)
-    assert any("node" in p.name().lower() for p in tree[1:]), [p.name() for p in tree]
+    assert any(_is_node(p) for p in tree[1:]), [p.name() for p in tree]
     sup.stop(svc.id)
     assert wait_until(lambda: svc.task is None and not svc.status.active, timeout=20, qt=True), text()
     assert wait_until(lambda: not _alive(tree), timeout=10), f"left running: {_alive(tree)}"
     sup.shutdown()
+
+
+def _is_node(proc: psutil.Process) -> bool:
+    """Whether ``proc`` is node. Newer Node versions on Linux name their main thread "MainThread",
+    which is what the process name shows, so also look at the executable and command line."""
+    try:
+        names = [proc.name(), Path(proc.exe() or "").name, *(Path(a).name for a in proc.cmdline()[:1])]
+    except psutil.Error:
+        return False
+    return any("node" in n.lower() for n in names)

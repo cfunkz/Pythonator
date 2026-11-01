@@ -121,6 +121,11 @@ def test_url_port() -> None:
     assert url_port("https://localhost/") == 443
 
 
+def _url(store: LogStore) -> str | None:
+    """Read ``store.url`` without mypy narrowing it between writes (it changes behind its back)."""
+    return store.url
+
+
 # -- the log store ------------------------------------------------------------------------------------
 
 
@@ -128,11 +133,11 @@ def test_printed_link_beats_an_earlier_bare_address(tmp_path: Path) -> None:
     store = LogStore(tmp_path / "x.log")
     stream = store.stream()
     stream.write("Server listening on port 3000\n")
-    assert store.url == "http://localhost:3000/" and not store.url_exact
+    assert (store.url, store.url_exact) == ("http://localhost:3000/", False)
     stream.write("Docs at http://localhost:3000/docs\nalso http://localhost:9999/\n")
-    assert store.url == "http://localhost:3000/docs" and store.url_exact
+    assert (store.url, store.url_exact) == ("http://localhost:3000/docs", True)
     store.reset_url()
-    assert store.url is None and not store.url_exact
+    assert (store.url, store.url_exact) == (None, False)
     stream.close()
     store.close()
 
@@ -141,12 +146,12 @@ def test_bare_addresses_only_looked_for_after_a_start(tmp_path: Path) -> None:
     store = LogStore(tmp_path / "x.log")
     stream = store.stream()
     stream.write("tick\n" * ADDRESS_HINT_LINES + "Server listening on port 3000\n")
-    assert store.url is None
+    assert _url(store) is None
     stream.write("Running on http://127.0.0.1:5000\n")  # full links are always recognised
-    assert store.url == "http://127.0.0.1:5000"
+    assert _url(store) == "http://127.0.0.1:5000"
     store.reset_url()
     stream.write("Server listening on port 3000\n")
-    assert store.url == "http://localhost:3000/"
+    assert _url(store) == "http://localhost:3000/"
     stream.close()
     store.close()
 
@@ -164,11 +169,13 @@ def test_listening_sockets_of_this_process() -> None:
 
 # -- the supervisor -----------------------------------------------------------------------------------
 
+# socketserver.TCPServer, not http.server.HTTPServer: HTTPServer calls socket.getfqdn() when it binds,
+# which can hang for many seconds on macOS runners (a reverse DNS lookup) before anything is printed.
 SERVER = """\
-import sys, time
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import sys, socketserver
+from http.server import BaseHTTPRequestHandler
 port = int(sys.argv[1])
-httpd = HTTPServer(("127.0.0.1", port), BaseHTTPRequestHandler)
+httpd = socketserver.TCPServer(("127.0.0.1", port), BaseHTTPRequestHandler)
 {announce}
 sys.stdout.flush()
 httpd.serve_forever()
@@ -189,11 +196,11 @@ def test_open_shows_for_a_server_started_with_a_dollar_command(tmp_path: Path, q
                                 restart=RestartPolicy.NEVER))
     assert svc.status is Status.STOPPED
     assert sup.run_shell(svc.id, f'"{sys.executable}" "{script}" {port}')
-    assert wait_until(lambda: sup.web_url(svc) is not None, timeout=15, qt=True), \
+    assert wait_until(lambda: sup.web_url(svc) is not None, timeout=30, qt=True), \
         [x.text for x in svc.log.snapshot()]
     assert sup.web_url(svc) == f"http://127.0.0.1:{port}/"
     sup.stop(svc.id)
-    assert wait_until(lambda: svc.task is None, timeout=15, qt=True)
+    assert wait_until(lambda: svc.task is None, timeout=30, qt=True)
     assert sup.web_url(svc) is None  # gone with the command
     sup.shutdown()
 
@@ -202,9 +209,9 @@ def test_a_new_dollar_command_forgets_the_previous_address(tmp_path: Path, qapp:
     sup = Supervisor(DataPaths(tmp_path / "data"))
     svc = sup.add(ServiceConfig(name="web", target="x.py", workdir=str(tmp_path), python=sys.executable))
     svc.log.stream().write("Running on http://127.0.0.1:5000\n")
-    assert svc.log.url
+    assert _url(svc.log)
     assert sup.run_shell(svc.id, f'"{sys.executable}" -c "import time; time.sleep(5)"')
-    assert svc.log.url is None
+    assert _url(svc.log) is None
     sup.shutdown()
 
 
@@ -216,7 +223,7 @@ def test_open_shows_for_a_server_that_prints_nothing(tmp_path: Path, qapp: objec
     svc = sup.add(ServiceConfig(name="quiet", target=str(script), args=str(port), python=sys.executable,
                                 restart=RestartPolicy.NEVER))
     assert sup.start(svc.id)
-    assert wait_until(lambda: sup.web_url(svc) is not None, timeout=15, qt=True)
+    assert wait_until(lambda: sup.web_url(svc) is not None, timeout=30, qt=True)
     assert sup.web_url(svc) == f"http://127.0.0.1:{port}/"
     assert svc.log.url is None  # found from the listening socket, not the output
     sup.shutdown()
@@ -230,7 +237,7 @@ def test_a_wrong_bare_address_is_corrected_by_the_listening_port(tmp_path: Path,
     svc = sup.add(ServiceConfig(name="liar", target=str(script), args=str(port), python=sys.executable,
                                 restart=RestartPolicy.NEVER))
     assert sup.start(svc.id)
-    assert wait_until(lambda: sup.web_url(svc) == f"http://127.0.0.1:{port}/", timeout=15, qt=True), \
+    assert wait_until(lambda: sup.web_url(svc) == f"http://127.0.0.1:{port}/", timeout=30, qt=True), \
         (svc.log.url, sup.web_url(svc))
     sup.shutdown()
 
@@ -250,9 +257,9 @@ def test_open_button_visible_for_a_dollar_command(tmp_path: Path, qapp: object) 
     assert not window.btn_web.isVisible()
     window.console.mode.setCurrentIndex(1)
     window._on_console_submit("shell", f'"{sys.executable}" "{script}" {port}')
-    assert wait_until(lambda: window.btn_web.isVisible(), timeout=15, qt=True)
+    assert wait_until(lambda: window.btn_web.isVisible(), timeout=30, qt=True)
     assert f"localhost:{port}" in window.btn_web.toolTip()
     sup.stop(svc.id)
-    assert wait_until(lambda: not window.btn_web.isVisible(), timeout=15, qt=True)
+    assert wait_until(lambda: not window.btn_web.isVisible(), timeout=30, qt=True)
     window.quit()
     assert wait_until(lambda: not window.isVisible(), qt=True)
