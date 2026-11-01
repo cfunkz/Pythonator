@@ -106,8 +106,10 @@ window.
 * Every line is persisted to **rotating log files** (size and count configurable). **History search**
   covers all of them off the GUI thread.
 * **Double-click a stack-trace line** (Python, Node, Go, Java, .NET, Ruby, PHP, shell) to open the file at that line in the editor
-* **Clickable links**: URLs in the output open in your browser, and when a web server prints its address
-  (`Running on http://127.0.0.1:5000`, `Local: http://localhost:5173/`) an **Open** button appears in the header
+* **Clickable links**: URLs in the output open in your browser, and when a web server or API starts, in any
+  language and also from a `$` console command, an **Open** button appears in the header. It uses the address the
+  server prints (`Running on http://127.0.0.1:5000`, `Listening on :8080`, `Tomcat started on port 8080`), or the
+  port the process actually listens on when it prints nothing
 
 **Files & editor**
 * **Folder tree** of the selected service's project: open files, create files and folders, rename (F2), move to
@@ -255,7 +257,7 @@ pythonator/
 │   ├── ansi.py      ANSI SGR parser
 │   ├── policy.py    restart back-off decisions
 │   ├── schedule.py  "every 15m", daily times and cron expressions
-│   ├── urls.py      spotting a web server's local address in its output
+│   ├── urls.py      finding a web server's address (printed links, bare ports, listening sockets)
 │   ├── userenv.py   a terminal's PATH for apps opened from the macOS Finder / Dock; open-files limit
 │   ├── login.py     start at login: LaunchAgent (macOS), XDG autostart (Linux), Run key (Windows)
 │   ├── macos.py     App Nap and .app bundles, without PyObjC

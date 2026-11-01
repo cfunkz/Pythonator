@@ -21,10 +21,11 @@ from typing import IO
 
 from .ansi import strip_ansi
 from .safety import open_private_append
-from .urls import local_url
+from .urls import address_url, local_url
 
 STALE_PARTIAL_SECONDS = 0.25  # show an unterminated line (e.g. an input() prompt) after this long
 MAX_LINE_CHARS = 32_768  # longer lines (minified JSON, binary junk) are split so nothing balloons
+ADDRESS_HINT_LINES = 5_000  # look for "listening on :8080"-style addresses in this many lines after a start
 
 
 class LineKind(IntEnum):
@@ -98,7 +99,7 @@ class LogStream:
             lines = [LogLine(now, text) for text in full]
             store._push(lines)
         store._write_file(lines)
-        if store.url is None:
+        if not store.url_exact:
             store._find_url(lines)
 
     def _flush_stale(self, now: float) -> LogLine | None:
@@ -147,7 +148,9 @@ class LogStore:
         self._ts_second = -1
         self._ts_text = ""
         self.total_lines = 0
-        self.url: str | None = None  # first local URL printed since reset_url(), e.g. a web server's
+        self.url: str | None = None  # the address a web server printed since reset_url(), if any
+        self.url_exact = False  # True once ``url`` is a full printed link, not a "port 3000" guess
+        self._hint_budget = ADDRESS_HINT_LINES
         self.file_error: str | None = None  # why the log file can't be written (disk full, ...), if so
 
     # -- configuration --------------------------------------------------------------------
@@ -178,12 +181,25 @@ class LogStore:
 
     def reset_url(self) -> None:
         self.url = None
+        self.url_exact = False
+        self._hint_budget = ADDRESS_HINT_LINES
 
     def _find_url(self, lines: list[LogLine]) -> None:
+        """Remember the first full local link; until one shows up, also accept a bare address.
+
+        A full link ("http://127.0.0.1:5000/docs") always wins over an earlier "port 5000" guess.
+        Bare addresses are only looked for shortly after a start (servers print them at startup),
+        which keeps this cheap for bots that log forever.
+        """
         for line in lines:
-            if url := local_url(line.text):
-                self.url = url
+            text = line.text
+            if "://" in text and (url := local_url(text)):
+                self.url, self.url_exact = url, True
                 return
+            if self.url is None and self._hint_budget > 0:
+                self._hint_budget -= 1
+                if url := address_url(text):
+                    self.url = url
 
     # -- producers ------------------------------------------------------------------------
 
@@ -225,7 +241,7 @@ class LogStore:
             dropped, self._dropped = self._dropped, 0
         if stale:
             self._write_file(stale)
-            if self.url is None:
+            if not self.url_exact:
                 self._find_url(stale)
         if not out:
             return []

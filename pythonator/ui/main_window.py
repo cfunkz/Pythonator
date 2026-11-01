@@ -563,8 +563,8 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         self._add_deps_actions(menu, svc)
         menu.addSeparator()
-        if svc.log.url:
-            add(f"Open {svc.log.url} in browser", self._open_service_url)
+        if url := self.sup.web_url(svc):
+            add(f"Open {url} in browser", self._open_service_url)
         add("Open script in editor", lambda: self._open_service_script(svc, focus=True),
             svc.config.mode is LaunchMode.SCRIPT)
         add("Open working folder", lambda: self._open_path(resolve_workdir(svc.config)))
@@ -676,8 +676,8 @@ class MainWindow(QMainWindow):
         self._update_counts()
 
     def _open_service_url(self) -> None:
-        if (svc := self.current()) and svc.log.url:
-            open_web_url(svc.log.url)
+        if (svc := self.current()) and (url := self.sup.web_url(svc)):
+            open_web_url(url)
 
     def _flush(self) -> None:
         if (svc := self.current()) is not None:
@@ -702,7 +702,7 @@ class MainWindow(QMainWindow):
         svc = self.current()
         for b in (self.btn_start, self.btn_stop, self.btn_restart, self.btn_deps, self.btn_edit, self.btn_more):
             b.setEnabled(svc is not None)
-        url = svc.log.url if svc is not None and svc.status in (Status.RUNNING, Status.STOPPING) else None
+        url = self.sup.web_url(svc) if svc is not None else None
         self.btn_web.setVisible(url is not None)
         self.btn_web.setToolTip(f"Open {url} in your browser" if url else "")
         if svc is None:

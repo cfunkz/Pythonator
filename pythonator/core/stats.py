@@ -18,6 +18,7 @@ _HAS_PSUTIL: bool = psutil is not None
 log = logging.getLogger(__name__)
 
 HAS_PSUTIL = _HAS_PSUTIL
+FAST_PORT_SCAN = 30.0  # seconds after a start during which listening ports are checked every sample
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,14 +26,35 @@ class ProcStats:
     cpu: float = 0.0  # percent of one core, summed over the tree (like `top`)
     rss: int = 0  # bytes, summed over the tree
     procs: int = 0  # processes in the tree
+    listening: tuple[tuple[str, int], ...] = ()  # (ip, port) TCP sockets the tree listens on
 
     @property
     def rss_mb(self) -> float:
         return self.rss / (1024 * 1024)
 
 
+def listening_sockets(procs: list[Any]) -> tuple[tuple[str, int], ...]:
+    """``(ip, port)`` of every TCP socket in LISTEN state owned by ``procs``.
+
+    Works for the user's own processes on Windows, macOS and Linux without admin rights;
+    processes that can't be inspected are skipped.
+    """
+    found: set[tuple[str, int]] = set()
+    for p in procs:
+        try:
+            # psutil 6 renamed connections() to net_connections().
+            get = getattr(p, "net_connections", None) or p.connections
+            conns = get(kind="tcp")
+        except (psutil.Error, OSError):
+            continue
+        for c in conns:
+            if c.status == psutil.CONN_LISTEN and c.laddr:
+                found.add((str(c.laddr[0]), int(c.laddr[1])))
+    return tuple(sorted(found, key=lambda a: (a[1], a[0])))
+
+
 class _Tree:
-    __slots__ = ("cpu_prev", "members", "refreshed", "root", "t_prev")
+    __slots__ = ("born", "cpu_prev", "listening", "members", "refreshed", "root", "t_prev")
 
     def __init__(self, root: Any) -> None:
         self.root = root
@@ -40,6 +62,8 @@ class _Tree:
         self.refreshed = 0.0
         self.cpu_prev = 0.0
         self.t_prev = 0.0
+        self.listening: tuple[tuple[str, int], ...] = ()
+        self.born = time.monotonic()
 
 
 class StatsSampler:
@@ -109,7 +133,11 @@ class StatsSampler:
             except (psutil.Error, OSError):
                 return None
             self._trees[key] = tree
-        if now - tree.refreshed >= self._tree_refresh:
+        # Re-read the tree (children, listening ports) every few seconds, and every sample while a
+        # freshly started server is still opening its port, so the Open button shows up quickly.
+        starting = not tree.listening and now - tree.born < FAST_PORT_SCAN
+        refresh = starting or now - tree.refreshed >= self._tree_refresh
+        if refresh:
             with contextlib.suppress(psutil.Error, OSError):
                 tree.members = [tree.root, *tree.root.children(recursive=True)]
             tree.refreshed = now
@@ -128,8 +156,10 @@ class StatsSampler:
         if not alive:
             return None
         tree.members = alive
+        if refresh:
+            tree.listening = listening_sockets(alive)
         cpu = 0.0
         if tree.t_prev:
             cpu = max(0.0, cpu_total - tree.cpu_prev) / max(1e-6, now - tree.t_prev) * 100.0
         tree.cpu_prev, tree.t_prev = cpu_total, now
-        return ProcStats(cpu=cpu, rss=rss, procs=len(alive))
+        return ProcStats(cpu=cpu, rss=rss, procs=len(alive), listening=tree.listening)

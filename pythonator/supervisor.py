@@ -42,6 +42,7 @@ from .core.schedule import Schedule, ScheduleError, parse_schedule
 from .core.shells import command_hint, resolve_shell
 from .core.stats import ProcStats, StatsSampler
 from .core.store import ConfigStore
+from .core.urls import listening_url, url_port
 
 _SpecFactory = Callable[[], LaunchSpec]
 CLOCK_MS = 1000
@@ -151,6 +152,28 @@ class Supervisor(QObject):
     def stats_for(self, service: Service) -> ProcStats | None:
         return self.stats.get(service.id) if service.pid else None
 
+    def web_url(self, service: Service) -> str | None:
+        """The address to open for a web server/API this service (or its $ command) is running.
+
+        A link the program printed wins. Otherwise a printed bare address ("port 3000") is used if
+        the process really listens there, else the port it does listen on, so servers in any
+        language show the Open button even when they print nothing useful.
+        """
+        serving = service.status in (Status.RUNNING, Status.STOPPING)
+        task_running = service.task is not None and service.task.running
+        if not (serving or task_running):
+            return None
+        printed = service.log.url
+        if printed and service.log.url_exact:
+            return printed
+        listening: list[tuple[str, int]] = []
+        for key, active in ((service.id, serving), (_task_key(service.id), task_running)):
+            if active and (stats := self.stats.get(key)):
+                listening.extend(stats.listening)
+        if printed and (not listening or url_port(printed) in {port for _, port in listening}):
+            return printed
+        return listening_url(listening) or printed
+
     def running_count(self) -> int:
         return sum(1 for s in self._services.values() if s.status in (Status.RUNNING, Status.STOPPING))
 
@@ -231,6 +254,7 @@ class Supervisor(QObject):
         if svc.task:
             svc.task.kill()
         self.stats.untrack(service_id)
+        self.stats.untrack(_task_key(service_id))
         svc.log.close()
         if delete_logs:
             svc.log.clear(delete_files=True)
@@ -609,6 +633,8 @@ class Supervisor(QObject):
             return False
         if echo:
             svc.log.system(f"⚙ {label}: {spec.display()}")
+        if not svc.status.active:
+            svc.log.reset_url()  # forget the address a previous run printed; this command may serve its own
         stream = svc.log.stream()
 
         def on_exit(info: ExitInfo, sid: str = svc.id) -> None:
@@ -617,11 +643,12 @@ class Supervisor(QObject):
 
         runner = ProcessRunner(spec, on_output=stream.write, on_exit=on_exit)
         try:
-            runner.start()
+            pid = runner.start()
         except SPAWN_ERRORS as exc:
             stream.close()
             svc.log.system(f"{label} could not start: {_reason(exc)}", LineKind.ERROR)
             return False
+        self.stats.track(_task_key(svc.id), pid)  # a $ command may start a web server too
         svc.task, svc.task_label = runner, label
         svc.task_output_from = svc.log.total_lines
         self.changed.emit(svc.id)
@@ -630,6 +657,7 @@ class Supervisor(QObject):
     def _on_task_exited(self, svc: Service, info: ExitInfo) -> None:
         label, shell = svc.task_label, svc.task_shell
         svc.task, svc.task_label, svc.task_shell = None, "", None
+        self.stats.untrack(_task_key(svc.id))
         if label == PROBE_LABEL:  # an internal lookup: its "failure" is the expected answer
             self._probe_done(svc, info)
             self.changed.emit(svc.id)
@@ -722,3 +750,8 @@ def format_next_run(ts: float, now: float | None = None) -> str:
 
 def format_uptime(seconds: float) -> str:
     return _fmt_duration(seconds) if seconds >= 60 else f"{int(seconds)}s"
+
+
+def _task_key(service_id: str) -> str:
+    """Stats-sampler key for the install or $ command running for a service."""
+    return f"{service_id}:task"
