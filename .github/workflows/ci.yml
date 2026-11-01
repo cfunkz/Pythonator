@@ -9,8 +9,8 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
       # PyQt6 6.12.0 ships a .pyi with a syntax error that stops mypy; any other version is fine.
@@ -32,8 +32,8 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
       - if: runner.os == 'Linux'
@@ -57,8 +57,8 @@ jobs:
             program: dist/Pythonator.app/Contents/MacOS/Pythonator
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
       - if: runner.os == 'Linux'
@@ -73,7 +73,7 @@ jobs:
       - if: runner.os == 'Linux'
         name: Install the .deb and start it
         run: sudo apt-get install -y ./release/*.deb && python packaging/smoke_test.py /usr/bin/pythonator
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: packages-${{ matrix.os }}
           path: release/*

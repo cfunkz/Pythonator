@@ -1,2 +1,0 @@
-# The version lives in .env.example, so source packages need it to build.
-include .env.example

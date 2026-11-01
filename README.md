@@ -307,23 +307,31 @@ builds the packages for the system it runs on into `release/`:
 | --- | --- |
 | Windows | `Pythonator-<version>-windows-x64-setup.exe` (needs [Inno Setup 6](https://jrsoftware.org/isdl.php)) and a portable `.zip` |
 | macOS | `Pythonator-<version>-macos-arm64.dmg` or `-x86_64.dmg`, for the Mac it's built on |
-| Linux | `pythonator_<version>_amd64.deb` (installs to `/opt/pythonator`, adds `pythonator` and a menu entry) and a `.tar.gz` |
+| Linux | `pythonator_<version>_amd64.deb` or `_arm64.deb` (installs to `/opt/pythonator`, adds `pythonator` and a menu entry) and a `.tar.gz` |
 
-### Releases: one command for all three
+### Releases: change the version, push, done
 
 PyInstaller can only build for the system it runs on, so releases are built on GitHub. The version is written
-in one place, `VERSION=` in [`.env.example`](.env.example); the app, `pyproject.toml`, the builds and the release
-all read it from there. Change it, commit and push, then tag that version with a `v` in front
-(`VERSION=0.0.2` → `v0.0.2`):
+in one place, `__version__` in [`pythonator/__init__.py`](pythonator/__init__.py); the app, `pyproject.toml`, the
+builds and the release all read it from there. To release, change it, commit and push to `main`:
 
 ```bash
-git tag vX.Y.Z && git push origin vX.Y.Z
+# pythonator/__init__.py: __version__ = "0.0.3"  ->  "0.0.4"
+git commit -am "Pythonator 0.0.4" && git push
 ```
 
-The [Release workflow](.github/workflows/release.yml) builds the Windows installer and .zip, the Linux .deb and
-.tar.gz, and .dmg files for Apple silicon and Intel Macs, starts each app once, and publishes them with checksums
-as a GitHub release (a version like `0.1.0-beta.1` makes a pre-release). It refuses a tag that doesn't match
-`.env.example`. **Run workflow** on the Actions tab builds the same packages without releasing them.
+The [Release workflow](.github/workflows/release.yml) sees the new version and builds the Windows installer and
+.zip, Linux .deb and .tar.gz files for x64 and arm64 (Raspberry Pi), and .dmg files for Apple silicon and Intel
+Macs. It starts each app once, then tags the commit `v0.0.4` and publishes everything with checksums as a GitHub
+release. A version like `0.1.0-beta.1` makes a pre-release. Nothing is tagged if a build fails, so fix it and
+push again.
+
+* **Tagging by hand still works:** `git tag vX.Y.Z && git push origin vX.Y.Z`. The tag must be on a commit whose
+  `pythonator/__init__.py` has that version, otherwise the run stops and says so.
+* **Pushing a tag again** rebuilds it and replaces the files in its existing release.
+* **Run workflow** on the Actions tab builds the packages as downloadable artifacts without releasing them; tick
+  *publish* to release the current version on `main` if it isn't released yet.
+* A push that changes `pythonator/__init__.py` without a new version does nothing.
 
 The macOS app isn't signed with a Developer ID, so the first time, right-click it and choose **Open** (or run
 `xattr -dr com.apple.quarantine /Applications/Pythonator.app`).

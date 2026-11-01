@@ -17,8 +17,7 @@ ICON = str(ROOT / "pythonator" / "resources" / "icon.ico")
 a = Analysis(  # noqa: F821
     [str(ROOT / "app.py")],
     pathex=[str(ROOT)],
-    datas=[(str(ROOT / "pythonator" / "resources"), "pythonator/resources"),
-           (str(ROOT / ".env.example"), ".")],  # the version: pythonator/__init__.py reads it
+    datas=[(str(ROOT / "pythonator" / "resources"), "pythonator/resources")],
     hiddenimports=["jedi"] if find_spec("jedi") else [],  # optional code completion
     excludes=["tkinter", "PyQt6.QtWebEngineCore", "PyQt6.QtWebEngineWidgets", "PyQt6.QtQml", "PyQt6.QtQuick",
               "PyQt6.QtMultimedia", "PyQt6.QtPdf", "PyQt6.QtBluetooth", "PyQt6.QtDesigner"],
