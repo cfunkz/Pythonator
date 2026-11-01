@@ -334,8 +334,8 @@ class ConsolePanel(QWidget):
 
         bar = theme.named(QWidget(), "PanelBar")
         bl = QHBoxLayout(bar)
-        bl.setContentsMargins(8, 3, 6, 3)
-        bl.setSpacing(4)
+        bl.setContentsMargins(12, 4, 6, 4)
+        bl.setSpacing(3)
         self.title = QLabel("Console")
         self.title.setObjectName("Dim")
         bl.addWidget(self.title)
@@ -368,7 +368,7 @@ class ConsolePanel(QWidget):
 
         inp = theme.named(QWidget(), "InputBar")
         il = QHBoxLayout(inp)
-        il.setContentsMargins(6, 4, 6, 4)
+        il.setContentsMargins(8, 6, 8, 6)
         il.setSpacing(6)
         self.mode = QComboBox()
         self.mode.addItem("stdin", "stdin")

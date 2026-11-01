@@ -234,7 +234,7 @@ def _node_install(c: Ctx, packages: list[str]) -> list[list[str]]:
     if (c.workdir / "package.json").is_file():
         return [[pm, "install"]]
     raise LaunchError("Nothing to install: add packages in the service settings, "
-                      "or use 📦 Dependencies → Create package.json.")
+                      "or use Dependencies → Create package.json.")
 
 
 # -- Bun and Deno ---------------------------------------------------------------------------------
@@ -255,7 +255,7 @@ def _bun_install(c: Ctx, packages: list[str]) -> list[list[str]]:
     if (c.workdir / "package.json").is_file():
         return [[c.program, "install"]]
     raise LaunchError("Nothing to install: add packages in the service settings, "
-                      "or use 📦 Dependencies → Create package.json.")
+                      "or use Dependencies → Create package.json.")
 
 
 def _deno_script(c: Ctx) -> list[str]:
@@ -276,7 +276,7 @@ def _deno_install(c: Ctx, packages: list[str]) -> list[list[str]]:
     if any((c.workdir / f).is_file() for f in ("deno.json", "deno.jsonc", "package.json")):
         return [[c.program, "install"]]
     raise LaunchError("Nothing to install: add packages (npm:express, jsr:@std/http), "
-                      "or use 📦 Dependencies → Create deno.json.")
+                      "or use Dependencies → Create deno.json.")
 
 
 # -- compiled languages ---------------------------------------------------------------------------
@@ -292,7 +292,7 @@ def _go_module(c: Ctx) -> list[str]:
 
 def _go_install(c: Ctx, packages: list[str]) -> list[list[str]]:
     if not (c.workdir / "go.mod").is_file():
-        raise LaunchError(f"No go.mod in {c.workdir}. Use 📦 Dependencies → Create go.mod first.")
+        raise LaunchError(f"No go.mod in {c.workdir}. Use Dependencies → Create go.mod first.")
     if packages:
         return [[c.program, "get", *packages]]
     return [[c.program, "mod", "tidy"]]  # downloads what the code imports and records it in go.mod
@@ -361,7 +361,7 @@ def _ruby_install(c: Ctx, packages: list[str]) -> list[list[str]]:
     if has_gemfile:
         return [[bundle, "install"]]
     raise LaunchError("Nothing to install: add gems in the service settings, "
-                      "or use 📦 Dependencies → Create Gemfile.")
+                      "or use Dependencies → Create Gemfile.")
 
 
 def _php_script(c: Ctx) -> list[str]:
@@ -379,7 +379,7 @@ def _php_install(c: Ctx, packages: list[str]) -> list[list[str]]:
     if (c.workdir / "composer.json").is_file():
         return [[composer, "install"]]
     raise LaunchError("Nothing to install: add packages in the service settings, "
-                      "or use 📦 Dependencies → Create composer.json.")
+                      "or use Dependencies → Create composer.json.")
 
 
 def _shell_script(c: Ctx) -> list[str]:

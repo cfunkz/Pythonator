@@ -1,4 +1,4 @@
-"""The 🌐 Open button: finding a web server's address for any language, also for $ console commands."""
+"""The Open button: finding a web server's address for any language, also for $ console commands."""
 
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ def free_port() -> int:
     ("line", "url"),
     [
         # full links (Python, Node, Rust, .NET, PHP, Deno, Ruby, Kotlin, Elixir...)
-        (" * Running on http://127.0.0.1:8765/   (the 🌐 Open button should appear)", "http://127.0.0.1:8765/"),
+        (" * Running on http://127.0.0.1:8765/   (the Open button should appear)", "http://127.0.0.1:8765/"),
         ("\x1b[1;32m * Running on http://127.0.0.1:8765/\x1b[0m", "http://127.0.0.1:8765/"),
         ("Now listening on: http://localhost:5000", "http://localhost:5000"),
         ("[Thu Nov  1 15:41:17 2026] PHP 8.3 Development Server (http://localhost:8000) started",

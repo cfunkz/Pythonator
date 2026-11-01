@@ -78,7 +78,7 @@ window.
   and `pip install` with one click
 * Node.js: `node_modules/.bin` (of the project and its parents) is on PATH; **Install dependencies** runs
   `npm install` (or pnpm / yarn / bun), or adds the packages you list; pick a specific `node` binary per service
-* **📦 Dependencies** button for every language: **Create** a starter `requirements.txt`, `package.json`,
+* **Dependencies** button for every language: **Create** a starter `requirements.txt`, `package.json`,
   `deno.json`, `go.mod`, `Gemfile` or `composer.json` if the project has none, **Edit** it in the built-in editor,
   then **Save and install dependencies** (unsaved edits are saved first)
 * **Version fixes**: when an install fails because a pinned version doesn't exist for your Python (say
@@ -167,7 +167,7 @@ editor completes words from the current file, and says so once when you open a P
 
 1. **New service** (or drop a `.py`, `.js`, `.go`, `.rb`, `.php`, `.sh`, ... file onto the window), pick the
    runtime and a script, entry point or command
-2. Use the **📦 Dependencies** button in the header (also in the ⋯ menu). For Python, pick **Create venv**, then
+2. Use the **Dependencies** button in the header (also in the ⋯ menu). For Python, pick **Create venv**, then
    **Install dependencies** (your list, or `requirements.txt`). Other runtimes only need **Install dependencies**
    (your list, or `package.json`, `go.mod`, `Gemfile`, ...). **Edit package.json** (or whichever file the project
    uses) opens it in the editor, and **Create ...** makes a starter file if there is none. Add packages, then

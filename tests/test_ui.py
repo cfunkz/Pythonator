@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -188,3 +189,12 @@ def test_python_tab_hints_once_how_to_enable_jedi(tmp_path: Path, qapp: object, 
         panel.open_file(str(tmp_path / name))
     hints = [m for m in messages if "jedi" in m]
     assert len(hints) == 1 and "pip install jedi" in hints[0]
+
+
+def test_theme_corners_stay_subtle(qapp: object) -> None:
+    """Soft corners, never bubble buttons: every radius in the stylesheet is at most 8px."""
+    sheet = theme.stylesheet(theme.mono_family(), "/x")
+    assert theme.mono_family() in sheet
+    assert 'url("/x/check.png")' in sheet
+    radii = [int(r) for r in re.findall(r"border-radius:\s*(\d+)px", sheet)]
+    assert radii and max(radii) <= 8

@@ -1,6 +1,6 @@
 """Starter dependency files, for projects that don't have one yet.
 
-"📦 Dependencies → Create package.json" (or go.mod, Gemfile, ...) writes one of these into the
+"Dependencies → Create package.json" (or go.mod, Gemfile, ...) writes one of these into the
 working directory and opens it in the editor; "Install dependencies" then installs what it lists.
 Templates are written locally, so this works offline and doesn't need the runtime installed.
 """

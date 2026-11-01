@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from . import keys
+from . import keys, theme
 from .code_editor import HAS_JEDI, CodeEditor, jedi_hint
 from .highlighter import language_for
 from .languages import BY_NAME as _SPECS
@@ -100,8 +100,8 @@ class FindBar(QWidget):
         self.setObjectName("FindBar")
         self._panel = panel
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 4, 8, 4)
-        layout.setSpacing(6)
+        layout.setContentsMargins(6, 3, 6, 3)
+        layout.setSpacing(4)
         self.find_edit = QLineEdit()
         self.find_edit.setPlaceholderText("Find")
         self.replace_edit = QLineEdit()
@@ -240,7 +240,7 @@ class EditorPanel(QWidget):
             bar.setExpanding(False)
         self.tabs.currentChanged.connect(self._on_current_changed)
 
-        corner = QWidget()
+        corner = theme.named(QWidget(), "EditorCorner")
         cl = QHBoxLayout(corner)
         cl.setContentsMargins(0, 0, 4, 0)
         cl.setSpacing(2)
@@ -267,7 +267,7 @@ class EditorPanel(QWidget):
         self.tabs.setCornerWidget(corner, Qt.Corner.TopRightCorner)
 
         self._placeholder = QLabel(
-            "<div style='color:#6b727c'><p style='font-size:15px'>No file open</p>"
+            f"<div style='color:{theme.TEXT_FAINT}'><p style='font-size:15px'>No file open</p>"
             "<p>Select a service to open its script, or use <b>Open…</b> / <b>New</b>.</p>"
             f"<p>{keys.text(keys.START)} start / restart · {keys.text(keys.STOP)} stop · {keys.text(keys.SAVE)} save"
             f" · {keys.text(keys.FIND)} find · {keys.text(keys.COMMENT)} comment</p></div>"
@@ -361,11 +361,9 @@ class EditorPanel(QWidget):
         tab.cursor_moved.connect(lambda ln, col: self.cursor_info.emit(f"Ln {ln}, Col {col}"))
         idx = self.tabs.addTab(tab, tab.title)
         self.tabs.setTabToolTip(idx, path or "Unsaved file")
-        close = QToolButton()
+        close = theme.named(QToolButton(), "TabClose")
         close.setText("×")
         close.setToolTip(f"Close ({keys.text(keys.CLOSE_TAB)})")
-        close.setStyleSheet("QToolButton { border: none; padding: 0 4px; color: #8b929c; font-size: 14px; }"
-                            "QToolButton:hover { color: white; background: #3a4048; border-radius: 4px; }")
         close.clicked.connect(lambda _c=False, t=tab: self.close_tab(self.tabs.indexOf(t)))
         if bar := self.tabs.tabBar():
             bar.setTabButton(idx, QTabBar.ButtonPosition.RightSide, close)

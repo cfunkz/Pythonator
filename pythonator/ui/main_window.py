@@ -84,9 +84,7 @@ def _tool(text: str, tip: str = "", *, accent: bool = False) -> QToolButton:
     b.setToolTip(tip)
     b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
     if accent:
-        b.setStyleSheet(f"QToolButton {{ background: {theme.ACCENT}; color: white; border-color: {theme.ACCENT}; }}"
-                        "QToolButton:hover { background: #6aa0fa; } QToolButton:disabled { background: #2a3444;"
-                        " color: #6b727c; border-color: #2a3444; }")
+        b.setProperty("accent", True)  # styled by theme.stylesheet()
     return b
 
 
@@ -200,12 +198,12 @@ class MainWindow(QMainWindow):
         assert tb is not None
         tb.setObjectName("MainToolbar")
         tb.setMovable(False)
-        self.act_new = QAction("+  New service", self)
+        self.act_new = QAction("+ New service", self)
         self.act_new.setToolTip(f"Add a script, module or command to supervise ({keys.text(keys.NEW_SERVICE)})")
         self.act_new.triggered.connect(self.new_service)
-        self.act_start_all = QAction("▶  Start all", self)
+        self.act_start_all = QAction("▶ Start all", self)
         self.act_start_all.triggered.connect(self.sup.start_all)
-        self.act_stop_all = QAction("■  Stop all", self)
+        self.act_stop_all = QAction("■ Stop all", self)
         self.act_stop_all.triggered.connect(self.sup.stop_all)
         self.act_settings = QAction("Settings", self)
         self.act_settings.triggered.connect(self.open_settings)
@@ -224,13 +222,13 @@ class MainWindow(QMainWindow):
         # Sidebar
         sidebar = theme.named(QWidget(), "SidebarPane")
         sl = QVBoxLayout(sidebar)
-        sl.setContentsMargins(0, 8, 0, 0)
-        sl.setSpacing(4)
+        sl.setContentsMargins(0, 10, 0, 0)
+        sl.setSpacing(6)
         title = theme.named(QLabel("SERVICES"), "SidebarTitle")
         title.setContentsMargins(14, 0, 0, 0)
         sl.addWidget(title)
         self.model = ServiceListModel(self.sup)
-        self.list = QListView()
+        self.list = theme.named(QListView(), "ServiceList")
         self.list.setModel(self.model)
         self.list.setItemDelegate(ServiceDelegate(self.sup, self.list))
         self.list.setMouseTracking(True)
@@ -262,24 +260,36 @@ class MainWindow(QMainWindow):
         # Header
         header = theme.named(QWidget(), "Header")
         hl = QHBoxLayout(header)
-        hl.setContentsMargins(14, 8, 10, 8)
+        hl.setContentsMargins(16, 8, 12, 8)
         hl.setSpacing(6)
         titles = QVBoxLayout()
-        titles.setSpacing(2)
+        titles.setSpacing(3)
         self.h_name = theme.named(QLabel("—"), "HeaderTitle")
-        self.h_info = theme.named(QLabel(""), "Dim")
+        self.h_badge = QLabel("")
+        self.h_badge.setFixedHeight(20)
+        self.h_badge.hide()
+        self.h_info = theme.named(QLabel(""), "HeaderInfo")
         self.h_info.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        titles.addWidget(self.h_name)
+        # Long names and info lines are clipped; they never make the window wider.
+        self.h_info.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.h_name.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
+        self.h_name.setMinimumWidth(1)
+        name_row = QHBoxLayout()
+        name_row.setSpacing(8)
+        name_row.addWidget(self.h_name)
+        name_row.addWidget(self.h_badge)
+        name_row.addStretch(1)
+        titles.addLayout(name_row)
         titles.addWidget(self.h_info)
         hl.addLayout(titles, 1)
-        self.btn_start = _tool("▶  Start", f"Start ({keys.text(keys.START)})", accent=True)
-        self.btn_stop = _tool("■  Stop", f"Stop gracefully; press again to kill ({keys.text(keys.STOP)})")
-        self.btn_restart = _tool("↻  Restart", f"Restart ({keys.text(keys.START)} while running)")
-        self.btn_edit = _tool("⚙  Configure", f"Edit service settings ({keys.text(keys.CONFIGURE)})")
-        self.btn_web = _tool("🌐  Open", "Open the address this server printed in your browser")
+        self.btn_start = _tool("▶ Start", f"Start ({keys.text(keys.START)})", accent=True)
+        self.btn_stop = _tool("■ Stop", f"Stop gracefully; press again to kill ({keys.text(keys.STOP)})")
+        self.btn_restart = _tool("↻ Restart", f"Restart ({keys.text(keys.START)} while running)")
+        self.btn_edit = _tool("⚙ Configure", f"Edit service settings ({keys.text(keys.CONFIGURE)})")
+        self.btn_web = _tool("↗ Open", "Open the address this server printed in your browser")
         self.btn_web.setVisible(False)
         self.btn_web.clicked.connect(self._open_service_url)
-        self.btn_deps = _tool("📦  Dependencies", "Create the venv, install packages, edit requirements.txt")
+        self.btn_deps = _tool("Dependencies ▾", "Create the venv, install packages, edit requirements.txt")
         self.btn_deps.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.deps_menu = QMenu(self)
         self.btn_deps.setMenu(self.deps_menu)
@@ -639,7 +649,7 @@ class MainWindow(QMainWindow):
             return
         self.editor.open_file(str(path))
         self.statusBar().showMessage(  # type: ignore[union-attr]
-            f"Created {starter.name}. Add your packages, then 📦 Dependencies → Install dependencies.", 8000)
+            f"Created {starter.name}. Add your packages, then Dependencies → Install dependencies.", 8000)
 
     def _list_menu(self, pos: QPoint) -> None:
         index = self.list.indexAt(pos)
@@ -707,13 +717,15 @@ class MainWindow(QMainWindow):
         self.btn_web.setToolTip(f"Open {url} in your browser" if url else "")
         if svc is None:
             self.h_name.setText("No service selected")
+            self.h_badge.hide()
             self.h_info.setText("Create a service to run a script, web server or bot.")
             return
         st = svc.status
         color = theme.STATUS_COLORS[st]
-        self.h_name.setText(
-            f"{svc.name} <span style='font-size:11px; color:{color}'>● {theme.STATUS_LABELS[st]}</span>"
-        )
+        self.h_name.setText(svc.name)
+        self.h_badge.setText(f"● {theme.STATUS_LABELS[st]}")
+        self.h_badge.setStyleSheet(theme.badge_style(color))
+        self.h_badge.show()
         parts = [describe_target(svc)]
         if st in (Status.RUNNING, Status.STOPPING):
             parts.append(f"pid {svc.pid}")
@@ -732,13 +744,13 @@ class MainWindow(QMainWindow):
         if svc.next_run:
             parts.append(f"⏱ next run {format_next_run(svc.next_run)}")
         parts.append(f"restart: {svc.config.restart.value}")
-        self.h_info.setText("   ·   ".join(parts))
+        self.h_info.setText("  ·  ".join(parts))
         running = st in (Status.RUNNING, Status.STOPPING)
         self.btn_start.setEnabled(not running)
         task = svc.task
         self.btn_stop.setEnabled(st.active or task is not None)
         killing = st is Status.STOPPING or (task is not None and task.stop_requested)
-        self.btn_stop.setText("✖  Kill" if killing else "■  Stop")
+        self.btn_stop.setText("✖ Kill" if killing else "■ Stop")
         self.btn_stop.setToolTip(f"Stop {svc.name}" + (f" and “{svc.task_label}”" if task else "")
                                  + f"; press again to kill ({keys.text(keys.STOP)})")
 

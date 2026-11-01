@@ -74,7 +74,7 @@ class FileTree(QWidget):
         self.proxy.setSourceModel(self.fs)
         self.proxy.setDynamicSortFilter(True)
 
-        self.view = QTreeView()
+        self.view = theme.named(QTreeView(), "FileTree")
         self.view.setModel(self.proxy)
         self.view.setHeaderHidden(True)
         for col in (1, 2, 3):
@@ -91,9 +91,9 @@ class FileTree(QWidget):
         self.view.activated.connect(self._activated)
         self.view.setStyleSheet(
             f"QTreeView {{ background: {theme.BG_ALT}; border: none; outline: none; }}"
-            f"QTreeView::item {{ padding: 2px 0; }}"
+            f"QTreeView::item {{ padding: 2px 0; border: none; }}"
             f"QTreeView::item:hover {{ background: {theme.SURFACE}; }}"
-            f"QTreeView::item:selected {{ background: #2a3444; color: {theme.TEXT}; }}"
+            f"QTreeView::item:selected {{ background: {theme.SELECTION}; color: {theme.TEXT}; }}"
         )
 
         self.title = theme.named(QLabel("FILES"), "SidebarTitle")
@@ -117,7 +117,7 @@ class FileTree(QWidget):
         for b in (self.btn_new, self.btn_folder, self.btn_collapse, self.btn_reveal):
             bar.addWidget(b)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 6, 0, 0)
+        layout.setContentsMargins(0, 8, 0, 0)
         layout.setSpacing(4)
         layout.addLayout(bar)
         layout.addWidget(self.view, 1)
@@ -126,11 +126,11 @@ class FileTree(QWidget):
 
     @staticmethod
     def _tool(text: str, tip: str) -> QToolButton:
-        b = QToolButton()
+        b = theme.named(QToolButton(), "SidebarTool")
         b.setText(text)
         b.setToolTip(tip)
         b.setAutoRaise(True)
-        b.setFixedSize(24, 22)
+        b.setFixedSize(22, 20)
         return b
 
     # -- root -----------------------------------------------------------------------------

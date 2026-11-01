@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from PyQt6.QtCore import QAbstractListModel, QModelIndex, QPersistentModelIndex, QRect, QSize, Qt
+from PyQt6.QtCore import QAbstractListModel, QModelIndex, QPersistentModelIndex, QPointF, QRect, QRectF, QSize, Qt
 from PyQt6.QtGui import QColor, QFont, QPainter
 from PyQt6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem, QWidget
 
@@ -89,11 +89,14 @@ class ServiceListModel(QAbstractListModel):
 
 
 class ServiceDelegate(QStyledItemDelegate):
-    HEIGHT = 50
+    """A compact card per service: a status dot, the name, live usage and a status line."""
+
+    HEIGHT = 48
 
     def __init__(self, supervisor: Supervisor, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._sup = supervisor
+        self._mono = theme.monospace_font(8)
 
     def sizeHint(self, option: QStyleOptionViewItem, index: _Index) -> QSize:
         return QSize(200, self.HEIGHT)
@@ -107,55 +110,65 @@ class ServiceDelegate(QStyledItemDelegate):
         rect: QRect = option.rect
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
         hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
-        card = rect.adjusted(6, 3, -6, -3)
+        card = QRectF(rect.adjusted(8, 2, -8, -2)).adjusted(0.5, 0.5, -0.5, -0.5)
         if selected:
-            painter.setBrush(QColor("#2a3444"))
-            painter.setPen(QColor("#3b4d6b"))
-            painter.drawRoundedRect(card, 7, 7)
+            painter.setBrush(QColor(theme.SELECTION))
+            border = QColor(theme.ACCENT)
+            border.setAlpha(110)
+            painter.setPen(border)
+            painter.drawRoundedRect(card, theme.R_MD, theme.R_MD)
         elif hovered:
             painter.setBrush(QColor(theme.SURFACE))
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawRoundedRect(card, 7, 7)
+            painter.drawRoundedRect(card, theme.R_MD, theme.R_MD)
 
         color = QColor(theme.STATUS_COLORS[svc.status])
+        top = round(card.top()) + 7
+        cx, cy = card.left() + 15, top + 8.5
         painter.setPen(Qt.PenStyle.NoPen)
+        if svc.status.active:  # a soft halo around live processes
+            halo = QColor(color)
+            halo.setAlpha(55)
+            painter.setBrush(halo)
+            painter.drawEllipse(QPointF(cx, cy), 6.5, 6.5)
         painter.setBrush(color)
-        cy = card.top() + 17
-        painter.drawEllipse(card.left() + 11, cy - 4, 9, 9)
+        painter.drawEllipse(QPointF(cx, cy), 3.5, 3.5)
 
-        left = card.left() + 30
-        right = card.right() - 10
-        base: QFont = option.font
-        name_font = QFont(base)
+        left = round(card.left()) + 30
+        right = round(card.right()) - 10
+        name_font = QFont(option.font)
         name_font.setWeight(QFont.Weight.DemiBold)
-        small = QFont(base)
-        small.setPointSizeF(max(7.0, base.pointSizeF() - 1))
 
         stats = self._sup.stats_for(svc)
-        right_text = f"{stats.cpu:.0f}% · {stats.rss_mb:.0f} MB" if stats else ""
-        painter.setFont(small)
+        right_text = f"{stats.cpu:.0f}%  {stats.rss_mb:.0f} MB" if stats else ""
+        painter.setFont(self._mono)
         rw = painter.fontMetrics().horizontalAdvance(right_text) if right_text else 0
         if right_text:
             painter.setPen(QColor(theme.TEXT_DIM))
-            painter.drawText(QRect(right - rw, card.top() + 7, rw, 18), Qt.AlignmentFlag.AlignVCenter, right_text)
+            painter.drawText(QRect(right - rw, top, rw, 17), Qt.AlignmentFlag.AlignVCenter, right_text)
 
         painter.setFont(name_font)
         painter.setPen(QColor(theme.TEXT))
         name = painter.fontMetrics().elidedText(svc.name, Qt.TextElideMode.ElideRight, right - left - rw - 8)
-        painter.drawText(QRect(left, card.top() + 7, right - left, 18), Qt.AlignmentFlag.AlignVCenter, name)
+        painter.drawText(QRect(left, top, right - left, 17), Qt.AlignmentFlag.AlignVCenter, name)
 
-        painter.setFont(small)
+        painter.setFont(self._mono)
         status = theme.STATUS_LABELS[svc.status]
         if svc.status in (Status.RUNNING, Status.STOPPING):
-            status += f" · {format_uptime(svc.uptime)}"
+            status += f" {format_uptime(svc.uptime)}"
         elif svc.last_exit is not None and svc.status in (Status.FAILED, Status.EXITED):
             status += f" · {svc.last_exit.describe()}"
         if svc.task is not None:
             status += f" · ⚙ {svc.task_label}"
         elif svc.next_run and svc.status not in (Status.RUNNING, Status.STOPPING):
             status += f" · ⏱ {format_next_run(svc.next_run)}"
-        sub = f"{status}   {describe_target(svc)}"
-        painter.setPen(color if svc.status is Status.FAILED else QColor(theme.TEXT_DIM))
-        sub = painter.fontMetrics().elidedText(sub, Qt.TextElideMode.ElideRight, right - left)
-        painter.drawText(QRect(left, card.top() + 25, right - left, 16), Qt.AlignmentFlag.AlignVCenter, sub)
+        fm = painter.fontMetrics()
+        painter.setPen(color if svc.status in (Status.FAILED, Status.WAITING) else QColor(theme.TEXT_DIM))
+        status = fm.elidedText(status, Qt.TextElideMode.ElideRight, right - left)
+        painter.drawText(QRect(left, top + 18, right - left, 15), Qt.AlignmentFlag.AlignVCenter, status)
+        sw = fm.horizontalAdvance(status + "  ")
+        if sw < right - left:
+            painter.setPen(QColor(theme.TEXT_FAINT))
+            target = fm.elidedText(describe_target(svc), Qt.TextElideMode.ElideRight, right - left - sw)
+            painter.drawText(QRect(left + sw, top + 18, right - left - sw, 15), Qt.AlignmentFlag.AlignVCenter, target)
         painter.restore()

@@ -187,7 +187,7 @@ class CodeEditor(QPlainTextEdit):
 
     def gutter_width(self) -> int:
         digits = max(3, len(str(self.blockCount())))
-        return 14 + self.fontMetrics().horizontalAdvance("9") * digits
+        return 20 + self.fontMetrics().horizontalAdvance("9") * digits
 
     def _update_margins(self) -> None:
         self.setViewportMargins(self.gutter_width(), 0, 0, 0)
@@ -214,8 +214,8 @@ class CodeEditor(QPlainTextEdit):
         bottom = top + round(self.blockBoundingRect(block).height())
         current = self.textCursor().blockNumber()
         height = self.fontMetrics().height()
-        width = self._gutter.width() - 8
-        dim, bright = QColor("#4b525c"), QColor("#aab1bb")
+        width = self._gutter.width() - 10
+        dim, bright = QColor(theme.TEXT_FAINT), QColor(theme.TEXT)
         while block.isValid() and top <= event.rect().bottom():
             if block.isVisible() and bottom >= event.rect().top():
                 painter.setPen(bright if number == current else dim)
