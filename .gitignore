@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Pythonator data (portable mode keeps it next to the app)
+pythonator.json
+pythonator.corrupt.json
+pythonator.lock
+bots.json
+logs/
+requirements/
+*.log
+*.log.[0-9]*
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# PyInstaller
+build/
+dist/
+*.spec
+!packaging/pythonator.spec
+release/

@@ -1,0 +1,79 @@
+name: Release
+
+# One command makes a release:   git tag vX.Y.Z && git push origin vX.Y.Z
+# (X.Y.Z must match VERSION in .env.example, the one place the version is written). It builds the Windows installer
+# and .zip, the Linux .deb and .tar.gz, and macOS .dmg files for Apple silicon and Intel, then
+# publishes them as a GitHub release. "Run workflow" on the Actions tab builds them without
+# releasing (download them from the run's artifacts).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            program: dist/Pythonator/Pythonator.exe
+          - os: ubuntu-22.04  # the oldest glibc still supported: the .deb then runs on 22.04+ and Debian 12
+            program: dist/Pythonator/Pythonator
+          - os: macos-latest  # Apple silicon
+            program: dist/Pythonator.app/Contents/MacOS/Pythonator
+          - os: macos-15-intel
+            program: dist/Pythonator.app/Contents/MacOS/Pythonator
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Check the tag matches the version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          version=$(python -c "import pythonator; print(pythonator.__version__)")
+          if [ "v$version" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} doesn't match VERSION=$version in .env.example"
+            exit 1
+          fi
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+      - if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          if [ ! -f "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" ]; then choco install innosetup --no-progress -y; fi
+      - run: pip install . jedi pyinstaller pillow
+      - run: python packaging/build.py
+      - run: python packaging/smoke_test.py ${{ matrix.program }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.os }}
+          path: release/*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: release
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -l release
+          (cd release && sha256sum * > SHA256SUMS.txt)
+          gh release create "$GITHUB_REF_NAME" release/* --repo "$GITHUB_REPOSITORY" \
+            --title "Pythonator ${GITHUB_REF_NAME#v}" --generate-notes \
+            $([[ "$GITHUB_REF_NAME" == *-* ]] && echo --prerelease)

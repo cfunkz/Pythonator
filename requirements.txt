@@ -1,0 +1,3 @@
+PyQt6>=6.5
+psutil>=5.9
+jedi>=0.19  # optional: code completion in the editor

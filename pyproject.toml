@@ -1,0 +1,88 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pythonator"
+dynamic = ["version"]
+description = "A fast desktop supervisor for long-running scripts, web servers and bots on Windows, macOS and Linux."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [{ name = "cfunkz" }]
+dependencies = [
+    "PyQt6>=6.5",
+    "psutil>=5.9",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Environment :: MacOS X",
+    "Environment :: X11 Applications :: Qt",
+    "Topic :: Software Development",
+    "Typing :: Typed",
+]
+
+[project.optional-dependencies]
+completion = ["jedi>=0.19"]
+dev = [
+    "jedi>=0.19",
+    "mypy>=1.10",
+    "ruff>=0.5",
+    "pytest>=8",
+    "types-psutil",
+]
+
+[project.scripts]
+pythonator = "pythonator.__main__:main"
+
+[project.gui-scripts]
+pythonator-gui = "pythonator.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/cfunkz/Pythonator"
+Issues = "https://github.com/cfunkz/Pythonator/issues"
+
+[tool.setuptools.dynamic]
+version = { attr = "pythonator.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["pythonator*"]
+
+[tool.setuptools.package-data]
+pythonator = ["py.typed", "resources/*"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+files = ["pythonator", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["jedi", "jedi.*"]
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["testscripts"]
+
+[tool.ruff.lint]
+allowed-confusables = ["×", "–"]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "PL", "PTH"]
+ignore = [
+    "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR0917", "PLR2004", "SIM905",  # complexity heuristics
+    "PLW0603",                                                # module-level singletons are deliberate
+    "PLW0108",                                                # lambdas guard Qt slots from signal arguments
+    "PTH105",                                                 # os.replace is clearer for atomic swaps
+    "N802",                                                   # Qt overrides use camelCase
+]
+
+[tool.ruff.lint.per-file-ignores]
+"pythonator/ui/theme.py" = ["E501"]
+"tests/*" = ["PLC0415", "S"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

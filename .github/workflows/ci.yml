@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # PyQt6 6.12.0 ships a .pyi with a syntax error that stops mypy; any other version is fine.
+      - run: pip install -e ".[dev]" "PyQt6!=6.12.0"
+      - run: ruff check .
+      - run: mypy
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.11", "3.13"]
+        include:
+          # Intel Mac: Homebrew lives in /usr/local there instead of /opt/homebrew.
+          - os: macos-15-intel
+            python: "3.13"
+    runs-on: ${{ matrix.os }}
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+      - run: pip install -e ".[dev]"
+      - run: pytest -q -rs  # -rs: list skipped tests and why (e.g. a runtime missing on the runner)
+
+  build:
+    # The app as people download it: installer / .deb / .dmg for each platform, started once to prove it runs.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            program: dist/Pythonator/Pythonator.exe
+          - os: ubuntu-latest
+            program: dist/Pythonator/Pythonator
+          - os: macos-latest  # Apple silicon
+            program: dist/Pythonator.app/Contents/MacOS/Pythonator
+          - os: macos-15-intel
+            program: dist/Pythonator.app/Contents/MacOS/Pythonator
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+      - if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          if [ ! -f "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" ]; then choco install innosetup --no-progress -y; fi
+      - run: pip install . jedi pyinstaller pillow
+      - run: python packaging/build.py  # the same packages a release publishes
+      - run: python packaging/smoke_test.py ${{ matrix.program }}
+      - if: runner.os == 'Linux'
+        name: Install the .deb and start it
+        run: sudo apt-get install -y ./release/*.deb && python packaging/smoke_test.py /usr/bin/pythonator
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ matrix.os }}
+          path: release/*
+          if-no-files-found: error
