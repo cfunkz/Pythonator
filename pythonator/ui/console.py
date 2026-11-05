@@ -41,13 +41,17 @@ from PyQt6.QtWidgets import (
 from ..core.ansi import Parser
 from . import theme
 
-FRAME_MS = 33  # how often waiting output is drawn
+FRAME_MS = 16  # how often waiting output is drawn: every screen frame, so it scrolls smoothly
+FLOOD_FRAME_MS = 33  # under a flood: half as often (it scrolls by too fast to tell), half the CPU
 DRAW_BUDGET = 0.003  # seconds of each frame that drawing may take: a key press waits at most about this long
 SLICE = 2_000  # characters drawn between two looks at the clock
 LONG_LINE = 8_000  # longer lines are broken: one huge line is slow to lay out on every change
 QUIET = 0.15  # seconds after a key, click or scroll anywhere in the window during which the console waits
 MAX_WAIT = 2.0  # but it draws at least this often
 LAG = 0.3  # seconds of drawing allowed to wait; a burst within that shows in full, a flood is thinned out
+SMOOTH_MS = 120  # output arrives in chunks (the background service sends every 50 ms): each frame draws this
+FRAME_MAX = 6_000  # characters a frame at most (some 3,500 lines a second): more scrolls by too fast to read anyway
+SMOOTH_MIN = 240  # share of what waits, at least this many characters, so lines flow instead of jumping in
 BACKLOG = 4_000_000  # characters kept waiting at most, however slow the drawing
 SGR = re.compile(r"\x1b\[[0-9;]*m")
 URL = re.compile(r"https?://[^\s<>\"'`\x1b]+[^\s<>\"'`\x1b.,;:!?)\]]")
@@ -353,14 +357,22 @@ class Console(QWidget):
                               self._format(theme.color("muted"), False, True, False, False))
             self._skipped = 0
         budget = DRAW_BUDGET * 4 if self._fast else DRAW_BUDGET
+        frame_ms = self._timer.interval()
+        want = len(text) if self._fast else min(FRAME_MAX * frame_ms // FRAME_MS,
+                                                 max(SMOOTH_MIN, len(text) * frame_ms // SMOOTH_MS))
         pos, last, now = 0, 0.0, time.perf_counter()
         drawing = now
-        while pos < len(text) and (pos == 0 or now + last - began < budget):  # stop before it runs over
-            end = text.rfind("\n", pos, pos + SLICE) + 1 or min(len(text), pos + SLICE)  # whole lines when it can
+        while pos < min(want, len(text)) and (pos == 0 or now + last - began < budget):  # stop before it runs over
+            step = min(SLICE, max(1, want - pos))
+            end = text.rfind("\n", pos, pos + step) + 1 or text.find("\n", pos + step) + 1 or len(text)
+            end = min(end, pos + SLICE) if end - pos > SLICE else end  # whole lines when it can
             self._draw(cursor, text[pos:end])
             pos = end
             last, now = time.perf_counter() - now, time.perf_counter()
         self._fast = max(0, self._fast - pos)
+        flood = len(text) > keep // 2 or pos >= FRAME_MAX * frame_ms // FRAME_MS
+        if self._timer.interval() != (ms := FLOOD_FRAME_MS if flood else FRAME_MS):
+            self._timer.setInterval(ms)
         if pos < len(text):  # the rest waits for the next frame, with its held-back carriage return
             self._queue.append(text[pos:] + ("\r" if self._cr else ""))
             self._queued = len(self._queue[0])

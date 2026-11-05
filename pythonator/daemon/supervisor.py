@@ -87,6 +87,8 @@ class Slot:
     decoder: codecs.IncrementalDecoder = field(
         default_factory=lambda: codecs.getincrementaldecoder("utf-8")(errors="replace"))
     stop_then: Callable[[], None] | None = None  # what to do once it stopped (restart, remove)
+    live_skipped: int = 0  # output too fast for the live view, not yet noted there
+    live_noted: float = 0.0
     after_steps: Callable[[], None] | None = None  # what to do once its task steps succeeded (start it)
 
 
@@ -182,9 +184,16 @@ class Supervisor:
                 text = "".join(slot.pending)
                 slot.pending.clear()
                 if len(text) > LIVE_LIMIT:
-                    skipped = len(text) - LIVE_LIMIT // 2
-                    text = f"\x1b[2m[… {skipped:,} characters skipped in the live view, all in the log]\x1b[0m\n" \
-                           + text[-LIVE_LIMIT // 2:]
+                    slot.live_skipped += len(text) - LIVE_LIMIT // 2
+                    text = text[-LIVE_LIMIT // 2:]
+                    if (cut := text.find("\n") + 1) and cut < len(text):
+                        slot.live_skipped += cut
+                        text = text[cut:]  # from a line start
+                    if time.monotonic() - slot.live_noted >= 1.0:  # one note a second, not one every tick
+                        slot.live_noted = time.monotonic()
+                        text = f"\x1b[2m[… {slot.live_skipped:,} characters skipped in the live view, " \
+                               f"all in the log]\x1b[0m\n" + text
+                        slot.live_skipped = 0
                 self.emit({"ev": "output", "id": slot.service.id, "text": text})
         if self._launches:
             self._next_launch()

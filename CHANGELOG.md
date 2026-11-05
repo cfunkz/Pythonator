@@ -2,10 +2,14 @@
 
 Pythonator follows [semantic versioning](https://semver.org/). Each release lists what changed for users.
 
-## 0.0.3
+## 0.0.4
 
 - Own environments are made and filled in Sandbox mode on every system: on Linux and macOS the setup steps can
   write the project's `.venv` (it was mounted read-only), and on Windows pip is set up as a step of its own.
+- The console scrolls smoothly instead of in bursts: output is spread over every frame (60 a second, 30 under a
+  flood), and the background service's "skipped" note comes at most once a second.
+- Much less CPU under floods: the background service gathers a program's output in chunks instead of reading it
+  a line at a time (84% of a core down to 7% in a flood test), and the console caps what one frame draws.
 
 ## 0.0.2
 

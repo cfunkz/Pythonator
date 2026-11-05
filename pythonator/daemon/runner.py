@@ -26,6 +26,8 @@ from ..isolation import container as containers
 from . import winproc
 
 CHUNK = 64 * 1024
+SMALL_READ = 16 * 1024  # a read shorter than this: the pipe was nearly empty
+GATHER = 0.004  # seconds to let output gather after a short read (the window shows it every 50 ms anyway)
 MAX_PENDING = 2 * 1024 * 1024  # bytes read but not yet taken; then the reader waits, and so does the program
 
 
@@ -118,6 +120,10 @@ class Runner:
                 self._out += data
             if wake:
                 self.sink.put(Output(self.key, self))
+            if len(data) < SMALL_READ:
+                # A program printing line by line hands over a line per read: tens of thousands of reads a second
+                # under a flood, each a trip through this loop. Waiting a moment lets the pipe gather a chunk.
+                time.sleep(GATHER)
         code: int | None
         try:
             code = proc.wait()

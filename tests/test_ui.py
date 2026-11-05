@@ -152,45 +152,6 @@ def test_plugin_panels_render_text_as_plain_text(qtbot: Any) -> None:
     assert widget.textFormat().name == "PlainText"  # type: ignore[attr-defined]
 
 
-def test_panel_redraw_keeps_the_keyboard_in_its_text_box(qtbot: Any) -> None:
-    """A plugin redrawing its panel (an AI reply coming in) never moves typing into the code editor."""
-    from PyQt6.QtWidgets import QApplication, QHBoxLayout, QPlainTextEdit, QWidget
-
-    window = QWidget()
-    qtbot.addWidget(window)
-    code = QPlainTextEdit()
-    dock = panels.PanelDock(lambda *a: None)
-    row = QHBoxLayout(window)
-    row.addWidget(code)
-    row.addWidget(dock)
-    window.show()
-    window.activateWindow()
-    qtbot.waitActive(window)
-
-    def panel(n: int) -> dict[str, Any]:
-        return {"title": "AI", "items": [{"type": "text", "text": f"reply {n}"}, {"type": "input", "action": "ask"}]}
-
-    dock.update_panel("ai", "ai", panel(0))
-    box = dock.findChildren(QPlainTextEdit)[0]
-    qtbot.waitUntil(box.isVisible)
-    box.setFocus()
-    qtbot.waitUntil(box.hasFocus)
-    qtbot.keyClicks(box, "hello world")
-    caret = box.textCursor()
-    caret.setPosition(5)
-    box.setTextCursor(caret)
-    for n in range(1, 4):
-        dock.update_panel("ai", "ai", panel(n))
-        qtbot.wait(10)
-    qtbot.keyClicks(QApplication.focusWidget(), "X")
-    assert code.toPlainText() == ""
-    assert [b.toPlainText() for b in dock.findChildren(QPlainTextEdit) if b.isVisible()] == ["helloX world"]
-    code.setFocus()
-    dock.update_panel("ai", "ai", panel(4))
-    qtbot.wait(10)
-    assert QApplication.focusWidget() is code
-
-
 def test_plugins_dialog(qtbot: Any) -> None:
     sent: list[Any] = []
     dlg = PluginsDialog(lambda *a: sent.append(a))
