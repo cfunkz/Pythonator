@@ -166,6 +166,46 @@ def test_python_prefers_the_project_venv(project: Path) -> None:
     assert prog is not None and Path(prog).is_relative_to(project / ".venv")
 
 
+
+def test_own_environment_needs_and_folders(project: Path) -> None:
+    assert runtimes.env_missing("python", project) == "it has no virtual environment yet"
+    assert runtimes.env_folders("python", project) == []
+    (project / "package.json").write_text('{"dependencies": {"left-pad": "1"}}')
+    assert runtimes.env_missing("node", project) == "node_modules is missing"
+    (project / "node_modules").mkdir()
+    assert runtimes.env_missing("node", project) == ""
+    assert runtimes.env_folders("node", project) == [project / "node_modules"]
+    assert runtimes.env_folders("python", project, container=True) == [project / ".venv-container"]
+    assert "global packages" in runtimes.env_summary("python", project, own=False)
+
+
+def test_own_environment_gets_a_private_cache(dirs: DataDirs, project: Path) -> None:
+    from pythonator.isolation.base import env_cache, own_env_vars
+
+    go = Service(name="g", folder=str(project), runtime="go", entry="main.go")
+    env = own_env_vars(go, dirs)
+    assert Path(env["GOMODCACHE"]).is_relative_to(env_cache(dirs, go)) and "-modcacherw" in env["GOFLAGS"]
+    assert own_env_vars(go.model_copy(update={"own_env": False}), dirs) == {}
+    assert own_env_vars(go.model_copy(update={"env": {"GOMODCACHE": "/mine"}}), dirs) == {}
+
+
+def test_recreate_never_deletes_outside_the_project(tmp_path: Path, project: Path) -> None:
+    from pythonator.daemon.supervisor import _remove_env
+
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    with pytest.raises(OSError):
+        _remove_env(outside, [project.resolve()])
+    with pytest.raises(OSError):
+        _remove_env(project, [project.resolve()])
+    assert outside.is_dir() and project.is_dir()
+    inside = project / "node_modules" / "pkg"
+    inside.mkdir(parents=True)
+    (inside / "f.js").write_text("x")
+    (inside / "f.js").chmod(0o400)
+    _remove_env(project / "node_modules", [project.resolve()])
+    assert not (project / "node_modules").exists()
+
 # -- schedules, ANSI, logs --------------------------------------------------------------------------------
 
 

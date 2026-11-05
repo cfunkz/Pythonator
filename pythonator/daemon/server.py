@@ -248,6 +248,8 @@ class Daemon:
                 s.write(sid, text)
             case p.Install(id=sid):
                 s.install(sid)
+            case p.Recreate(id=sid):
+                s.recreate(sid)
             case p.Pull(id=sid):
                 s.pull(sid)
             case p.Tail(id=sid):

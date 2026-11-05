@@ -12,7 +12,18 @@ from ..core import runtimes
 from ..core.models import Mode, Service
 from ..paths import IS_LINUX, IS_MAC, IS_WINDOWS, DataDirs
 from . import container
-from .base import Command, Grant, IsolationError, Policy, base_env, forbidden_read, forbidden_write, private_dirs
+from .base import (
+    Command,
+    Grant,
+    IsolationError,
+    Policy,
+    base_env,
+    env_cache,
+    forbidden_read,
+    forbidden_write,
+    own_env_vars,
+    private_dirs,
+)
 from .base import runtime_folders as runtime_folders
 
 __all__ = ["Command", "IsolationError", "capabilities", "prepare", "service_argv"]
@@ -63,6 +74,8 @@ def policy_for(service: Service, argv: list[str], dirs: DataDirs, *, task: bool)
         programs.append(node)
     for prog in programs:
         grants +=[Grant(p, False) for p in runtime_folders(prog) if p.exists() and not forbidden_read(p, dirs)]
+    if own_env_vars(service, dirs):
+        grants.append(Grant(env_cache(dirs, service), True))
     for extra in service.sandbox.folders:
         path = Path(extra.path).expanduser().resolve()
         why = forbidden_write(path, dirs) if extra.write else forbidden_read(path, dirs)
@@ -88,6 +101,7 @@ def prepare(service: Service, dirs: DataDirs, *, task: list[str] | None = None) 
     argv = service_argv(service, task)
     _check_windows_batch(argv)
     env = base_env(service, sandboxed=service.mode is Mode.SANDBOX)
+    env.update(own_env_vars(service, dirs))
     if service.mode is Mode.FULL:
         return Command(argv, folder, env, describe="Full access: runs as you, no sandbox", shown=argv)
     policy = policy_for(service, argv, dirs, task=task is not None)

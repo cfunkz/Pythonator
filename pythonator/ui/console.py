@@ -1,9 +1,10 @@
 """The live console: a bar (find, wrap, follow, open log, clear), the output with ANSI colours and clickable links,
 and a line for the program's input.
 
-Output is drawn on a timer, a few milliseconds a frame, so a flooding program never makes the editor or the rest of
-the window wait. When it prints faster than that, the console skips ahead to the newest output (with a note; the log
-has everything), and while it can't be seen it only keeps the newest lines. A carriage return rewrites the line, as in
+Output is drawn on a timer, a few milliseconds a frame, and not while the user types, clicks or scrolls, so a flooding
+program never makes the editor or the rest of the window wait. When it prints faster than that, every frame shows the
+newest output (with a note a second; the log has everything), and while it can't be seen it only keeps the newest
+lines. A carriage return rewrites the line, as in
 a terminal, so a progress bar stays one short line instead of growing without end."""
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ from __future__ import annotations
 import re
 import time
 
-from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
     QDesktopServices,
@@ -25,6 +26,7 @@ from PyQt6.QtGui import (
     QTextDocument,
 )
 from PyQt6.QtWidgets import (
+    QApplication,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -39,14 +41,45 @@ from PyQt6.QtWidgets import (
 from ..core.ansi import Parser
 from . import theme
 
-FRAME_MS = 50  # how often waiting output is drawn (the background service sends it as often)
+FRAME_MS = 33  # how often waiting output is drawn
 DRAW_BUDGET = 0.003  # seconds of each frame that drawing may take: a key press waits at most about this long
 SLICE = 2_000  # characters drawn between two looks at the clock
 LONG_LINE = 8_000  # longer lines are broken: one huge line is slow to lay out on every change
-BEHIND = 1.0  # more than this many seconds of drawing waiting: skip to the newest output
+QUIET = 0.15  # seconds after a key, click or scroll anywhere in the window during which the console waits
+MAX_WAIT = 2.0  # but it draws at least this often
+LAG = 0.3  # seconds of drawing allowed to wait; a burst within that shows in full, a flood is thinned out
 BACKLOG = 4_000_000  # characters kept waiting at most, however slow the drawing
 SGR = re.compile(r"\x1b\[[0-9;]*m")
 URL = re.compile(r"https?://[^\s<>\"'`\x1b]+[^\s<>\"'`\x1b.,;:!?)\]]")
+
+
+class _Input(QObject):
+    """When the user last typed, clicked or scrolled: the console then waits a moment, so the editor gets the
+    whole frame."""
+
+    KINDS = frozenset({QEvent.Type.KeyPress, QEvent.Type.Wheel, QEvent.Type.MouseButtonPress,
+                       QEvent.Type.MouseButtonDblClick, QEvent.Type.ShortcutOverride})
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.at = 0.0
+
+    def eventFilter(self, obj: QObject | None, event: QEvent | None) -> bool:
+        if event is not None and event.type() in self.KINDS:
+            self.at = time.perf_counter()
+        return False
+
+
+_input: _Input | None = None
+
+
+def _watch_input() -> _Input:
+    global _input
+    if _input is None:
+        _input = _Input()
+        if (app := QApplication.instance()) is not None:
+            app.installEventFilter(_input)
+    return _input
 
 
 def tool(text: str, tip: str, *, checkable: bool = False) -> QToolButton:
@@ -193,7 +226,9 @@ class Console(QWidget):
         self._skipped = 0  # lines skipped and not yet noted
         self._cr = False  # a carriage return held back: a line feed may follow in the next piece
         self._rate = 400_000.0  # characters drawn per second of drawing, measured
-        self._caught_up = 0.0  # when the console last checked it isn't behind
+        self._drawn = 0.0  # when output was last drawn
+        self._noted = 0.0  # when the last "skipped" note was drawn
+        self._input = _watch_input()
         self._fast = 0  # characters of a shown log tail, drawn with a bigger budget: nobody types while it loads
         self._formats: dict[tuple[str, bool, bool, bool, bool, str], QTextCharFormat] = {}
         self._timer = QTimer(self)
@@ -289,11 +324,12 @@ class Console(QWidget):
                 self._skip(self._queued - self.max_lines * 100)
             return
         began = time.perf_counter()
-        if not self._fast and began - self._caught_up >= BEHIND:  # once a second at most: one note a second
-            self._caught_up = began
-            keep = max(64_000, int(self._rate * DRAW_BUDGET * 1000 / FRAME_MS * BEHIND))
-            if self._queued > keep * 1.5:
-                self._skip(self._queued - keep)
+        if began - self._input.at < QUIET and began - self._drawn < MAX_WAIT:
+            return  # the user is typing or scrolling: that goes first
+        self._drawn = began
+        keep = max(48_000, int(self._rate * DRAW_BUDGET * 1000 / FRAME_MS * LAG))  # what LAG seconds can draw
+        if not self._fast and self._queued > keep:  # behind: drop the oldest a little every frame, never a jump
+            self._skip(self._queued - keep)
         text = "".join(self._queue)
         self._queue.clear()
         self._queued = 0
@@ -308,7 +344,8 @@ class Console(QWidget):
         cursor = QTextCursor(self.view.document())
         cursor.movePosition(QTextCursor.MoveOperation.End)
         cursor.beginEditBlock()
-        if self._skipped:
+        if self._skipped and began - self._noted >= 1.0:  # one note a second at most
+            self._noted = began
             if cursor.block().length() > 1:
                 cursor.insertText("\n")
             lines = f"{self._skipped:,} line" + ("s" if self._skipped != 1 else "")
@@ -317,6 +354,7 @@ class Console(QWidget):
             self._skipped = 0
         budget = DRAW_BUDGET * 4 if self._fast else DRAW_BUDGET
         pos, last, now = 0, 0.0, time.perf_counter()
+        drawing = now
         while pos < len(text) and (pos == 0 or now + last - began < budget):  # stop before it runs over
             end = text.rfind("\n", pos, pos + SLICE) + 1 or min(len(text), pos + SLICE)  # whole lines when it can
             self._draw(cursor, text[pos:end])
@@ -332,8 +370,8 @@ class Console(QWidget):
         if self.follow.isChecked():
             self._to_end()
         self._writing = False
-        spent = time.perf_counter() - began
-        if spent > 0.001:
+        spent = now - drawing
+        if spent > 0.0005:
             self._rate = 0.8 * self._rate + 0.2 * (pos / spent)
         if self.search.text() and not self._find_timer.isActive():
             self._find_timer.start()

@@ -99,8 +99,10 @@ def base_env(service: Service, *, sandboxed: bool) -> dict[str, str]:
     env["PYTHONUNBUFFERED"] = "1"  # output appears as it is printed
     env.setdefault("PYTHONIOENCODING", "utf-8")
     env.setdefault("FORCE_COLOR", "1")
-    if service.runtime == "ruby":
+    if service.own_env and service.runtime == "ruby":
         env.setdefault("BUNDLE_PATH", "vendor/bundle")  # gems stay with the project, like a venv
+    if service.own_env and service.runtime == "python":
+        env["PYTHONNOUSERSITE"] = "1"  # nothing from the user's own site-packages either
     if service.env_file:
         env.update(read_env_file(Path(service.folder) / service.env_file))
     env.update(service.env)
@@ -109,6 +111,26 @@ def base_env(service: Service, *, sandboxed: bool) -> dict[str, str]:
         if service.network.expose == "local":
             env.setdefault("HOST", "127.0.0.1")
     return env
+
+
+def env_cache(dirs: DataDirs, service: Service) -> Path:
+    """The service's own package cache (Deno, Go, NuGet, Cargo): removed with the service."""
+    return dirs.sandboxes / f"svc-{service.id}" / "env"
+
+
+def own_env_vars(service: Service, dirs: DataDirs) -> dict[str, str]:
+    """Variables pointing a runtime's shared package cache at the service's own (``{}`` if none applies)."""
+    from ..core import runtimes
+
+    var = runtimes.CACHE_VARS.get(service.runtime)
+    if not service.own_env or var is None or var in service.env:
+        return {}
+    cache = env_cache(dirs, service) / service.runtime
+    cache.mkdir(parents=True, exist_ok=True)
+    out = {var: str(cache)}
+    if service.runtime == "go":
+        out["GOFLAGS"] = " ".join(filter(None, [os.environ.get("GOFLAGS", ""), "-modcacherw"]))  # deletable
+    return out
 
 
 def private_dirs(dirs: DataDirs, name: str) -> tuple[Path, Path]:

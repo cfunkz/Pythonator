@@ -106,14 +106,14 @@ RUNTIMES: dict[str, Runtime] = {r.key: r for r in (
             run=lambda p, e, a: [p, "run", e, *a], install=lambda f, p: [[p, "install"]],
             packages="node_modules in the project"),
     Runtime("deno", "Deno", ("deno",), (), ("deno.json", "deno.jsonc"), "denoland/deno:2",
-            run=_deno_run, install=None, packages="Deno's cache (DENO_DIR, private to the sandbox)"),
+            run=_deno_run, install=None, packages="its own Deno cache (DENO_DIR)"),
     Runtime("go", "Go", ("go",), (".go",), ("go.mod",), "golang:1.24",
             run=_go_run, install=lambda f, p: [[p, "mod", "download"]],
-            packages="the Go module cache (GOMODCACHE)"),
+            packages="its own Go module cache (GOMODCACHE)"),
     Runtime("java", "Java", ("java",), (".java", ".jar"), (), "eclipse-temurin:21",
             run=_java_run, install=None, packages="your build tool's folders (a .jar has them inside)"),
     Runtime("dotnet", ".NET", ("dotnet",), (".csproj", ".fsproj"), (), "mcr.microsoft.com/dotnet/sdk:9.0",
-            run=_dotnet_run, install=lambda f, p: [[p, "restore"]], packages="the NuGet cache"),
+            run=_dotnet_run, install=lambda f, p: [[p, "restore"]], packages="its own NuGet cache"),
     Runtime("ruby", "Ruby", ("ruby",), (".rb",), ("Gemfile",), "ruby:3.4-slim",
             install=lambda f, p: [[which("bundle") or "bundle", "install"]],
             packages="vendor/bundle in the project (BUNDLE_PATH)"),
@@ -121,7 +121,7 @@ RUNTIMES: dict[str, Runtime] = {r.key: r for r in (
             install=lambda f, p: [[which("composer") or "composer", "install", "--no-interaction"]],
             packages="vendor in the project"),
     Runtime("rust", "Rust", ("cargo",), (".rs",), ("Cargo.toml",), "rust:1-slim",
-            run=_cargo_run, install=lambda f, p: [[p, "fetch"]], packages="target and the Cargo cache"),
+            run=_cargo_run, install=lambda f, p: [[p, "fetch"]], packages="target and its own Cargo cache"),
     Runtime("shell", "Shell", ("bash", "sh"), (".sh",), (), "debian:stable-slim"),
     Runtime("powershell", "PowerShell", ("pwsh", "powershell"), (".ps1",), (), "mcr.microsoft.com/powershell",
             run=_powershell_run),
@@ -208,3 +208,79 @@ def install_root(prog: str) -> Path:
     path = Path(prog).resolve()
     parent = path.parent
     return parent.parent if parent.name.lower() in ("bin", "scripts", "sbin") else parent
+
+
+# -- each service's own environment ----------------------------------------------------------------------
+
+# Runtimes whose packages go to a cache shared by the whole computer: with "Own environment" each service
+# gets its own, in Pythonator's data folder (``Env.cache``).
+CACHE_VARS: dict[str, str] = {"deno": "DENO_DIR", "go": "GOMODCACHE", "dotnet": "NUGET_PACKAGES", "rust": "CARGO_HOME"}
+OWN_ENV = frozenset({"python", "node", "bun", "ruby", "php", *CACHE_VARS})  # runtimes "Own environment" applies to
+
+
+def env_folders(runtime: str, folder: Path, *, container: bool = False) -> list[Path]:
+    """The folders in the project that hold its environment: what Recreate environment deletes."""
+    if runtime == "python":
+        if container:
+            return [folder / ".venv-container"]
+        venv = project_venv(folder)
+        return [venv] if venv is not None else []
+    names = {"node": ("node_modules",), "bun": ("node_modules",), "ruby": ("vendor/bundle",),
+             "php": ("vendor",)}.get(runtime, ())
+    return [folder / n for n in names]
+
+
+def _has_dependencies(package_json: Path) -> bool:
+    try:
+        data = json.loads(package_json.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict) and any(data.get(k) for k in ("dependencies", "devDependencies"))
+
+
+def env_missing(runtime: str, folder: Path) -> str:
+    """Why the project's own environment has to be made before it can run ("" if it's ready)."""
+    if runtime == "python":
+        venv = project_venv(folder)
+        if venv is None:
+            return "it has no virtual environment yet"
+        home = venv_home(venv)
+        if not venv_python(venv).is_file() or (home is not None and not home.exists()):
+            return f"{venv.name} is broken (its Python is gone)"
+    elif runtime in ("node", "bun"):
+        if _has_dependencies(folder / "package.json") and not (folder / "node_modules").is_dir():
+            return "node_modules is missing"
+    elif runtime == "ruby":
+        if (folder / "Gemfile").is_file() and not (folder / "vendor" / "bundle").is_dir():
+            return "vendor/bundle is missing"
+    elif runtime == "php":
+        if (folder / "composer.json").is_file() and not (folder / "vendor").is_dir():
+            return "vendor is missing"
+    return ""
+
+
+def env_summary(runtime: str, folder: Path, *, own: bool, container: bool = False) -> str:
+    """One line for the UI: where this service's packages live and whether they're ready."""
+    if container:
+        return "Packages live inside the container and the project folder, never on this computer's runtime."
+    rt = RUNTIMES.get(runtime)
+    if rt is None or runtime not in OWN_ENV:
+        return f"Packages go to {rt.packages if rt and rt.packages else 'wherever the program puts them'}."
+    if not own:
+        if runtime == "python":
+            venv = project_venv(folder)
+            return (f"Uses {venv.name} in the project." if venv else
+                    "Own environment is off: it runs on the system Python and sees its global packages.")
+        if runtime in CACHE_VARS:
+            return "Own environment is off: packages go to the computer's shared cache."
+        if runtime == "ruby":
+            return "Own environment is off: gems go to the system Ruby."
+        return f"Packages go to {rt.packages}."
+    if runtime in CACHE_VARS:
+        return f"Packages go to {rt.packages}, private to this service."
+    if why := env_missing(runtime, folder):
+        return f"Own environment: {why}. Start or Install packages makes it."
+    where = env_folders(runtime, folder)
+    if where and where[0].exists():
+        return f"Own environment: {where[0].relative_to(folder).as_posix()} in the project, ready."
+    return f"Own environment: packages go to {rt.packages}."

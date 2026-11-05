@@ -162,6 +162,17 @@ def test_window_start_all_and_stop_all(harness: DaemonHarness, dirs: DataDirs, p
         window.deleteLater()
 
 
+def test_start_all_starts_services_one_after_another(harness: DaemonHarness, project: Path) -> None:
+    """Start all doesn't launch everything at once: the next one starts after the last one is up, a moment apart."""
+    (project / "s.py").write_text("import time\nprint('up', flush=True)\nwhile True:\n    time.sleep(0.2)\n")
+    sids = [harness.add(name=f"s{i}", folder=str(project), entry="s.py", restart="never") for i in range(3)]
+    harness.ok({"op": "start_all"})
+    harness.wait(lambda: all("running" in harness.states(s) for s in sids), timeout=30_000)
+    assert "waiting" in harness.states(sids[2])  # it waited its turn
+    harness.ok({"op": "stop_all"})
+    harness.wait(lambda: all(harness.states(s)[-1] == "stopped" for s in sids), timeout=20_000)
+
+
 def test_installer_shutdown_stops_the_background_service(dirs: DataDirs, project: Path) -> None:
     """What the Windows installer runs before an update (and the uninstaller with --uninstall)."""
     import subprocess
@@ -276,3 +287,27 @@ def test_limits_are_named_at_start(harness: DaemonHarness, dirs: DataDirs, proje
     harness.wait(lambda: harness.states(sid)[-1:] == ["stopped"], timeout=10_000)
     log = (dirs.logs / f"{sid}.log").read_text(encoding="utf-8")
     assert "Limits: memory 256 MB" in log and "CPU 0.5 cores (50% of one core)" in log, log
+
+
+def test_own_environment_is_made_on_start_and_recreated(harness: DaemonHarness, project: Path) -> None:
+    (project / "where.py").write_text("import sys\nprint('prefix', sys.prefix, flush=True)\n")
+    sid = harness.add(name="env", folder=str(project), entry="where.py", restart="never")
+    harness.ok({"op": "start", "id": sid})
+    harness.wait(lambda: "prefix" in harness.output(sid), timeout=120_000)
+    assert (project / ".venv" / "pyvenv.cfg").is_file()
+    assert ".venv" in harness.output(sid).split("prefix", 1)[1]  # never the system Python
+    harness.wait(lambda: harness.states(sid)[-1] in ("stopped", "failed"))
+    marker = project / ".venv" / "old-marker"
+    marker.write_text("x")
+    harness.ok({"op": "recreate", "id": sid})
+    harness.wait(lambda: "Deleted .venv" in harness.output(sid), timeout=30_000)
+    harness.wait(lambda: harness.states(sid)[-1] == "stopped", timeout=120_000)
+    assert (project / ".venv" / "pyvenv.cfg").is_file() and not marker.exists()
+
+
+def test_own_environment_off_uses_the_runtime_as_is(harness: DaemonHarness, project: Path) -> None:
+    (project / "hi.py").write_text("print('hi there', flush=True)\n")
+    sid = harness.add(name="global", folder=str(project), entry="hi.py", restart="never", own_env=False)
+    harness.ok({"op": "start", "id": sid})
+    harness.wait(lambda: "hi there" in harness.output(sid))
+    assert not (project / ".venv").exists()

@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..core import runtimes
-from ..core.models import Service, Settings
+from ..core.models import Mode, Service, Settings
 from ..daemon.client import DaemonClient
 from ..paths import IS_WINDOWS, DataDirs
 from . import theme
@@ -229,12 +229,13 @@ class MainWindow(QMainWindow):
         self.b_start = button("▶ Start", "Start (F5)", prop="accent")
         self.b_stop = button("■ Stop", "Stop gracefully; press again to kill (Shift+F5)")
         self.b_restart = button("↻ Restart", "Restart (Ctrl+R)")
-        self.b_packages = button("Packages ▾", "Create the venv and install packages, or pull from Git")
+        self.b_packages = button("Packages ▾", "Install packages, recreate the environment, or pull from Git")
         self.b_configure = button("⚙ Configure", "Edit this service (Ctrl+E)")
         self.b_more = button("⋯", "More actions")
         self.b_packages.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         packages = QMenu(self)
         self.a_install = packages.addAction("Install packages", lambda: self._op("install"))
+        self.a_recreate = packages.addAction("Recreate environment…", self._recreate)
         self.a_pull = packages.addAction("Pull from Git (fast-forward only)", lambda: self._op("pull"))
         self.b_packages.setMenu(packages)
         self.b_more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
@@ -493,8 +494,9 @@ class MainWindow(QMainWindow):
         self.b_start.setEnabled(state not in theme.LIVE)
         self.b_stop.setEnabled(state in (*theme.LIVE, "waiting"))
         self._label(self.b_stop, "✖ Kill" if state == "stopping" else "■ Stop")
-        if self.a_install is not None and self.a_pull is not None:
+        if self.a_install is not None and self.a_pull is not None and self.a_recreate is not None:
             self.a_install.setEnabled(state not in theme.LIVE)
+            self.a_recreate.setEnabled(state not in theme.LIVE)
             self.a_pull.setEnabled(state not in theme.LIVE and Path(service.folder, ".git").exists())
         self._fit_header()
 
@@ -562,6 +564,23 @@ class MainWindow(QMainWindow):
         if op == "start":
             message["confirmed"] = confirmed
         self.client.request(message, lambda ok, _d, err: self._op_done(op, sid, ok, err))
+
+    def _recreate(self) -> None:
+        service = self.services.get(self.current)
+        if service is None:
+            return
+        folder = Path(service.folder)
+        container = service.mode is Mode.CONTAINER
+        names = [p.relative_to(folder).as_posix() for p in runtimes.env_folders(service.runtime, folder,
+                                                                                 container=container) if p.exists()]
+        if not container and service.runtime in runtimes.CACHE_VARS:
+            names.append(f"its private {runtimes.RUNTIMES[service.runtime].label} package cache")
+        what = ", ".join(names) or "nothing yet"
+        if QMessageBox.question(self, "Recreate environment", f"Delete {what} and install {service.name}'s packages "
+                                "again from scratch?\n\nYour code and data aren't touched.",
+                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+            self._op("recreate")
 
     def _op_done(self, op: str, sid: str, ok: bool, error: str) -> None:
         if ok:

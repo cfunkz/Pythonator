@@ -2,6 +2,17 @@
 
 Pythonator follows [semantic versioning](https://semver.org/). Each release lists what changed for users.
 
+## Unreleased
+
+- **Own environment** per service, on by default: Start makes the project's `.venv` (or `node_modules`, `vendor`)
+  when it's missing, Deno, Go, .NET and Rust get a private package cache, and nothing comes from global installs.
+  The service dialog shows where its packages live, and **Packages ▾ → Recreate environment** starts it fresh.
+- The editor stays responsive while a service floods its console: the console draws a few milliseconds a frame,
+  pauses while you type or scroll, thins out floods smoothly (the log keeps everything) and handles progress bars
+  (carriage returns) like a terminal. Scrolling big files never waits on syntax colouring.
+- Plugin panels (the AI assistant) no longer take the keyboard: a redraw keeps your typing, cursor and focus.
+- **Start all** and login start services one after another, so many services don't spike the CPU together.
+
 ## 0.0.1
 
 The first release from the relaunched repository, with everything the preview builds had. Services and settings

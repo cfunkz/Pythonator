@@ -86,9 +86,16 @@ def entry_text(service: Service) -> str:
     return service.entry or " ".join(service.command[:2]) or service.runtime
 
 
+def queued(row: Row) -> bool:
+    """Start all or login started it in a line, one service after another; its turn hasn't come yet."""
+    return row.status == "waiting" and row.state.get("note") == "Starting in turn"
+
+
 def status_text(row: Row) -> str:
     st, state = row.state, row.status
     text = theme.STATE_LABELS.get(state, state.capitalize())
+    if queued(row):
+        return "Queued · starts in turn"
     if state in ("running", "stopping") and st.get("started"):
         text += f" {uptime(time.time() - float(st['started']))}"
     elif state == "task" and st.get("task"):
@@ -267,7 +274,7 @@ class ServiceDelegate(QStyledItemDelegate):
         painter.setFont(self.mono)
         fm = painter.fontMetrics()
         status = fm.elidedText(status_text(row), Qt.TextElideMode.ElideRight, right - left)
-        alarm = row.status in ("failed", "waiting")
+        alarm = row.status in ("failed", "waiting") and not queued(row)
         painter.setPen(QColor(theme.state_color(row.status) if alarm else c.muted))
         painter.drawText(QRect(left, top + 18, right - left, 15), Qt.AlignmentFlag.AlignVCenter, status)
         sw = fm.horizontalAdvance(status + "  ")

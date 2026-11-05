@@ -6,7 +6,9 @@ Plugins send data, never code or HTML: every string is shown as plain text, so a
 from __future__ import annotations
 
 import contextlib
+import json
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any
 
 from PyQt6.QtCore import QEvent, QObject, Qt
@@ -202,43 +204,126 @@ def _disconnect(app: QApplication, slot: Callable[..., None]) -> None:
         app.focusChanged.disconnect(slot)
 
 
+@dataclass
+class _Item:
+    """A drawn panel node and its widget, kept so the next redraw can reuse it."""
+
+    node: dict[str, Any]
+    widget: QWidget
+    key: str
+    slot: str = ""  # what it can be reused as when its node changes: the same text box, or any row
+    children: list[_Item] = field(default_factory=list)  # a row's items
+
+
+def _key(node: dict[str, Any]) -> str:
+    return json.dumps(node, sort_keys=True, ensure_ascii=False, default=str)
+
+
+def _slot(node: dict[str, Any]) -> str:
+    kind = node.get("type")
+    return f"input:{node.get('action', '')}" if kind == "input" else "row:" if kind == "row" else ""
+
+
+def _update_input(widget: QWidget, node: dict[str, Any]) -> None:
+    """Same text box (same action), maybe a new placeholder or button label: change those, keep the widget."""
+    edit, button = widget.findChild(QPlainTextEdit), widget.findChild(QPushButton)
+    if edit is not None:
+        edit.setPlaceholderText(str(node.get("placeholder", "")))
+    if button is not None:
+        button.setText(str(node.get("label") or "Send"))
+
+
+def reconcile(plugin: str, layout: QLayout, old: list[_Item], nodes: list[Any], on_action: Action,
+              drafts: Drafts) -> list[_Item]:
+    """Lay out ``nodes`` in ``layout``, reusing the widgets of ``old`` that still fit (like a list view's diff).
+
+    An unchanged node keeps its widget, a text box with the same action is always kept (so a redraw never takes
+    the user's typing, cursor or focus) and a row is diffed item by item. Only what changed is drawn again.
+    """
+    pool = list(old)
+
+    def pick(want: str) -> _Item | None:  # by exact node, or by slot
+        for i, item in enumerate(pool):
+            if want in (item.key, item.slot):
+                return pool.pop(i)
+        return None
+
+    out: list[_Item] = []
+    for raw in nodes:
+        node = raw if isinstance(raw, dict) else {}
+        key, kind, slot = _key(node), node.get("type"), _slot(node)
+        item = pick(key) or (pick(slot) if slot else None)
+        if item is not None and kind == "input" and item.key != key:
+            _update_input(item.widget, node)
+        if item is None:
+            widget = QWidget() if kind == "row" else render(plugin, node, on_action, drafts)
+            if kind == "row":
+                QHBoxLayout(widget).setContentsMargins(0, 0, 0, 0)
+            item = _Item(node, widget, "", slot)
+        if kind == "row" and item.key != key and (row := item.widget.layout()) is not None:
+            item.children = reconcile(plugin, row, item.children, list(node.get("items", [])), on_action, drafts)
+        item.node, item.key = node, key
+        out.append(item)
+    for item in pool:  # no longer in the panel
+        item.widget.hide()
+        item.widget.deleteLater()
+    while layout.count():  # re-add in the new order; a widget taken out of a layout keeps its focus
+        layout.takeAt(0)
+    for item in out:
+        layout.addWidget(item.widget)
+    return out
+
+
 class PanelDock(QTabWidget):
-    """One tab per plugin panel."""
+    """One tab per plugin panel. A redraw changes only what changed, so typing, focus and scroll stay put."""
 
     def __init__(self, on_action: Action, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.on_action = on_action
         self.pages: dict[str, QScrollArea] = {}
+        self.items: dict[str, list[_Item]] = {}
+        self.last: dict[str, str] = {}
         self.drafts = Drafts()
         self.setDocumentMode(True)
 
     def update_panel(self, plugin: str, name: str, panel: dict[str, Any] | None) -> None:
         if panel is None:
             page = self.pages.pop(plugin, None)
+            self.items.pop(plugin, None)
+            self.last.pop(plugin, None)
             if page is not None:
                 self.removeTab(self.indexOf(page))
                 page.deleteLater()
             return
+        same = _key(panel)
+        if self.last.get(plugin) == same:  # plugins redraw on a timer; nothing changed, nothing to do
+            return
+        self.last[plugin] = same
         page = self.pages.get(plugin)
         if page is None:
             page = scroll()
             page.setFrameShape(QFrame.Shape.NoFrame)
             page.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)  # a panel fits the dock's width
+            page.setWidget(QWidget())
+            QVBoxLayout(page.widget())
             self.pages[plugin] = page
             self.addTab(page, str(panel.get("title") or name))
+        else:
+            index = self.indexOf(page)
+            title = str(panel.get("title") or name)
+            if self.tabText(index) != title:
+                self.setTabText(index, title)
+        body = page.widget()
+        layout = body.layout() if body is not None else None
+        if body is None or layout is None:
+            return
         bar = page.verticalScrollBar()
         at_end = bar is None or bar.value() >= bar.maximum() - 4
         position = bar.value() if bar is not None else 0
-        body = QWidget()
-        layout: QLayout = QVBoxLayout(body)
-        for node in panel.get("items", []):
-            layout.addWidget(render(plugin, node, self.on_action, self.drafts))
+        self.items[plugin] = reconcile(plugin, layout, self.items.get(plugin, []), list(panel.get("items", [])),
+                                       self.on_action, self.drafts)
         if isinstance(layout, QVBoxLayout):
             layout.addStretch(1)
-        old = page.takeWidget()
-        page.setWidget(body)
-        if old is not None:
-            old.deleteLater()
         if bar is not None:  # a redraw keeps the place; at the end (a chat), it follows new lines
             body.adjustSize()
             bar.setValue(bar.maximum() if at_end else position)

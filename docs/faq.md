@@ -81,8 +81,11 @@ environment.
 
 ### Python uses the wrong packages
 
-Pythonator uses the project's `.venv` (or `venv`, `env`) when there is one. Press **Packages ▾ → Install packages** to create it
-from `requirements.txt` or `pyproject.toml`. The environment check before each start says which Python it uses.
+Each service has its own environment by default (**Own environment** on the General tab). For Python, Start creates
+`.venv` in the project (and installs `requirements.txt` or `pyproject.toml`) when it's missing or broken, so a service
+never runs on your global packages. Node.js and Bun get `node_modules`, Ruby `vendor/bundle`, PHP `vendor`, and Deno,
+Go, .NET and Rust a package cache of their own. **Packages ▾ → Recreate environment** deletes it and installs again
+from scratch. Turn **Own environment** off to run on the runtime as it is installed.
 
 ### My language isn't in the list
 

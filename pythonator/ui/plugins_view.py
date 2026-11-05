@@ -86,6 +86,7 @@ class PluginsDialog(QDialog):
     def refresh(self, plugins: list[dict[str, Any]]) -> None:
         current = self.list.currentItem()
         keep = current.data(Qt.ItemDataRole.UserRole) if current else None
+        before = _comparable(self.plugins.get(keep)) if keep else None
         self.plugins = {p["id"]: p for p in plugins}
         self.list.blockSignals(True)
         self.list.clear()
@@ -100,6 +101,8 @@ class PluginsDialog(QDialog):
         self.list.blockSignals(False)
         if self.list.currentItem() is None and self.list.count():
             self.list.setCurrentRow(0)
+        if keep is not None and keep == self._fields.get("__id") and before == _comparable(self.plugins.get(keep)):
+            return  # the shown plugin didn't change: keep its page, and whatever is being typed in it
         self._show()
 
     def append_activity(self, plugin: str, text: str) -> None:
@@ -285,3 +288,8 @@ def _value(w: Any) -> str | int | bool:
     if isinstance(w, QPlainTextEdit):
         return w.toPlainText()
     return str(w.text())
+
+
+def _comparable(p: dict[str, Any] | None) -> dict[str, Any] | None:
+    """What the detail page shows, minus the activity log (that is appended in place)."""
+    return None if p is None else {k: v for k, v in p.items() if k != "activity"}

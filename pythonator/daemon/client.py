@@ -30,7 +30,7 @@ class DaemonClient(QObject):
         self.sock.disconnected.connect(self._lost)
         self.sock.connected.connect(self._hello)
         self.sock.errorOccurred.connect(self._not_there)
-        self._buf = b""
+        self._parts: list[bytes] = []  # a message not complete yet
         self._req = 0
         self._pending: dict[int, Reply] = {}
         self.ready = False
@@ -75,6 +75,7 @@ class DaemonClient(QObject):
             self._retry.start(1000)
 
     def _lost(self) -> None:
+        self._parts.clear()  # half a message from the old connection
         was = self.ready
         self.ready = False
         for cb in self._pending.values():
@@ -100,10 +101,16 @@ class DaemonClient(QObject):
         self.sock.write(json.dumps(message, ensure_ascii=False).encode() + b"\n")
 
     def _read(self) -> None:
-        self._buf += bytes(self.sock.readAll().data())
-        if b"\n" not in self._buf:
+        data = bytes(self.sock.readAll().data())
+        if b"\n" not in data:  # a big message comes in many small reads: keep the pieces, search only the new one
+            self._parts.append(data)
             return
-        *lines, self._buf = self._buf.split(b"\n")  # once: splitting off one line at a time is quadratic
+        if self._parts:
+            data = b"".join([*self._parts, data])
+            self._parts.clear()
+        *lines, rest = data.split(b"\n")  # once: splitting off one line at a time is quadratic
+        if rest:
+            self._parts.append(rest)
         for line in lines:
             try:
                 msg = json.loads(line)

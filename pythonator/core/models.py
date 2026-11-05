@@ -91,6 +91,9 @@ class Service(Model):
     args: Args = Field(default_factory=list)
     env: Env = Field(default_factory=dict)
     env_file: str = ""  # e.g. ".env" in the project folder
+    # Its own packages (a .venv, node_modules, a private Go/Deno/NuGet/Cargo cache), made on Start if missing,
+    # so it never runs on the computer's global installs.
+    own_env: bool = True
     mode: Mode = Mode.SANDBOX
     network: Network = Field(default_factory=Network)
     sandbox: SandboxOptions = Field(default_factory=SandboxOptions)

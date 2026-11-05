@@ -128,6 +128,13 @@ def test_service_dialog_builds_a_valid_service(qtbot: Any, tmp_path: Path) -> No
     service = dlg.build()
     assert isinstance(service, Service) and service.name == "bot" and service.mode.value == "sandbox"
     assert service.memory_mb == 0 and service.cpu_percent == 0
+    assert service.own_env and "no virtual environment yet" in dlg.env_line.text()
+    dlg.own_env.setChecked(False)
+    assert not dlg.build().own_env and "global packages" in dlg.env_line.text()
+    dlg.runtime.setCurrentIndex(dlg.runtime.findData("shell"))
+    assert not dlg.own_env.isEnabled()
+    dlg.runtime.setCurrentIndex(dlg.runtime.findData("python"))
+    dlg.own_env.setChecked(True)
     dlg.memory.setText("1.5G")
     dlg.cpu.setText("50%")
     service = dlg.build()
@@ -143,6 +150,45 @@ def test_plugin_panels_render_text_as_plain_text(qtbot: Any) -> None:
     widget = panels.render("p", {"type": "text", "text": "<img src=x onerror=alert(1)>"}, lambda *a: None)
     qtbot.addWidget(widget)
     assert widget.textFormat().name == "PlainText"  # type: ignore[attr-defined]
+
+
+def test_panel_redraw_keeps_the_keyboard_in_its_text_box(qtbot: Any) -> None:
+    """A plugin redrawing its panel (an AI reply coming in) never moves typing into the code editor."""
+    from PyQt6.QtWidgets import QApplication, QHBoxLayout, QPlainTextEdit, QWidget
+
+    window = QWidget()
+    qtbot.addWidget(window)
+    code = QPlainTextEdit()
+    dock = panels.PanelDock(lambda *a: None)
+    row = QHBoxLayout(window)
+    row.addWidget(code)
+    row.addWidget(dock)
+    window.show()
+    window.activateWindow()
+    qtbot.waitActive(window)
+
+    def panel(n: int) -> dict[str, Any]:
+        return {"title": "AI", "items": [{"type": "text", "text": f"reply {n}"}, {"type": "input", "action": "ask"}]}
+
+    dock.update_panel("ai", "ai", panel(0))
+    box = dock.findChildren(QPlainTextEdit)[0]
+    qtbot.waitUntil(box.isVisible)
+    box.setFocus()
+    qtbot.waitUntil(box.hasFocus)
+    qtbot.keyClicks(box, "hello world")
+    caret = box.textCursor()
+    caret.setPosition(5)
+    box.setTextCursor(caret)
+    for n in range(1, 4):
+        dock.update_panel("ai", "ai", panel(n))
+        qtbot.wait(10)
+    qtbot.keyClicks(QApplication.focusWidget(), "X")
+    assert code.toPlainText() == ""
+    assert [b.toPlainText() for b in dock.findChildren(QPlainTextEdit) if b.isVisible()] == ["helloX world"]
+    code.setFocus()
+    dock.update_panel("ai", "ai", panel(4))
+    qtbot.wait(10)
+    assert QApplication.focusWidget() is code
 
 
 def test_plugins_dialog(qtbot: Any) -> None:
@@ -161,3 +207,65 @@ def test_both_themes_apply(qapp: Any) -> None:
     for name in ("light", "dark"):
         theme.apply(qapp, name)
         assert theme.color("bg")
+
+
+def test_plugin_panel_redraw_keeps_the_text_box_focus_and_cursor(qtbot: Any) -> None:
+    from PyQt6.QtWidgets import QApplication, QLabel, QPlainTextEdit
+
+    from pythonator.sdk import ui
+
+    dock = panels.PanelDock(lambda *a: None)
+    qtbot.addWidget(dock)
+    dock.show()
+    qtbot.waitExposed(dock)
+    dock.activateWindow()
+
+    def panel(status: str) -> dict[str, Any]:
+        return ui.panel("AI", ui.text(status), ui.row(ui.stat("Tokens", status), ui.input("note", "Note…")),
+                        ui.input("ask", "Ask…"))
+
+    dock.update_panel("ai", "AI", panel("idle"))
+    edits = [w for w in dock.findChildren(QPlainTextEdit) if not w.isReadOnly()]
+    assert len(edits) == 2
+    ask = next(w for w in edits if w.placeholderText() == "Ask…")
+    nested = next(w for w in edits if w.placeholderText() == "Note…")
+    ask.setFocus()
+    qtbot.keyClicks(ask, "half a ques")
+    cursor = ask.textCursor()
+    cursor.setPosition(4)
+    ask.setTextCursor(cursor)
+    for i in range(20):  # the plugin redraws on every tick and every streamed piece of an answer
+        dock.update_panel("ai", "AI", panel(f"thinking {i}"))
+    qtbot.wait(10)
+    assert QApplication.focusWidget() is ask  # the same widget: never rebuilt, never loses focus
+    assert ask.toPlainText() == "half a ques" and ask.textCursor().position() == 4
+    assert nested in dock.findChildren(QPlainTextEdit)  # a text box inside a row is kept too
+    labels = [w.text() for w in dock.findChildren(QLabel) if w.isVisible()]
+    assert "thinking 19" in labels and "idle" not in labels  # but what changed is drawn again
+
+    body = dock.pages["ai"].widget()
+    dock.update_panel("ai", "AI", panel("thinking 19"))  # nothing changed: nothing is touched
+    assert dock.pages["ai"].widget() is body
+    dock.update_panel("ai", "AI", ui.panel("AI", ui.input("ask", "Ask again…", "Go")))
+    qtbot.wait(10)
+    assert ask.placeholderText() == "Ask again…" and QApplication.focusWidget() is ask
+
+
+def test_plugins_dialog_refresh_keeps_a_half_typed_setting(qtbot: Any) -> None:
+    from PyQt6.QtWidgets import QLineEdit
+
+    dlg = PluginsDialog(lambda *a: None)
+    qtbot.addWidget(dlg)
+    plugin = {"id": "x", "name": "X", "version": "1", "description": "d", "official": True, "folder": "/x",
+              "enabled": True, "running": True, "error": "", "test_mode": False, "permissions": [],
+              "granted": [], "settings": [{"key": "k", "label": "K", "kind": "text", "default": "",
+                                           "choices": [], "help": ""}], "values": {"k": ""},
+              "activity": [], "homepage": "", "sha256": "0" * 64}
+    dlg.refresh([plugin])
+    fields = [w for w in dlg.detail.findChildren(QLineEdit) if not w.isReadOnly()]
+    assert fields
+    fields[0].setText("half typed")
+    dlg.refresh([{**plugin, "activity": ["a line"]}])  # the plugin logged something: same page
+    assert fields[0] in dlg.detail.findChildren(QLineEdit) and fields[0].text() == "half typed"
+    dlg.refresh([{**plugin, "running": False}])  # something shown changed: drawn again
+    assert fields[0] not in [w for w in dlg.detail.findChildren(QLineEdit) if w.isVisible()]

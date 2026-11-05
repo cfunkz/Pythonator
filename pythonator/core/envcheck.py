@@ -83,7 +83,9 @@ def service_report(service: Service) -> list[Item]:
         if not found:
             items.append(("error", f"{rt.label} isn't installed ({' / '.join(rt.programs)} not on PATH)"))
         if rt.key == "python":
-            items += _python(folder, prog)
+            items += _python(folder, prog, own=service.own_env)
+        elif service.own_env:
+            pass  # the summary line says what's missing and that Start makes it
         elif rt.key in ("node", "bun") and (folder / "package.json").is_file() \
                 and not (folder / "node_modules").is_dir():
             items.append(("warn", "package.json lists packages but node_modules is missing: Install packages"))
@@ -93,13 +95,16 @@ def service_report(service: Service) -> list[Item]:
             items.append(("warn", "composer.json found but vendor is missing: Install packages"))
     if service.entry and not (folder / service.entry).exists():
         items.append(("error", f"{service.entry} doesn't exist"))
-    items.append(("ok", f"Packages go to {rt.packages or 'the runtime’s own folders'}"))
+    summary = runtimes.env_summary(rt.key, folder, own=service.own_env, container=service.mode is Mode.CONTAINER)
+    items.append(("warn" if summary.startswith("Own environment is off") else "ok", summary))
     return items
 
 
-def _python(folder: Path, prog: str | None) -> list[Item]:
+def _python(folder: Path, prog: str | None, *, own: bool = True) -> list[Item]:
     venv = runtimes.project_venv(folder)
     wants = (folder / "requirements.txt").is_file() or (folder / "pyproject.toml").is_file()
+    if own and runtimes.env_missing("python", folder):
+        return []  # the summary line says what Start makes
     if venv is None:
         if wants:
             return [("warn", "No virtual environment: Install packages creates .venv first, so nothing goes into "

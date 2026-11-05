@@ -11,6 +11,8 @@ import contextlib
 import json
 import logging
 import queue
+import shutil
+import stat
 import sys
 import threading
 import time
@@ -36,6 +38,8 @@ from .runner import Event, Exited, Output, Runner
 log = logging.getLogger(__name__)
 Listener = Callable[[dict[str, Any]], None]
 RESTART_WINDOW = 600.0  # seconds in which max_restarts counts
+LAUNCH_GAP = 1.5  # seconds between two services started by Start all or at login: one start's CPU spike at a time
+LAUNCH_WAIT = 15.0  # the longest a slow start (its environment being made) holds back the next one
 LIVE_LIMIT = 128 * 1024  # characters of output per service per tick sent to windows; the log gets everything
 
 
@@ -83,6 +87,7 @@ class Slot:
     decoder: codecs.IncrementalDecoder = field(
         default_factory=lambda: codecs.getincrementaldecoder("utf-8")(errors="replace"))
     stop_then: Callable[[], None] | None = None  # what to do once it stopped (restart, remove)
+    after_steps: Callable[[], None] | None = None  # what to do once its task steps succeeded (start it)
 
 
 class Supervisor:
@@ -96,6 +101,9 @@ class Supervisor:
         self.queue: queue.SimpleQueue[Event | Callable[[], None]] = queue.SimpleQueue()
         self._pids: dict[str, int] = {}  # read by the stats thread (a copy is swapped in, never mutated)
         self._last_second = 0.0
+        self._launches: list[tuple[str, bool]] = []  # services waiting their turn to start: (id, automatic)
+        self._launched = ""  # the last one started from that line
+        self._launched_at = 0.0
         self._stop = threading.Event()
         for service in store.load_services():
             self.slots[service.id] = Slot(service, self._new_log(service))
@@ -178,6 +186,8 @@ class Supervisor:
                     text = f"\x1b[2m[… {skipped:,} characters skipped in the live view, all in the log]\x1b[0m\n" \
                            + text[-LIVE_LIMIT // 2:]
                 self.emit({"ev": "output", "id": slot.service.id, "text": text})
+        if self._launches:
+            self._next_launch()
         now = time.monotonic()
         if now - self._last_second >= 1.0:
             self._last_second = now
@@ -325,7 +335,7 @@ class Supervisor:
 
     def start(self, sid: str, *, confirmed: bool = False, auto: bool = False) -> None:
         slot = self.slot(sid)
-        if slot.runner or slot.task or slot.state in (State.STARTING, State.STOPPING):
+        if slot.runner or slot.task or slot.state in (State.STARTING, State.STOPPING, State.TASK):
             return
         service = slot.service
         if service.mode is Mode.FULL and not service.full_access_ok:
@@ -350,9 +360,31 @@ class Supervisor:
             self._set(slot, State.FAILED, "blocked", verdict)
             return
         if slot.service.git and slot.service.git.pull_on_start:
-            self._pull(slot, then=lambda: self._launch(slot))
+            self._pull(slot, then=lambda: self._prepare_env(slot))
             return
-        self._launch(slot)
+        self._prepare_env(slot)
+
+    def _prepare_env(self, slot: Slot) -> None:
+        """With "Own environment", make the project's environment first if it's missing or broken, so the
+        service never falls back to the computer's global packages."""
+        service = slot.service
+        why = ""
+        if service.own_env and service.mode is not Mode.CONTAINER and service.runtime in runtimes.OWN_ENV:
+            why = runtimes.env_missing(service.runtime, Path(service.folder))
+        if not why:
+            self._launch(slot)
+            return
+        try:
+            steps = self._install_steps(service)
+        except ValueError as exc:
+            self.note(slot, f"Not started: {exc}")
+            self._set(slot, State.FAILED, "crashed", str(exc))
+            return
+        if not steps:
+            self._launch(slot)
+            return
+        self.note(slot, f"Making its own environment first: {why}")
+        self._run_steps(slot, steps, "Setting up its environment", then=lambda: self._launch(slot))
 
     def _launch(self, slot: Slot) -> None:
         service = slot.service
@@ -416,9 +448,39 @@ class Supervisor:
         slot.pending.append(slot.log.write(f"\x1b[36m> {text.rstrip()}\x1b[0m\n"))
 
     def start_all(self) -> None:
-        for sid in list(self.slots):
-            with contextlib.suppress(NeedsConfirmation):
-                self.start(sid)
+        self._start_in_turn(list(self.slots), auto=False)
+
+    def _start_in_turn(self, sids: list[str], *, auto: bool) -> None:
+        """Start these one after another, not all at once: each start (imports, a new environment) is a burst of
+        CPU and disk, and twenty of them together stall the whole computer."""
+        for sid in sids:
+            slot = self.slots.get(sid)
+            if slot is None or slot.runner or slot.task or slot.state in (State.STARTING, State.STOPPING, State.TASK):
+                continue
+            if slot.service.mode is Mode.FULL and not slot.service.full_access_ok:
+                continue  # needs the user's consent: Start on that service asks for it
+            self._launches = [(s, a) for s, a in self._launches if s != sid]
+            self._launches.append((sid, auto))
+            slot.restart_at = 0.0
+            self._set(slot, State.WAITING, "", "Starting in turn")
+        self._next_launch()
+
+    def _next_launch(self) -> None:
+        while self._launches:
+            now = time.monotonic()
+            last = self.slots.get(self._launched)
+            busy = last is not None and last.state in (State.STARTING, State.TASK)
+            if self._launched_at and (now - self._launched_at < LAUNCH_GAP
+                                      or (busy and now - self._launched_at < LAUNCH_WAIT)):
+                return
+            sid, auto = self._launches.pop(0)
+            slot = self.slots.get(sid)
+            if slot is None or slot.state is not State.WAITING or slot.note != "Starting in turn":
+                continue  # stopped, removed or started by hand meanwhile
+            self._launched, self._launched_at = sid, now
+            with contextlib.suppress(NeedsConfirmation, ValueError, KeyError):
+                self.start(sid, auto=auto)
+            return
 
     def stop_all(self) -> None:
         for sid in list(self.slots):
@@ -426,39 +488,98 @@ class Supervisor:
 
     def autostart(self) -> None:
         for slot in self.slots.values():
-            if slot.service.autostart:
-                with contextlib.suppress(NeedsConfirmation):
-                    self.start(slot.service.id, auto=True)
-            else:
+            if not slot.service.autostart:
                 self._plan_schedule(slot)
+        self._start_in_turn([s.service.id for s in self.slots.values() if s.service.autostart], auto=True)
 
     # -- tasks: installing packages, pulling code ---------------------------------------------------------
 
     def install(self, sid: str) -> None:
         slot = self.slot(sid)
-        if slot.runner or slot.task:
+        if slot.runner or slot.task or slot.state is State.TASK:
             raise ValueError("Stop it first")
-        service = slot.service
-        folder = Path(service.folder)
+        steps = self._install_steps(slot.service)
+        if not steps:
+            raise ValueError("Nothing to install for this project")
+        self._run_steps(slot, steps, "Installing packages")
+
+    def _install_steps(self, service: Service) -> list[list[str]]:
         if service.mode is Mode.CONTAINER:
-            steps = containers.install_steps(service)
-        elif service.runtime in runtimes.RUNTIMES and (rt := runtimes.RUNTIMES[service.runtime]).install:
+            return containers.install_steps(service)
+        if service.runtime in runtimes.RUNTIMES and (rt := runtimes.RUNTIMES[service.runtime]).install:
             system = next((p for name in rt.programs if (p := runtimes.which(name))), None)
             if not system:
                 raise ValueError(f"{rt.label} isn't installed")
-            steps = rt.install(folder, system)
-        else:
-            steps = []
-        if not steps:
-            raise ValueError("Nothing to install for this project")
+            return rt.install(Path(service.folder), system)
+        return []
+
+    def _run_steps(self, slot: Slot, steps: list[list[str]], name: str,
+                   then: Callable[[], None] | None = None) -> None:
         slot.steps = list(steps)
-        slot.task_name = "Installing packages"
-        self._set(slot, State.TASK, "installing", "Installing packages")
+        slot.task_name = name
+        slot.after_steps = then
+        self._set(slot, State.TASK, "installing", name)
         self._next_step(slot)
+
+    def recreate(self, sid: str) -> None:
+        """Delete the service's environment (its venv, node_modules, vendor or private cache) and install its
+        packages again."""
+        slot = self.slot(sid)
+        if slot.runner or slot.task or slot.state is State.TASK:
+            raise ValueError("Stop it first")
+        service = slot.service
+        folder = Path(service.folder)
+        container = service.mode is Mode.CONTAINER
+        targets = runtimes.env_folders(service.runtime, folder, container=container)
+        if not container and service.runtime in runtimes.CACHE_VARS:
+            targets.append(isolation.base.env_cache(self.dirs, service))
+        targets = [t for t in targets if t.exists() or t.is_symlink()]
+        if not targets and not self._install_steps(service):  # also: refuses if the runtime isn't installed
+            raise ValueError("This service has no environment to recreate")
+        slot.task_name = "Recreating environment"
+        self._set(slot, State.TASK, "installing", "Recreating environment")
+        allowed = [folder.resolve(), self.dirs.sandboxes.resolve()]
+
+        def work() -> None:
+            error = ""
+            for target in targets:
+                try:
+                    _remove_env(target, allowed)
+                except OSError as exc:
+                    error = f"couldn't delete {target.name}: {exc.strerror or exc}"
+                    break
+
+            def done() -> None:
+                if error:
+                    self._task_failed(slot, error)
+                    return
+                if targets:
+                    self.note(slot, "Deleted " + ", ".join(_relative(t, folder) for t in targets))
+                try:
+                    steps = self._install_steps(slot.service)  # now, so a new venv is made first
+                except ValueError as exc:
+                    self._task_failed(slot, str(exc))
+                    return
+                if steps:
+                    self._run_steps(slot, steps, "Recreating environment")
+                    return
+                slot.task_name = ""
+                self._set(slot, State.STOPPED, "installed", "")
+                self.emit({"ev": "notice", "level": "ok", "id": service.id,
+                           "text": f"{service.name}: environment cleared, it fills again on the next start"})
+
+            self.post(done)
+
+        threading.Thread(target=work, name=f"recreate-{service.id}", daemon=True).start()
 
     def _next_step(self, slot: Slot) -> None:
         if not slot.steps:
             slot.task, slot.task_name = None, ""
+            if (then := slot.after_steps) is not None:
+                slot.after_steps = None
+                self.note(slot, "Environment ready")
+                then()
+                return
             self.note(slot, "Packages installed")
             self._set(slot, State.STOPPED, "installed", "")
             self.emit({"ev": "notice", "level": "ok", "id": slot.service.id,
@@ -487,7 +608,7 @@ class Supervisor:
         self._next_step(slot)
 
     def _task_failed(self, slot: Slot, why: str) -> None:
-        slot.task, slot.steps, slot.task_name = None, [], ""
+        slot.task, slot.steps, slot.task_name, slot.after_steps = None, [], "", None
         self.note(slot, f"Install failed: {why}")
         self._set(slot, State.FAILED, "install_failed", f"Install failed: {why}")
         if slot.stop_then:
@@ -715,6 +836,33 @@ def _limits_note(service: Service, runner: Runner) -> str:
             how = "job object hard cap" if windows else "paused in short slices when over"
             parts.append(f"CPU {limits.describe(service.cpu_percent)} ({how})")
     return "Limits: " + "; ".join(parts)
+
+
+def _relative(path: Path, folder: Path) -> str:
+    try:
+        return path.relative_to(folder).as_posix()
+    except ValueError:
+        return f"its private {path.name} cache"
+
+
+def _remove_env(path: Path, allowed: list[Path]) -> None:
+    """Delete an environment folder; only ever inside the project or Pythonator's sandbox data."""
+    if path.is_symlink() or path.is_junction():  # a link to a folder elsewhere: drop the link, never its target
+        if path.is_symlink():
+            path.unlink()
+        else:
+            path.rmdir()
+        return
+    real = path.resolve()
+    if not any(real != root and real.is_relative_to(root) for root in allowed):
+        raise OSError(f"{real} is outside the project")
+
+    def retry(func: Callable[..., Any], p: str, _exc: BaseException) -> None:  # read-only files (Go, Windows)
+        q = Path(p)
+        q.chmod(stat.S_IWRITE | stat.S_IREAD | (stat.S_IEXEC if q.is_dir() else 0))
+        func(p)
+
+    shutil.rmtree(real, onexc=retry)
 
 
 def _shown(argv: list[str]) -> str:

@@ -132,6 +132,11 @@ class ServiceDialog(QDialog):
         self.autostart.setChecked(bool(d.get("autostart")))
         self.schedule = line(d.get("schedule", ""), "Empty: keep it running. Or 'every 15m', "
                                                                          "or cron like '0 * * * *'")
+        self.own_env = QCheckBox("Own environment: its own venv, node_modules or package cache, never global installs")
+        self.own_env.setToolTip("Start makes it if it's missing. Packages ▾ → Recreate environment starts it fresh.")
+        self.own_env.setChecked(bool(d.get("own_env", True)))
+        self.own_env.toggled.connect(self._env_changed)
+        self.env_line = _muted("")
         self.hint = _muted("")
         detect = QPushButton("Detect from folder")
         detect.clicked.connect(self._detect)
@@ -145,6 +150,9 @@ class ServiceDialog(QDialog):
         form.addRow("", self.autostart)
         form.addRow("", detect)
         form.addRow("", self.hint)
+        form.addRow("Packages", self.own_env)
+        form.addRow("", self.env_line)
+        self.folder.textChanged.connect(self._env_changed)
         return w
 
     def _isolation(self, d: dict[str, Any], caps: list[tuple[str, str]]) -> QWidget:
@@ -366,6 +374,7 @@ class ServiceDialog(QDialog):
         mode = self.mode()
         self.sandbox_box.setVisible(mode == "sandbox")
         self.container_box.setVisible(mode == "container")
+        self._env_changed()
 
     def _runtime_changed(self) -> None:
         custom = self.runtime.currentData() == runtimes.CUSTOM
@@ -376,9 +385,23 @@ class ServiceDialog(QDialog):
         if rt is not None:
             found = next((p for name in rt.programs if (p := runtimes.which(name))), None)
             where = f"Found {found}" if found else f"{rt.label} isn't installed ({' / '.join(rt.programs)})"
-            self.hint.setText(f"{where}. Packages go to {rt.packages or 'the runtime'}.")
+            self.hint.setText(f"{where}.")
         else:
             self.hint.setText("The command runs as is (no shell), in the folder above.")
+        self._env_changed()
+
+    def _env_changed(self) -> None:
+        if not hasattr(self, "env_line") or not hasattr(self, "modes"):
+            return  # still being built
+        key = str(self.runtime.currentData())
+        container = self.mode() == "container"
+        applies = key in runtimes.OWN_ENV and not container
+        self.own_env.setEnabled(applies)
+        if key == runtimes.CUSTOM:
+            self.env_line.setText("A custom command manages its own packages.")
+            return
+        self.env_line.setText(runtimes.env_summary(key, Path(self.folder.text().strip() or "."),
+                                                   own=self.own_env.isChecked(), container=container))
 
     def _browse_folder(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Project folder", self.folder.text())
@@ -449,7 +472,7 @@ class ServiceDialog(QDialog):
             "entry": self.entry.text().strip() if runtime != runtimes.CUSTOM else "",
             "command": validate.split_command(self.command.text()) if runtime == runtimes.CUSTOM else [],
             "args": validate.split_command(self.args.text()), "env": dict(self.env.pairs()),
-            "env_file": self.env_file.text().strip(), "mode": self.mode(),
+            "env_file": self.env_file.text().strip(), "mode": self.mode(), "own_env": self.own_env.isChecked(),
             "network": {"enabled": self.net_on.isChecked(), "ports": validate.parse_ports(self.ports.text()),
                         "expose": self.expose.currentData()},
             "sandbox": {"write_project": self.write_project.isChecked(),

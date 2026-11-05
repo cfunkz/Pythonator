@@ -70,6 +70,10 @@ class Install(Ident):
     op: Literal["install"]
 
 
+class Recreate(Ident):
+    op: Literal["recreate"]
+
+
 class Pull(Ident):
     op: Literal["pull"]
 
@@ -151,7 +155,8 @@ class PluginRemove(PluginOp):
 
 
 Request = Annotated[
-    Hello | Add | Update | Remove | Start | Stop | Restart | Input | Install | Pull | Tail | Clear | Watch | Check
+    Hello | Add | Update | Remove | Start | Stop | Restart | Input | Install | Recreate | Pull | Tail | Clear | Watch
+    | Check
     | SaveSettings | Simple | Shutdown | PluginEnable | PluginSettings | PluginGrant | PluginAction
     | PluginProposal | PluginInstall | PluginRemove,
     Field(discriminator="op"),
