@@ -11,7 +11,7 @@ from typing import Any
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtNetwork import QLocalSocket
 
-from ..paths import IS_WINDOWS, DataDirs, self_command
+from ..paths import IS_WINDOWS, DataDirs, quiet_start, self_command
 from .server import socket_name
 
 Reply = Callable[[bool, Any, str], None]  # ok, data, error
@@ -156,4 +156,4 @@ def spawn_daemon() -> None:
         # DETACHED_PROCESS only: a new process group would make every service ignore Ctrl+C, the polite stop.
         flags = 0x00000008
     subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                     creationflags=flags, start_new_session=not IS_WINDOWS, close_fds=True)
+                     creationflags=flags, start_new_session=not IS_WINDOWS, close_fds=True, startupinfo=quiet_start())

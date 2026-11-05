@@ -856,7 +856,8 @@ if sys.platform == "win32":
                     raise self.error("UpdateProcThreadAttribute(handle list)")
                 info = StartupInfoEx()
                 info.StartupInfo.cb = ctypes.sizeof(StartupInfoEx)
-                info.StartupInfo.dwFlags = 0x00000100  # STARTF_USESTDHANDLES
+                info.StartupInfo.dwFlags = 0x00000100 | 0x00000080  # STARTF_USESTDHANDLES | STARTF_FORCEOFFFEEDBACK:
+                # no busy "app starting" pointer for the user each time a service starts
                 info.StartupInfo.hStdInput, info.StartupInfo.hStdOutput, info.StartupInfo.hStdError = std
                 info.lpAttributeList = ctypes.cast(attrs, ctypes.c_void_p)
                 proc = ProcessInformation()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -158,7 +159,7 @@ def test_settings_start_mode_logs_and_sign_in(qtbot: Any, tmp_path: Path, monkey
     from pythonator.ui.settings_dialog import ALL, FEW, SettingsDialog
 
     monkeypatch.setattr(login, "IS_WINDOWS", False)
-    monkeypatch.setattr(login.sys, "platform", "linux")
+    monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     sent: list[dict[str, Any]] = []
     dlg = SettingsDialog(Settings(), lambda msg, *_: sent.append(msg))

@@ -13,6 +13,7 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
+from ..paths import quiet_start
 from . import validate
 from .runtimes import which
 
@@ -52,7 +53,7 @@ def run(args: list[str], cwd: Path | None = None, *, timeout: float = 300,
     try:
         proc = subprocess.Popen(argv, cwd=cwd, env=_env(), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
-                                creationflags=0x08000000 if os.name == "nt" else 0)
+                                creationflags=0x08000000 if os.name == "nt" else 0, startupinfo=quiet_start())
     except OSError as exc:
         raise GitError(f"Couldn't start git: {exc}") from exc
     lines: list[str] = []

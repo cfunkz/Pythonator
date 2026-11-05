@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import socket
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -234,3 +235,31 @@ def test_windows_make_reachable(dirs: DataDirs, project: Path) -> None:
     assert after == "hello from the sandbox", diagnostics
     if before.startswith("NO"):  # this Windows blocks loopback into AppContainers: Undo must block it again
         assert undone.startswith("NO"), diagnostics
+
+
+def test_no_process_start_shows_the_busy_pointer() -> None:
+    """Windows turns the mouse pointer into the busy one for every process started without STARTF_FORCEOFFFEEDBACK:
+    starting or stopping a service must never do that."""
+    import ast
+
+    import pythonator
+    from pythonator.paths import STARTF_FORCEOFFFEEDBACK, quiet_start
+
+    unix_only = {"linux.py", "macos.py", "keychain.py"}
+    root = Path(pythonator.__file__).parent
+    missing = []
+    for path in root.rglob("*.py"):
+        if path.name in unix_only:
+            continue
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+                    and node.func.attr in ("Popen", "run") and getattr(node.func.value, "id", "") == "subprocess" \
+                    and not any(k.arg == "startupinfo" for k in node.keywords):
+                missing.append(f"{path.relative_to(root)}:{node.lineno}")
+    assert not missing
+    assert "STARTF_FORCEOFFFEEDBACK" in (root / "launcher.py").read_text(encoding="utf-8")
+    info = quiet_start()
+    if sys.platform == "win32":
+        assert info.dwFlags & STARTF_FORCEOFFFEEDBACK  # type: ignore[attr-defined]
+    else:
+        assert info is None

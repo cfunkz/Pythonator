@@ -23,6 +23,7 @@ import psutil
 from ..core import limits
 from ..isolation import Command
 from ..isolation import container as containers
+from ..paths import quiet_start
 from . import winproc
 
 CHUNK = 64 * 1024
@@ -87,7 +88,7 @@ class Runner:
         args = self.cmd.cmdline if (sys.platform == "win32" and self.cmd.cmdline) else self.cmd.argv
         self.proc = subprocess.Popen(
             args, cwd=self.cmd.cwd, env=self.cmd.env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT, bufsize=0, close_fds=True, **kwargs)  # type: ignore[call-overload]
+            stderr=subprocess.STDOUT, bufsize=0, close_fds=True, startupinfo=quiet_start(), **kwargs)  # type: ignore[call-overload]
         if self._job is not None:
             try:
                 self._job.adopt(self.proc)

@@ -15,6 +15,19 @@ IS_WINDOWS = sys.platform == "win32"
 IS_MAC = sys.platform == "darwin"
 IS_LINUX = sys.platform.startswith("linux")
 FROZEN = bool(getattr(sys, "frozen", False))
+STARTF_FORCEOFFFEEDBACK = 0x00000080
+
+
+def quiet_start() -> object:
+    """``startupinfo`` for every process Pythonator starts: on Windows, without it each start (a service, its
+    setup steps, a stop) turns the mouse pointer into the busy "app starting" one for up to five seconds."""
+    if sys.platform == "win32":
+        import subprocess
+
+        info = subprocess.STARTUPINFO()
+        info.dwFlags |= STARTF_FORCEOFFFEEDBACK
+        return info
+    return None
 
 
 @cache

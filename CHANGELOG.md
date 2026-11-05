@@ -2,6 +2,12 @@
 
 Pythonator follows [semantic versioning](https://semver.org/). Each release lists what changed for users.
 
+## 0.0.7
+
+- Windows: starting, stopping or restarting a service no longer turns the mouse pointer into the busy one. Every
+  process Pythonator starts (services, setup steps, the polite stop, git, plugins, the sandbox launcher) now tells
+  Windows not to show "app starting" feedback.
+
 ## 0.0.6
 
 - **Start all** and sign-in start services one after another, top to bottom, by default. **Settings → Starting

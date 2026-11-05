@@ -74,11 +74,11 @@ def request_ctrl_c(pid: int) -> bool:
     """Send Ctrl+C to the console of ``pid`` through the helper. True if it was sent."""
     if sys.platform != "win32":
         return False
-    from ..paths import self_command
+    from ..paths import quiet_start, self_command
 
     try:
         done = subprocess.run(self_command(HELPER_FLAG, str(pid)), capture_output=True, timeout=10, check=False,
-                              creationflags=CREATE_NO_WINDOW)
+                              creationflags=CREATE_NO_WINDOW, startupinfo=quiet_start())
     except (OSError, subprocess.SubprocessError):
         return False
     return done.returncode == 0

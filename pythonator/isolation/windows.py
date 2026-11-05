@@ -25,7 +25,7 @@ from functools import cache
 from pathlib import Path
 
 from .. import launcher
-from ..paths import IS_WINDOWS, DataDirs
+from ..paths import IS_WINDOWS, DataDirs, quiet_start
 from .base import Command, Grant, IsolationError, Policy, launcher_argv, merge
 from .winloopback import EXIT_WFP, script_lines
 
@@ -83,7 +83,7 @@ def available() -> bool:
         return False
     try:
         done = subprocess.run([*launcher_argv(), launcher.PROBE], capture_output=True, text=True, timeout=30,
-                              check=False, creationflags=0x08000000)
+                              check=False, creationflags=0x08000000, startupinfo=quiet_start())
         return bool(json.loads(done.stdout or "{}").get("appcontainer"))
     except (OSError, ValueError, subprocess.SubprocessError):
         return False

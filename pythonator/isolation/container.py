@@ -16,7 +16,7 @@ from pathlib import Path, PurePosixPath
 
 from ..core import runtimes
 from ..core.models import Mode, Service
-from ..paths import IS_LINUX
+from ..paths import IS_LINUX, quiet_start
 from .base import Command, IsolationError, read_env_file
 
 APP = "/app"
@@ -40,7 +40,8 @@ def engine(choice: str = "auto") -> str:
             continue
         try:
             done = subprocess.run([prog, "version", "--format", "{{.Server.Version}}"], capture_output=True,
-                                  text=True, timeout=10, check=False, stdin=subprocess.DEVNULL)
+                                  text=True, timeout=10, check=False, stdin=subprocess.DEVNULL,
+                                  startupinfo=quiet_start())
         except (OSError, subprocess.SubprocessError):
             continue
         if done.returncode == 0 and done.stdout.strip():
@@ -153,10 +154,10 @@ def stop(engine_prog: str, name: str, grace: float) -> None:
     """Ask the engine to stop the container (SIGTERM, then SIGKILL after ``grace``)."""
     with contextlib.suppress(OSError, subprocess.SubprocessError):
         subprocess.run([engine_prog, "stop", "-t", str(max(1, int(grace))), name], capture_output=True,
-                       timeout=grace + 15, check=False, stdin=subprocess.DEVNULL)
+                       timeout=grace + 15, check=False, stdin=subprocess.DEVNULL, startupinfo=quiet_start())
 
 
 def remove_leftover(engine_prog: str, name: str) -> None:
     with contextlib.suppress(OSError, subprocess.SubprocessError):
         subprocess.run([engine_prog, "rm", "-f", name], capture_output=True, timeout=20, check=False,
-                       stdin=subprocess.DEVNULL)
+                       stdin=subprocess.DEVNULL, startupinfo=quiet_start())

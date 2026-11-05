@@ -34,7 +34,7 @@ from ..core import git, validate
 from ..core.keychain import IN_FILE, IN_KEYCHAIN, Vault
 from ..core.models import Mode, Service
 from ..isolation.base import Grant, Policy, launcher_files, runtime_folders
-from ..paths import IS_LINUX, IS_MAC, IS_WINDOWS, DataDirs, official_plugins_dir, self_command
+from ..paths import IS_LINUX, IS_MAC, IS_WINDOWS, DataDirs, official_plugins_dir, quiet_start, self_command
 from . import files, trust
 from .manifest import PERMISSIONS, Manifest, load
 
@@ -194,7 +194,7 @@ class PluginHost:
             cmd = self._command(p)
             p.proc = subprocess.Popen(cmd.argv, cwd=cmd.cwd, env=cmd.env, stdin=subprocess.PIPE,
                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0,
-                                      creationflags=0x08000000 if IS_WINDOWS else 0,
+                                      creationflags=0x08000000 if IS_WINDOWS else 0, startupinfo=quiet_start(),
                                       start_new_session=not IS_WINDOWS)
         except (isolation.IsolationError, OSError) as exc:
             p.proc, p.error = None, str(exc)
