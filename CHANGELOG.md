@@ -2,6 +2,12 @@
 
 Pythonator follows [semantic versioning](https://semver.org/). Each release lists what changed for users.
 
+## 0.0.9
+
+- Windows: uninstalling ends every Pythonator process still running from the install folder (a window, or a
+  plugin or sandbox launcher left behind), so Pythonator.exe can always be deleted. The installer test now lists
+  what was still running and shows the uninstall log when something is left.
+
 ## 0.0.8
 
 - Windows: Full access Python services no longer exit at once with code 106. The venv's small `python.exe`

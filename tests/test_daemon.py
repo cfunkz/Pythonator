@@ -362,3 +362,10 @@ def test_console_shell_runs_next_to_the_service_in_its_environment(harness: Daem
     assert harness.states(sid)[-1] == "running"  # the service itself goes on
     harness.ok({"op": "stop", "id": sid})
     harness.wait(lambda: harness.states(sid)[-1] == "stopped", timeout=20_000)
+
+
+def test_uninstall_ends_only_the_installed_apps_own_processes() -> None:
+    """From source, sys.executable is a Python: the uninstaller's clean-up must never end other programs."""
+    from pythonator.daemon import installer
+
+    assert installer.end_strays() == []

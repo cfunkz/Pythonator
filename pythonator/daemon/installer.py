@@ -10,10 +10,14 @@ Only QtCore and QtNetwork are used: nothing opens a window.
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
+import sys
 import time
+from pathlib import Path
 
-from ..paths import IS_WINDOWS, DataDirs
+from ..paths import FROZEN, IS_WINDOWS, DataDirs
 from .server import socket_name
 
 
@@ -43,11 +47,30 @@ def stop_daemon(dirs: DataDirs, timeout: float = 60.0) -> int:
     return 0 if sock.state() == QLocalSocket.LocalSocketState.UnconnectedState else 1
 
 
+def end_strays(timeout: float = 10.0) -> list[int]:
+    """Uninstalling: end every other process of this installed Pythonator.exe still running (a window, a plugin
+    worker or sandbox launcher a crashed background service left behind), or Windows can't delete the file."""
+    if not FROZEN:
+        return []  # sys.executable is a Python then: never touch other programs
+    import psutil
+
+    exe = Path(sys.executable).resolve()
+    strays = []
+    for proc in psutil.process_iter(["exe"]):
+        with contextlib.suppress(psutil.Error, OSError):
+            if proc.pid != os.getpid() and proc.info["exe"] and Path(proc.info["exe"]).resolve() == exe:
+                proc.kill()
+                strays.append(proc)
+    psutil.wait_procs(strays, timeout=timeout)
+    return [p.pid for p in strays]
+
+
 def main(flag: str) -> int:
     dirs = DataDirs()
     code = stop_daemon(dirs)
     if flag == "--uninstall" and IS_WINDOWS:
         from ..isolation import windows
 
+        end_strays()
         windows.forget_all(dirs)
     return code
