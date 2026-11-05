@@ -14,7 +14,9 @@ from typing import Any
 from PyQt6.QtCore import QEvent, QObject, Qt
 from PyQt6.QtGui import QColor, QKeyEvent
 from PyQt6.QtWidgets import (
+    QAbstractScrollArea,
     QApplication,
+    QBoxLayout,
     QComboBox,
     QFrame,
     QHBoxLayout,
@@ -24,6 +26,7 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -71,6 +74,154 @@ def _plain(text: str) -> QLabel:
     return label(text, plain=True)
 
 
+def _code_box(text: str) -> QPlainTextEdit:
+    code = QPlainTextEdit(text)
+    code.setReadOnly(True)
+    code.setFont(theme.mono_font(9))
+    code.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+    code.setSizeAdjustPolicy(QAbstractScrollArea.SizeAdjustPolicy.AdjustIgnored)
+    _fit(code)
+    return code
+
+
+def _fit(code: QPlainTextEdit) -> None:
+    lines = code.toPlainText().count("\n") + 1
+    code.setFixedHeight(min(320, 24 + code.fontMetrics().lineSpacing() * lines))
+
+
+Group = tuple[str, list[tuple[str, bool]]]  # a bubble: role, [(text, is code)]
+CAPTIONS = {"you": "You", "ai": "Assistant", "error": "Error"}
+
+
+class _Bubble(QFrame):
+    """Consecutive messages of one role: a caption, then text and code blocks in turn."""
+
+    def __init__(self, role: str) -> None:
+        super().__init__()
+        self.role = role
+        self.parts: list[tuple[str, bool]] = []
+        self.widgets: list[QWidget] = []
+        self.setObjectName("bubble")
+        tint = {"you": "accent", "error": "error"}.get(role)
+        if role == "note":
+            self.setStyleSheet("QFrame#bubble { background: transparent; border: none; }")
+        else:
+            fill = theme.rgba(tint, 0.13) if tint else theme.color("raised")
+            edge = theme.rgba(tint, 0.4) if tint else theme.color("border")
+            self.setStyleSheet(f"QFrame#bubble {{ background: {fill}; border: 1px solid {edge}; border-radius: 6px; }}")
+        self.body = QVBoxLayout(self)
+        self.body.setContentsMargins(*((2, 0, 2, 0) if role == "note" else (10, 6, 10, 8)))
+        self.body.setSpacing(4)
+        if role in CAPTIONS:
+            caption = _plain(CAPTIONS[role])
+            caption.setStyleSheet(f"color: {theme.color('error' if role == 'error' else 'muted')}; "
+                                  "font-size: 8pt; font-weight: 600; background: transparent; border: none;")
+            self.body.addWidget(caption)
+
+    def show_parts(self, parts: list[tuple[str, bool]]) -> None:
+        """Update in place: unchanged parts keep their widget (and the user's text selection)."""
+        keep = 0
+        while keep < min(len(parts), len(self.parts)) and parts[keep][1] == self.parts[keep][1]:
+            if parts[keep][0] != self.parts[keep][0]:
+                self._set(self.widgets[keep], parts[keep][0])
+            keep += 1
+        for widget in self.widgets[keep:]:
+            widget.hide()
+            widget.deleteLater()
+        self.widgets = self.widgets[:keep]
+        for text, code in parts[keep:]:
+            widget = _code_box(text) if code else self._label(text)
+            self.body.addWidget(widget)
+            self.widgets.append(widget)
+        self.parts = list(parts)
+
+    def _label(self, text: str) -> QLabel:
+        w = _plain(text)
+        w.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse
+                                  | Qt.TextInteractionFlag.TextSelectableByKeyboard)
+        w.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)  # wraps to the chat's width
+        tone = {"note": "muted", "error": "text"}.get(self.role, "text")
+        small = " font-size: 8pt;" if self.role == "note" else ""
+        w.setStyleSheet(f"color: {theme.color(tone)}; background: transparent; border: none;{small}")
+        return w
+
+    @staticmethod
+    def _set(widget: QWidget, text: str) -> None:
+        if isinstance(widget, QPlainTextEdit):
+            bar = widget.horizontalScrollBar()
+            x = bar.value() if bar is not None else 0
+            widget.setPlainText(text)
+            _fit(widget)
+            if bar is not None:
+                bar.setValue(x)
+        elif isinstance(widget, QLabel):
+            widget.setText(text)
+
+
+class ChatView(QScrollArea):
+    """A chat: the user's bubbles on the right, the answers full width, notes small. It scrolls on its own and
+    follows new text while scrolled to the end; scrolled up, it stays where the user is reading."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setWidgetResizable(True)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setMinimumHeight(180)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.setObjectName("chat")
+        self.setStyleSheet(f"QScrollArea#chat {{ border: 1px solid {theme.color('border')}; border-radius: 3px; "
+                           f"background: {theme.color('bg')}; }}")
+        inner = QWidget()
+        inner.setObjectName("chatBody")
+        inner.setStyleSheet(f"QWidget#chatBody {{ background: {theme.color('bg')}; }}")
+        self.column = QVBoxLayout(inner)
+        self.column.setContentsMargins(8, 8, 8, 8)
+        self.column.setSpacing(8)
+        self.column.addStretch(1)
+        self.setWidget(inner)
+        self.rows: list[tuple[QWidget, _Bubble]] = []
+        self.follow = True
+        bar = self.verticalScrollBar()
+        if bar is not None:
+            bar.valueChanged.connect(lambda v: setattr(self, "follow", v >= bar.maximum() - 4))
+            bar.rangeChanged.connect(lambda _lo, hi: bar.setValue(hi) if self.follow else None)
+
+    def set_messages(self, messages: list[Any]) -> None:
+        groups: list[Group] = []
+        for m in messages:
+            if not isinstance(m, dict) or m.get("role") not in ("you", "ai", "note", "error"):
+                continue
+            part = (str(m.get("text", "")), bool(m.get("code")))
+            if groups and groups[-1][0] == m["role"] and m["role"] != "note":
+                groups[-1][1].append(part)
+            else:
+                groups.append((str(m["role"]), [part]))
+        for i, (role, parts) in enumerate(groups):
+            if i < len(self.rows) and self.rows[i][1].role != role:
+                for row, _ in self.rows[i:]:
+                    row.hide()
+                    row.deleteLater()
+                del self.rows[i:]
+            if i >= len(self.rows):
+                self.rows.append(self._row(role))
+                self.column.insertWidget(self.column.count() - 1, self.rows[-1][0])
+            if self.rows[i][1].parts != parts:
+                self.rows[i][1].show_parts(parts)
+        for row, _ in self.rows[len(groups):]:
+            row.hide()
+            row.deleteLater()
+        del self.rows[len(groups):]
+
+    @staticmethod
+    def _row(role: str) -> tuple[QWidget, _Bubble]:
+        row = QWidget()
+        line = QHBoxLayout(row)
+        line.setContentsMargins(48 if role == "you" else 0, 0, 0, 0)  # the user's side
+        bubble = _Bubble(role)
+        line.addWidget(bubble)
+        return row, bubble
+
+
 def render(plugin: str, node: dict[str, Any], on_action: Action, drafts: Drafts | None = None) -> QWidget:
     kind = node.get("type")
     if kind == "text":
@@ -79,13 +230,11 @@ def render(plugin: str, node: dict[str, Any], on_action: Action, drafts: Drafts 
         text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         return text
     if kind == "code":
-        code = QPlainTextEdit(str(node.get("text", "")))
-        code.setReadOnly(True)
-        code.setFont(theme.mono_font(9))
-        code.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        lines = str(node.get("text", "")).count("\n") + 1
-        code.setFixedHeight(min(320, 24 + code.fontMetrics().lineSpacing() * lines))
-        return code
+        return _code_box(str(node.get("text", "")))
+    if kind == "chat":
+        chat = ChatView()
+        chat.set_messages(list(node.get("messages", [])))
+        return chat
     if kind == "input":
         return _input(plugin, node, on_action, drafts or Drafts())
     if kind == "select":
@@ -101,8 +250,15 @@ def render(plugin: str, node: dict[str, Any], on_action: Action, drafts: Drafts 
         combo.addItems(options)
         if str(node.get("value", "")) in options:
             combo.setCurrentText(str(node.get("value", "")))
-        action = str(node.get("action", ""))
-        combo.activated.connect(lambda i: on_action(plugin, action, options[i]) if 0 <= i < len(options) else None)
+        action, shown = str(node.get("action", "")), str(node.get("value", ""))
+
+        def chosen(i: int) -> None:
+            if 0 <= i < len(options):
+                on_action(plugin, action, options[i])
+            if shown in options:  # it shows what the plugin chose: its next panel says what that is now
+                combo.setCurrentText(shown)
+
+        combo.activated.connect(chosen)
         layout.addWidget(combo, 1)
         return box
     if kind == "stat":
@@ -221,7 +377,7 @@ def _key(node: dict[str, Any]) -> str:
 
 def _slot(node: dict[str, Any]) -> str:
     kind = node.get("type")
-    return f"input:{node.get('action', '')}" if kind == "input" else "row:" if kind == "row" else ""
+    return f"input:{node.get('action', '')}" if kind == "input" else f"{kind}:" if kind in ("row", "chat") else ""
 
 
 def _update_input(widget: QWidget, node: dict[str, Any]) -> None:
@@ -255,6 +411,8 @@ def reconcile(plugin: str, layout: QLayout, old: list[_Item], nodes: list[Any], 
         item = pick(key) or (pick(slot) if slot else None)
         if item is not None and kind == "input" and item.key != key:
             _update_input(item.widget, node)
+        if item is not None and isinstance(item.widget, ChatView) and item.key != key:
+            item.widget.set_messages(list(node.get("messages", [])))
         if item is None:
             widget = QWidget() if kind == "row" else render(plugin, node, on_action, drafts)
             if kind == "row":
@@ -270,7 +428,10 @@ def reconcile(plugin: str, layout: QLayout, old: list[_Item], nodes: list[Any], 
     while layout.count():  # re-add in the new order; a widget taken out of a layout keeps its focus
         layout.takeAt(0)
     for item in out:
-        layout.addWidget(item.widget)
+        if isinstance(layout, QBoxLayout):
+            layout.addWidget(item.widget, 1 if isinstance(item.widget, ChatView) else 0)  # a chat takes the height
+        else:
+            layout.addWidget(item.widget)
     return out
 
 
@@ -322,7 +483,7 @@ class PanelDock(QTabWidget):
         position = bar.value() if bar is not None else 0
         self.items[plugin] = reconcile(plugin, layout, self.items.get(plugin, []), list(panel.get("items", [])),
                                        self.on_action, self.drafts)
-        if isinstance(layout, QVBoxLayout):
+        if isinstance(layout, QVBoxLayout) and not any(isinstance(i.widget, ChatView) for i in self.items[plugin]):
             layout.addStretch(1)
         if bar is not None:  # a redraw keeps the place; at the end (a chat), it follows new lines
             body.adjustSize()

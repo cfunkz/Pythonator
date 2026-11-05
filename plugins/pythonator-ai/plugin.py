@@ -23,7 +23,11 @@ SHOWN_TURNS = 4
 PANEL_BUDGET = 56_000  # bytes of panel JSON (the host takes 64 KB per message)
 SHOWN_ANSWER = 20_000
 HISTORY_TURNS = 6
-NO_FILE = "Add a file to the context…"
+NO_FILE = "Add a file…"
+QUICK_PICK = "Quick question…"
+MODELS_FILE, CHOICE_FILE = "models.json", "model.json"
+MODELS_FRESH = 24 * 3600  # a model list older than this is fetched again (Refresh fetches it at once)
+MODELS_RETRY = 600  # after a failed fetch, wait this long before trying again by itself
 QUICK = {
     "crash": ("Explain the crash", "The service crashed or stopped with an error. Explain what went wrong, from the "
               "logs, in plain words. Then suggest a fix, as edit blocks if changing a file fixes it."),
@@ -65,7 +69,13 @@ class Assistant(Plugin):
         self.status = ""
         self.last_render = 0.0
         self.locked = (self.data_dir / "locked").exists()
+        self.models: dict[str, dict[str, Any]] = self._load(MODELS_FILE)  # provider id -> when, base, models
+        self.choice: dict[str, str] = {k: v for k, v in self._load(CHOICE_FILE).items() if isinstance(v, str)}
+        self.model_setting = self._model_setting()
+        self.fetching = False
+        self.fetch_failed = 0.0
         self._pick_default()
+        self._fetch_models()
         self.render()
 
     # -- events from Pythonator --
@@ -85,10 +95,17 @@ class Assistant(Plugin):
         self.render()
 
     def on_settings(self) -> None:
+        if self._model_setting() != self.model_setting:  # a model typed in the settings wins over the picker's
+            self.model_setting = self._model_setting()
+            self.choice.pop(self._provider().id, None)
+            self._save(CHOICE_FILE, self.choice)
+        self.fetch_failed = 0.0
+        self._fetch_models()
         self.render()
 
     def on_tick(self) -> None:
         self._pick_default()
+        self._fetch_models()
         self.render()
 
     def on_stop(self) -> None:
@@ -103,8 +120,16 @@ class Assistant(Plugin):
                 self.selected = sid
         elif action == "ask":
             self._ask(value, "")
-        elif action == "quick" and value in QUICK:
-            self._ask(QUICK[value][1], QUICK[value][0])
+        elif action == "quick":
+            key = value if value in QUICK else next((k for k, (text, _) in QUICK.items() if text == value), "")
+            if key:
+                self._ask(QUICK[key][1], QUICK[key][0])
+        elif action == "model" and value.strip():
+            self.choice[self._provider().id] = value.strip()[:200]
+            self._save(CHOICE_FILE, self.choice)
+            self.status = ""
+        elif action in ("models", "test"):
+            self._fetch_models(force=True)
         elif action == "stop":
             self._cancel()
         elif action == "new":
@@ -123,8 +148,6 @@ class Assistant(Plugin):
         elif action == "propose":
             index, _, path = value.partition(":")
             threading.Thread(target=self._propose, args=(self.selected, int(index or -1), path), daemon=True).start()
-        elif action == "test":
-            threading.Thread(target=self._test, daemon=True).start()
         elif action == "kill":
             self.locked = True
             (self.data_dir / "locked").write_text("locked from the panel\n", encoding="utf-8")
@@ -261,11 +284,7 @@ class Assistant(Plugin):
             if old.status == "done" and old.answer:
                 history += [{"role": "user", "content": safety.redact(old.question, self._secrets())[0]},
                             {"role": "assistant", "content": old.answer[:6000]}]
-        model = str(self.settings.get("model") or "").strip() or provider.default_model
-        base = provider.base_url
-        if provider.self_hosted and str(self.settings.get("base_url") or "").strip():
-            base = str(self.settings["base_url"]).strip()
-        return providers.Request(provider, model, base, self._key(), context.SYSTEM,
+        return providers.Request(provider, self._model(provider), self._base(provider), self._key(), context.SYSTEM,
                                  [*history, {"role": "user", "content": bundle.text}], limits.output_tokens,
                                  limits.timeout, str(self.settings.get("effort") or "medium"),
                                  bool(self.settings.get("allow_lan_http")))
@@ -341,26 +360,89 @@ class Assistant(Plugin):
                 turn.proposals[path] = f"Refused: {exc}"
         self.render(force=True)
 
-    def _test(self) -> None:
-        if why := self._blocked():
-            self.status = why
-            self.render(force=True)
-            return
-        provider = providers.find(self.settings.get("provider"))
-        base = provider.base_url
-        if provider.self_hosted and str(self.settings.get("base_url") or "").strip():
-            base = str(self.settings["base_url"]).strip()
-        self.status = f"Testing {provider.label}…"
-        self.render(force=True)
+    # -- the model picker --
+
+    def _provider(self) -> providers.Provider:
+        return providers.find(self.settings.get("provider"))
+
+    def _model_setting(self) -> str:
+        return str(self.settings.get("model") or "").strip()
+
+    def _model(self, provider: providers.Provider) -> str:
+        """The picker's choice for this service, else the model in the settings, else the service's default."""
+        return self.choice.get(provider.id) or self._model_setting() or provider.default_model
+
+    def _base(self, provider: providers.Provider) -> str:
+        base = str(self.settings.get("base_url") or "").strip()
+        return base if provider.self_hosted and base else provider.base_url
+
+    def _known_models(self, provider: providers.Provider) -> list[str]:
+        """The cached list for this service (and this server, for a self-hosted one); [] if there's none."""
+        entry = self.models.get(provider.id) or {}
+        if entry.get("base") != self._base(provider) or not isinstance(entry.get("models"), list):
+            return []
+        return [str(m) for m in entry["models"]]
+
+    def _fetch_models(self, force: bool = False) -> None:
+        """Fetch the service's model list in the background when it's missing or a day old (or now, on Refresh)."""
+        provider = self._provider()
+        with self.lock:
+            entry = self.models.get(provider.id) or {}
+            age = time.time() - float(entry.get("when", 0))
+            fresh = entry.get("base") == self._base(provider) and 0 <= age < MODELS_FRESH
+            retrying = bool(self.fetch_failed) and time.monotonic() - self.fetch_failed < MODELS_RETRY
+            why = self._cant_fetch(provider)
+            if force and why:
+                self.status = why
+            if self.fetching or why or (not force and (fresh or retrying)):
+                return
+            self.fetching = True
+            if force:
+                self.status = f"Fetching {provider.label}'s models…"
+        threading.Thread(target=self._fetch, args=(provider, force), daemon=True, name="ai-models").start()
+
+    def _cant_fetch(self, provider: providers.Provider) -> str:
+        if self.locked:
+            return "The assistant is locked (kill switch). Press Unlock to use it again."
+        if self.test_mode or "network" not in self.permissions:
+            return "It needs the network permission to reach the AI service (Plugins → AI assistant)."
+        if provider.needs_key and not self._key():
+            return f"Add your {provider.label} API key first (Plugins → AI assistant → Settings)."
+        return ""
+
+    def _fetch(self, provider: providers.Provider, force: bool) -> None:
+        base = self._base(provider)
         try:
-            names = providers.list_models(provider, base, self._key(), providers.Call(), 20,
-                                          bool(self.settings.get("allow_lan_http")))
-            model = str(self.settings.get("model") or "").strip() or provider.default_model
-            found = "" if not names or model in names else f" The model {model} isn't in its list; check the name."
-            self.status = f"Connected to {provider.label}: {len(names)} models available.{found}"
+            names = providers.chat_models(provider, providers.list_models(
+                provider, base, self._key(), providers.Call(), 20, bool(self.settings.get("allow_lan_http"))))
+            with self.lock:
+                self.models[provider.id] = {"when": time.time(), "base": base, "models": names[:300]}
+                self._save(MODELS_FILE, self.models)
+                self.fetch_failed = 0.0
+                if force:
+                    self.status = f"Connected to {provider.label}: {len(names)} models to choose from."
         except providers.AIError as exc:
-            self.status = f"Test failed: {exc}"
-        self.render(force=True)
+            with self.lock:
+                self.fetch_failed = time.monotonic()
+                if force:
+                    self.status = f"Couldn't fetch the models: {exc}"
+        finally:
+            with self.lock:
+                self.fetching = False
+            self.render(force=True)
+
+    def _load(self, name: str) -> dict[str, Any]:
+        try:
+            data = json.loads((self.data_dir / name).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _save(self, name: str, data: dict[str, Any]) -> None:
+        try:
+            (self.data_dir / name).write_text(json.dumps(data, indent=1), encoding="utf-8")
+        except OSError as exc:
+            self.log(f"Couldn't save {name}: {exc}")
 
     def _cancel(self) -> None:
         with self.lock:
@@ -395,8 +477,8 @@ class Assistant(Plugin):
         self.show(panel)
 
     def _panel(self) -> dict[str, Any]:
-        provider = providers.find(self.settings.get("provider"))
-        model = str(self.settings.get("model") or "").strip() or provider.default_model
+        provider = self._provider()
+        model = self._model(provider)
         limits = safety.Limits.of(self.settings)
         services = sorted(self.services.values(), key=lambda s: s.name.lower())
         self.labels = {}
@@ -404,83 +486,99 @@ class Assistant(Plugin):
             label = s.name if s.name not in self.labels else f"{s.name} ({s.id[:6]})"
             self.labels[label] = s.id
         current = next((k for k, v in self.labels.items() if v == self.selected), "")
+        known = self._known_models(provider)
+        options = list(dict.fromkeys([model, *(known or provider.models)]))[:300] if model else known[:300]
         head: list[dict[str, Any]] = [
-            ui.row(ui.select("service", list(self.labels), current, "Service"), ui.button("New chat", "new")),
-            ui.text(f"{provider.label} · {model or 'no model set'} · {self.rate.used()} of {limits.per_hour} "
-                    "requests this hour", "muted"),
+            ui.row(ui.select("service", list(self.labels), current, "Service")),
+            ui.row(ui.select("model", options, model, "Model"),
+                   ui.button("Fetching…" if self.fetching else "↻ Refresh", "models")),
+            ui.text(f"{provider.label} · {self.rate.used()} of {limits.per_hour} questions this hour", "muted"),
         ]
         if why := self._blocked():
             head.append(ui.text(why, "warn"))
         elif provider.needs_key and not self._key():
             head.append(ui.text(f"Add your {provider.label} API key in Plugins → AI assistant → Settings. It is kept "
                                 "in your system keychain.", "warn"))
+        if known and model not in known:
+            head.append(ui.text(f"{model} isn't one of {provider.label}'s models: pick one from the list.", "warn"))
         if self.status:
-            head.append(ui.text(self.status, "error" if self.status.startswith(("Not sent", "Test failed", "Can't"))
-                                else ""))
-        quick = [ui.button(text, "quick", key) for key, (text, _) in QUICK.items()]
-        head += [ui.row(*quick[:3]), ui.row(*quick[3:])]
-        if "read_files" in self.permissions and self.selected:
-            paths = self.file_lists.get(self.selected, (0, [], ""))[1]
-            attached = self.attached.get(self.selected, [])
-            if paths:
-                head.append(ui.row(ui.select("attach", [NO_FILE, *paths[:299]], NO_FILE),
-                                   ui.button("Clear files", "detach")))
-            else:
-                head.append(ui.row(ui.button("Load the file list", "files")))
-            if attached:
-                head.append(ui.text("You added: " + ", ".join(attached), "muted"))
-        elif self.selected:
-            head.append(ui.text("Only the logs are used. Grant read_files to include the service's files.", "muted"))
-        foot = [
-            ui.input("ask", f"Ask about {self._name(self.selected)}… (Enter sends, Shift+Enter: new line)" if
-                     self.selected else "Ask…", "Ask"),
-            ui.row(*([ui.button("■ Stop", "stop")] if self.call else []), ui.button("Test connection", "test"),
-                   ui.button("Unlock", "unlock") if self.locked else ui.button("⛔ Kill switch", "kill")),
-            ui.text("Answers only: it can't run commands, delete files or write anything. Suggested changes open a "
-                    "review window, and only your Apply writes them. Secrets are removed before anything is sent.",
-                    "muted"),
-        ]
+            head.append(ui.text(self.status, "error" if self.status.startswith(
+                ("Not sent", "Couldn't", "Can't")) else ""))
+        foot = self._foot()
         turns = self.chats.get(self.selected, [])
         start = max(0, len(turns) - SHOWN_TURNS)
         while True:
-            body: list[dict[str, Any]] = []
+            messages: list[dict[str, Any]] = []
+            reviews: list[dict[str, Any]] = []
             if start:
-                body.append(ui.text(f"{start} earlier question{'s' if start > 1 else ''} not shown", "muted"))
+                messages.append(ui.message("note", f"{start} earlier question{'s' if start > 1 else ''} not shown"))
+            if not turns and self.selected:
+                messages.append(ui.message("note", f"Ask anything about {self._name(self.selected)}: why it stopped, "
+                                           "what the logs say, how to fix something. Or pick a quick question "
+                                           "below."))
             for i in range(start, len(turns)):
-                body += self._turn(i, turns[i])
-            panel = ui.panel("AI assistant", *head, *body, *foot)
+                messages += self._turn(turns[i])
+                reviews += self._reviews(i, turns[i])
+            panel = ui.panel("AI assistant", *head, ui.chat(*messages[-200:]), *reviews, *foot)
             if len(json.dumps(panel, ensure_ascii=False).encode()) <= PANEL_BUDGET or start >= len(turns) - 1:
                 return panel
             start += 1
 
-    def _turn(self, index: int, turn: Turn) -> list[dict[str, Any]]:
-        items: list[dict[str, Any]] = [ui.text(f"You: {turn.label or turn.question}"[:3900], "muted")]
+    def _foot(self) -> list[dict[str, Any]]:
+        name = self._name(self.selected) if self.selected else ""
+        foot = [ui.input("ask", f"Ask about {name}… (Enter sends, Shift+Enter: new line)" if name else "Ask…", "Ask")]
+        tools = [ui.select("quick", [QUICK_PICK, *(text for text, _ in QUICK.values())], QUICK_PICK)]
+        attached = self.attached.get(self.selected, [])
+        if "read_files" in self.permissions and self.selected:
+            paths = self.file_lists.get(self.selected, (0, [], ""))[1]
+            tools.append(ui.select("attach", [NO_FILE, *paths[:299]], NO_FILE) if paths
+                         else ui.button("Add files…", "files"))
+        foot.append(ui.row(*tools))
+        if attached:
+            foot.append(ui.row(ui.text("Also sent: " + ", ".join(attached), "muted"), ui.button("Clear", "detach")))
+        elif self.selected and "read_files" not in self.permissions:
+            foot.append(ui.text("Only the logs are sent. Grant read_files to include the service's files.", "muted"))
+        foot += [
+            ui.row(*([ui.button("■ Stop", "stop")] if self.call else []), ui.button("New chat", "new"),
+                   ui.button("Unlock", "unlock") if self.locked else ui.button("⛔ Kill switch", "kill")),
+            ui.text("It only answers: no commands, no writing. A suggested change opens a review window and only "
+                    "your Apply writes it. Secrets are removed before anything is sent.", "muted"),
+        ]
+        return foot
+
+    def _turn(self, turn: Turn) -> list[dict[str, Any]]:
+        items = [ui.message("you", (turn.label or turn.question)[:4000])]
         if turn.sent:
-            items.append(ui.text(f"Sent {turn.sent}", "muted"))
+            items.append(ui.message("note", f"Sent {turn.sent}"))
         answer = turn.answer
         if len(answer) > SHOWN_ANSWER:
             answer = answer[:SHOWN_ANSWER] + "\n… (the rest is cut in the panel)"
         if turn.status == "waiting":
-            items.append(ui.text("Gathering the logs and files…", "muted"))
+            items.append(ui.message("note", "Gathering the logs and files…"))
         elif turn.status == "streaming" and not answer:
-            items.append(ui.text("Thinking…", "muted"))
+            items.append(ui.message("ai", "Thinking…"))
         for kind, text in context.split_answer(answer):
-            for chunk in _chunks(text, 3900):
-                items.append(ui.code(chunk) if kind in ("code", "edit") else ui.text(chunk))
+            if kind == "text" and not text.strip():
+                continue
+            for chunk in _chunks(text.strip("\n") if kind == "text" else text, 19_000):
+                items.append(ui.message("ai", chunk, code=kind in ("code", "edit")))
         if turn.status == "stopped":
-            items.append(ui.text("Stopped.", "warn"))
+            items.append(ui.message("note", "Stopped."))
         for note in turn.notes:
-            items.append(ui.text(note[:3900], "error" if turn.status == "error" else "muted"))
+            items.append(ui.message("error" if turn.status == "error" else "note", note[:2000]))
+        for path, state in turn.proposals.items():
+            items.append(ui.message("note", f"{path}: {state}"))
+        return items
+
+    def _reviews(self, index: int, turn: Turn) -> list[dict[str, Any]]:
+        """A Review button for each file the answer would change, until its change is applied or waiting."""
+        out = []
         for path, edits in turn.edits.items():
             state = turn.proposals.get(path, "")
-            if state and not state.startswith(("Refused", "Not applied", "You rejected", "Not reviewed")):
-                items.append(ui.text(f"{path}: {state}", "ok" if state.startswith("Applied") else ""))
-            else:
-                items.append(ui.row(ui.button(f"Review change to {path} ({len(edits)} edit"
-                                              f"{'s' if len(edits) > 1 else ''})", "propose", f"{index}:{path}")))
-                if state:
-                    items.append(ui.text(f"{path}: {state}", "warn"))
-        return items
+            if not state or state.startswith(("Refused", "Not applied", "You rejected", "Not reviewed")):
+                out.append(ui.row(ui.button(f"Review change to {path} ({len(edits)} edit"
+                                            f"{'s' if len(edits) > 1 else ''})", "propose", f"{index}:{path}")))
+        return out
 
 
 def _chunks(text: str, size: int) -> list[str]:

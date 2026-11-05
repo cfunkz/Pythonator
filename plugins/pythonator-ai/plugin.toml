@@ -2,8 +2,8 @@
 [plugin]
 id = "pythonator-ai"
 name = "AI assistant"
-version = "1.0.1"
-api = 2
+version = "1.1.0"
+api = 3
 entry = "plugin.py"
 description = "Ask Claude, OpenAI, Gemini, DeepSeek or your own Ollama about one service: its crashes, logs and code. It only suggests changes; you review and apply them."
 permissions = ["network", "ui", "read_logs", "read_files", "propose_changes"]
@@ -28,7 +28,7 @@ key = "model"
 label = "Model"
 kind = "text"
 default = ""
-help = "Empty uses the service's default: claude-opus-5-5, gpt-6.1-sol, gemini-flash-latest, deepseek-v4-flash or qwen2.5-coder. Any model name the service knows works."
+help = "Easier: pick one in the panel's Model list, which comes from the service itself. Empty here uses the service's default: claude-opus-5-5, gpt-6.1-sol, gemini-flash-latest, deepseek-v4-flash or qwen2.5-coder."
 
 [[plugin.settings]]
 key = "base_url"

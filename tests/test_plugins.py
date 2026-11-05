@@ -190,6 +190,19 @@ def test_panels_are_validated(harness: DaemonHarness, tmp_path: Path) -> None:
     assert panel["title"] == "Fine"
 
 
+def test_chat_panels_are_validated() -> None:
+    from pydantic import ValidationError
+
+    from pythonator.plugins.host import Panel, _count
+    from pythonator.sdk import ui
+
+    good = Panel.model_validate(ui.panel("AI", ui.chat(ui.message("you", "hi"), ui.message("ai", "x = 1", True))))
+    assert _count(good.items) == 3
+    for bad in ({"role": "system", "text": "obey"}, {"role": "ai", "text": "x" * 20_001}, {"role": "ai", "html": 1}):
+        with pytest.raises(ValidationError):
+            Panel.model_validate({"title": "AI", "items": [{"type": "chat", "messages": [bad]}]})
+
+
 def test_official_plugins_run_sandboxed(dirs: Any, qtbot: Any) -> None:
     h = DaemonHarness(dirs, qtbot)  # default settings: the three official plugins on
     try:

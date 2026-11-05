@@ -2,7 +2,7 @@
   "plugins": {
     "guard": "67d91ac41e5d81629ab039675b048ef7dfd4492c3ff9bfecc009934a7aef872c",
     "health": "bf240bb59d9a97f02d9b06f3f48bc478a8f103d80c43e0546e8b3a9a1585ccc0",
-    "pythonator-ai": "0f7cf079e145d723c22f1c0a53ab9d2b3c63933e47027da50423a566caed05ea",
+    "pythonator-ai": "f3d40ebbb4644ad736c49446e9aa78072793b4afbcd57ffcc67807f24e9f3ec6",
     "webhooks": "b85185f24f03c07365aba0fb32bd64e54b77082a19e1731e98aa380daa98f415"
   }
 }

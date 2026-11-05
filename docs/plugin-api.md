@@ -29,7 +29,7 @@ Your code never sees Pythonator's objects, only copies of the data your permissi
 id = "my-plugin"            # required: a-z, 0-9 and -, 2 to 41 characters, starting with a letter
 name = "My plugin"          # required: shown everywhere, up to 64 characters
 version = "1.2.0"           # required: 1 to 4 numbers, optional suffix (1.2.0-beta1)
-api = 2                     # the plugin API it was written for; a newer one than Pythonator's is refused
+api = 3                     # the plugin API it was written for; a newer one than Pythonator's is refused
 entry = "plugin.py"         # the Python file, inside the plugin folder
 description = "..."         # up to 300 characters
 permissions = ["network"]   # see below
@@ -197,9 +197,13 @@ text, never as HTML.
 | `ui.code(text)` | Monospaced, selectable text, up to 4000 characters (API 2) |
 | `ui.input(action, placeholder="", button="Send")` | A text box: Enter or the button calls `on_action(action, text)`, Shift+Enter is a new line; up to 16,000 characters; what the user typed survives panel updates (API 2) |
 | `ui.select(action, options, value="", label="")` | A drop-down of up to 300 options; choosing one calls `on_action(action, option)` (API 2) |
+| `ui.chat(*messages)` | A chat view that fills the panel's height and scrolls on its own, following new messages while scrolled to the end; up to 200 messages (API 3) |
+| `ui.message(role, text, code=False)` | One chat message: `role` is `you`, `ai`, `note` or `error`; up to 20,000 characters; messages of one role in a row share a bubble, and `code=True` shows a monospaced block (API 3) |
 
-A tone is `""`, `ok`, `warn`, `error` or `muted`. A panel holds at most 500 items in all. A panel that breaks these
-rules is refused, with the reason in the Activity, and the previous panel stays.
+A tone is `""`, `ok`, `warn`, `error` or `muted`. A select shows the `value` the plugin sends: after a pick it shows
+that value until the next panel, so a placeholder option makes a one-shot menu. A panel holds at most 500 items in
+all (each chat message counts). A panel that breaks these rules is refused, with the reason in the Activity, and the
+previous panel stays.
 
 ## Limits
 

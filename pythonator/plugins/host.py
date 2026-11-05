@@ -52,9 +52,18 @@ MASK = "••••••"
 Tone = Literal["", "ok", "warn", "error", "muted"]
 
 
+class Message(BaseModel):
+    """One line of a chat: the user's ("you"), the plugin's ("ai"), a small note or an error (API 3)."""
+
+    model_config = ConfigDict(extra="forbid")
+    role: Literal["you", "ai", "note", "error"]
+    text: str = Field(default="", max_length=20_000)
+    code: bool = False  # monospaced, like a code block
+
+
 class Node(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    type: Literal["text", "stat", "table", "button", "row", "code", "input", "select"]
+    type: Literal["text", "stat", "table", "button", "row", "code", "input", "select", "chat"]
     text: str = Field(default="", max_length=4000)
     placeholder: str = Field(default="", max_length=200)
     options: list[Annotated[str, Field(max_length=200)]] = Field(default_factory=list, max_length=300)
@@ -66,6 +75,7 @@ class Node(BaseModel):
     rows: list[list[str]] = Field(default_factory=list, max_length=500)
     tones: list[Tone] = Field(default_factory=list, max_length=500)
     items: list[Node] = Field(default_factory=list, max_length=20)
+    messages: list[Message] = Field(default_factory=list, max_length=200)
 
 
 class Panel(BaseModel):
@@ -75,7 +85,7 @@ class Panel(BaseModel):
 
 
 def _count(nodes: list[Node]) -> int:
-    return sum(1 + len(n.rows) + _count(n.items) for n in nodes)
+    return sum(1 + len(n.rows) + len(n.messages) + _count(n.items) for n in nodes)
 
 
 # -- one plugin ----------------------------------------------------------------------------------------------

@@ -135,6 +135,19 @@ class ui:
         """A drop-down list of up to 300 options; choosing one calls ``on_action(action, option)`` (API 2)."""
         return {"type": "select", "action": action, "options": list(options), "value": value, "label": label}
 
+    @staticmethod
+    def chat(*messages: dict[str, Any]) -> dict[str, Any]:
+        """A chat view of up to 200 ``ui.message`` items that fills the panel's height. It scrolls on its own and
+        follows new messages while it is scrolled to the end; give it a stable place in the panel so a redraw only
+        updates what changed (API 3)."""
+        return {"type": "chat", "messages": list(messages)}
+
+    @staticmethod
+    def message(role: str, text: str, code: bool = False) -> dict[str, Any]:
+        """``role``: "you", "ai", "note" or "error"; up to 20,000 characters. Messages of the same role in a row
+        share one bubble, so an answer can be text and ``code=True`` blocks in turn (API 3)."""
+        return {"role": role, "text": text, "code": code}
+
 
 @dataclass
 class Plugin:

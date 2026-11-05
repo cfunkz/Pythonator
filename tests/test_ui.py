@@ -306,3 +306,83 @@ def test_a_shown_log_appears_at_its_end_at_once(qtbot: Any) -> None:
     bar = console.view.verticalScrollBar()
     assert bar is not None and bar.value() == bar.maximum()
     assert "line 4999" in console.view.toPlainText() and "line 3000\n" not in console.view.toPlainText()
+
+
+def test_find_bar_counts_steps_and_replaces(qtbot: Any, tmp_path: Path) -> None:
+    from PyQt6.QtCore import Qt
+
+    path = tmp_path / "a.py"
+    path.write_text("x = 1  # é\nfoo(x)\nprint(x, xx)\n", encoding="utf-8")
+    panel = EditorPanel(11)
+    qtbot.addWidget(panel)
+    panel.show()
+    panel.open(path)
+    bar, ed = panel.findbar, panel.current()
+    assert ed is not None
+    bar.open()
+    bar.find_edit.setText("x")
+    bar.refresh()
+    assert len(bar.matches) == 5 and bar.count.text() == "5 found"
+    bar.word.setChecked(True)  # "xx" no longer counts
+    assert len(bar.matches) == 3
+    assert bar.step() and bar.count.text().startswith("1 of 3") and ed.selectedText() == "x"
+    assert bar.step() and ed.getSelection()[0] == 1 and ed.selectedText() == "x"  # after the é: UTF-8 offsets
+    qtbot.keyClick(bar.find_edit, Qt.Key.Key_Return, Qt.KeyboardModifier.ShiftModifier)  # back
+    qtbot.keyClick(bar.find_edit, Qt.Key.Key_Return, Qt.KeyboardModifier.ShiftModifier)  # and wraps to the last
+    assert bar.count.text() == "3 of 3"
+    bar.regex.setChecked(True)
+    bar.find_edit.setText(r"print\((\w+)")
+    bar.refresh()
+    bar.replace_edit.setText(r"show(\1")
+    bar.replace_all()
+    assert "show(x, xx)" in ed.text() and "é" in ed.text()  # UTF-8 offsets: the é before it didn't shift it
+    bar.find_edit.setText("(")
+    bar.refresh()
+    assert bar.count.text() == "Invalid"
+    qtbot.keyClick(bar.find_edit, Qt.Key.Key_Escape)
+    assert not bar.isVisible()
+
+
+def test_plugin_chat_updates_in_place_and_follows_the_end(qtbot: Any) -> None:
+    from PyQt6.QtWidgets import QLabel, QPlainTextEdit
+
+    from pythonator.sdk import ui
+
+    dock = panels.PanelDock(lambda *a: None)
+    qtbot.addWidget(dock)
+    dock.resize(380, 500)
+    dock.show()
+    qtbot.waitExposed(dock)
+
+    def panel(answer: str, *more: dict[str, Any]) -> dict[str, Any]:
+        return ui.panel("AI", ui.text("head"), ui.chat(ui.message("you", "Why?"), ui.message("ai", answer),
+                                                       ui.message("ai", "x = 1", code=True), *more))
+
+    dock.update_panel("ai", "AI", panel("Because"))
+    chat = dock.findChild(panels.ChatView)
+    assert chat is not None and len(chat.rows) == 2  # the answer's text and code share one bubble
+    first = chat.rows[1][1].widgets[0]
+    assert isinstance(first, QLabel) and isinstance(chat.rows[1][1].widgets[1], QPlainTextEdit)
+    dock.update_panel("ai", "AI", panel("Because the port is taken"))  # a streamed piece
+    assert dock.findChild(panels.ChatView) is chat and chat.rows[1][1].widgets[0] is first
+    assert first.text() == "Because the port is taken"
+    for i in range(30):
+        dock.update_panel("ai", "AI", panel("Because", *[ui.message("note", f"line {n}") for n in range(i)]))
+    qtbot.wait(20)
+    bar = chat.verticalScrollBar()
+    assert bar is not None and bar.maximum() > 0 and bar.value() == bar.maximum()  # follows the end
+    dock.update_panel("ai", "AI", panel("Again", ui.message("error", "404: not found")))
+    assert [b.role for _, b in chat.rows] == ["you", "ai", "error"]
+
+
+def test_plugin_select_shows_what_the_plugin_chose(qtbot: Any) -> None:
+    from PyQt6.QtWidgets import QComboBox
+
+    picked: list[str] = []
+    widget = panels.render("p", {"type": "select", "action": "quick", "options": ["Pick…", "A", "B"],
+                                 "value": "Pick…"}, lambda _p, _a, v: picked.append(v))
+    qtbot.addWidget(widget)
+    combo = widget.findChild(QComboBox)
+    assert combo is not None
+    combo.activated.emit(2)
+    assert picked == ["B"] and combo.currentText() == "Pick…"  # a one-shot pick goes back to the placeholder

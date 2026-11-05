@@ -20,8 +20,9 @@ secrets and dangerous changes, and nothing is written until you press Apply.
 | Ollama (self-hosted) | `http://localhost:11434/v1` or yours | `qwen2.5-coder` | none |
 | Other OpenAI-compatible server (LM Studio, vLLM, llama.cpp, LocalAI…) | yours | set one | optional |
 
-Any model name the service knows works: type it in **Model**. **Test connection** in the panel lists the models the
-service offers.
+Pick the model in the panel's **Model** list. The list comes from the service itself (chat models only), is kept for
+a day and is fetched again with **↻ Refresh**, which also tests the connection. A model typed in the settings is used
+until you pick another, and a name the service doesn't know is pointed out.
 
 ## Safety
 

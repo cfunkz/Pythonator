@@ -10,7 +10,7 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationErr
 
 from ..core import validate
 
-API = 2  # 2: chat input, select and code in panels; read_files and propose_changes
+API = 3  # 2: chat input, select and code in panels; read_files and propose_changes. 3: the chat view
 MANIFEST = "plugin.toml"
 Permission = Literal["network", "read_logs", "inspect", "control", "policy", "ui", "read_files", "propose_changes"]
 PERMISSIONS: dict[str, str] = {

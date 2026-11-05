@@ -130,7 +130,8 @@ class Call:
 
     # -- HTTP --
 
-    def _open(self, url: str, timeout: float, allow_lan_http: bool) -> tuple[http.client.HTTPConnection, str]:
+    def _open(self, url: str, timeout: float, allow_lan_http: bool,
+              query: str = "") -> tuple[http.client.HTTPConnection, str]:
         if why := safety.check_endpoint(url, allow_lan_http=allow_lan_http):
             raise AIError(why)
         parts = urlsplit(url)
@@ -146,11 +147,11 @@ class Call:
                 raise Cancelled
             self._conn = conn
         path = parts.path or "/"
-        return conn, path
+        return conn, f"{path}?{query}" if query else path  # a query is ours, never the user's address
 
     def request(self, method: str, url: str, headers: dict[str, str], body: dict[str, Any] | None, timeout: float,
-                allow_lan_http: bool) -> http.client.HTTPResponse:
-        conn, path = self._open(url, timeout, allow_lan_http)
+                allow_lan_http: bool, query: str = "") -> http.client.HTTPResponse:
+        conn, path = self._open(url, timeout, allow_lan_http, query)
         data = json.dumps(body).encode() if body is not None else None
         all_headers = {"User-Agent": USER_AGENT, "Accept": "application/json, text/event-stream", **headers}
         if data is not None:
@@ -247,6 +248,8 @@ def _http_message(response: http.client.HTTPResponse) -> str:
     detail = ""
     with contextlib.suppress(ValueError, AttributeError, TypeError):
         data = json.loads(raw)
+        if isinstance(data, list) and data:  # Gemini wraps its error in a list
+            data = data[0]
         err = data.get("error", data) if isinstance(data, dict) else data
         detail = str(err.get("message", "") if isinstance(err, dict) else err)
     if not detail:
@@ -258,7 +261,7 @@ def _http_message(response: http.client.HTTPResponse) -> str:
              429: "The AI service says: too many requests or no credit left. Wait, or check your plan.",
              529: "The AI service is overloaded right now. Try again in a minute."}
     hint = hints.get(response.status, "")
-    return f"{response.status}: {detail[:400]}" + (f"\n{hint}" if hint else "")
+    return f"{response.status}: {detail[:300]}" + (f"\n{hint}" if hint else "")
 
 
 def _events(response: http.client.HTTPResponse, call: Call, deadline: float) -> Iterator[tuple[str, str]]:
@@ -418,7 +421,9 @@ def list_models(provider: Provider, base_url: str, api_key: str, call: Call, tim
     headers = ({"x-api-key": api_key, "anthropic-version": "2026-10-21"} if provider.kind == "anthropic"
                else openai_headers(Request(provider, "", base_url, api_key, "", [], 0, 0)))
     try:
-        response = call.request("GET", _url(base_url, "/models"), headers, None, min(timeout, 30), allow_lan_http)
+        query = "limit=1000" if provider.kind == "anthropic" else ""  # Anthropic pages its list
+        response = call.request("GET", _url(base_url, "/models"), headers, None, min(timeout, 30), allow_lan_http,
+                                query)
         raw = response.read(MAX_BODY + 1)
     except (OSError, http.client.HTTPException) as exc:
         raise AIError(_network_message(exc)) from None
@@ -435,3 +440,15 @@ def list_models(provider: Provider, base_url: str, api_key: str, call: Call, tim
         items = []
     names = [str(i.get("id") or i.get("name") or "") for i in items if isinstance(i, dict)]
     return sorted(n.removeprefix("models/") for n in names if n)
+
+
+# Not for chat: embeddings, speech, images, video, moderation and the like, which every list mixes in.
+_NOT_CHAT = ("embed", "aqa", "imagen", "veo", "tts", "whisper", "dall-e", "moderation", "transcribe", "realtime",
+             "audio", "image", "lyria", "rerank", "babbage", "davinci", "sora")
+
+
+def chat_models(provider: Provider, names: list[str]) -> list[str]:
+    """The models worth offering in the picker: the provider's usual ones first, then the rest, A to Z."""
+    names = [n for n in dict.fromkeys(names) if n and len(n) <= 200 and not any(w in n.lower() for w in _NOT_CHAT)]
+    known = [m for m in provider.models if m in names]
+    return known + sorted(n for n in names if n not in known)

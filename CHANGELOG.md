@@ -2,6 +2,19 @@
 
 Pythonator follows [semantic versioning](https://semver.org/). Each release lists what changed for users.
 
+## 0.0.10
+
+- The editor's find bar is redone: icon buttons with tooltips, a match counter ("3 of 18"), every match highlighted,
+  match case, whole word and regex toggles, previous and next, and a replace row with Replace and Replace all
+  (one undo step). Ctrl+F finds, Ctrl+H replaces, Enter and Shift+Enter step, F3 too, Esc closes.
+- AI assistant 1.1: a real chat window. Your questions and its answers are bubbles in their own scrolling view that
+  follows the answer as it streams (scroll up and it stays put), code shows as code, errors are short. Quick
+  questions are one menu under the input.
+- AI assistant: a **Model** list per AI service, fetched from the service, kept for a day and refreshed with
+  **↻ Refresh** (which also tests the connection). A misspelt model name is pointed out instead of failing with a 404,
+  and Gemini's errors read plainly.
+- Plugins: panels can show a chat (`ui.chat`, `ui.message`; plugin API 3).
+
 ## 0.0.9
 
 - Windows: uninstalling ends every Pythonator process still running from the install folder (a window, or a

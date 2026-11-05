@@ -174,12 +174,17 @@ def test_traceback_files_are_found() -> None:
 
 class FakeAI(BaseHTTPRequestHandler):
     seen: list[dict[str, Any]] = []  # noqa: RUF012 (one fake server per test, reset by the fixture)
+    seen_get: list[str] = []  # noqa: RUF012
     mode = "ok"
 
     def log_message(self, *args: Any) -> None:
         pass
 
     def do_GET(self) -> None:
+        FakeAI.seen_get.append(self.path)
+        if FakeAI.mode == "404list":  # how Gemini sends an error
+            self._json(404, [{"error": {"code": 404, "message": "models/gemeini-flash-latest is not found"}}])
+            return
         self._json(200, {"data": [{"id": "model-a"}, {"id": "model-b"}]})
 
     def do_POST(self) -> None:
@@ -228,7 +233,7 @@ class FakeAI(BaseHTTPRequestHandler):
         except OSError:
             pass
 
-    def _json(self, status: int, data: dict[str, Any]) -> None:
+    def _json(self, status: int, data: Any) -> None:
         raw = json.dumps(data).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
@@ -239,7 +244,7 @@ class FakeAI(BaseHTTPRequestHandler):
 
 @pytest.fixture
 def fake() -> Iterator[str]:
-    FakeAI.seen, FakeAI.mode = [], "ok"
+    FakeAI.seen, FakeAI.seen_get, FakeAI.mode = [], [], "ok"
     server = ThreadingHTTPServer(("127.0.0.1", 0), FakeAI)
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -311,6 +316,65 @@ def test_a_key_is_needed_for_cloud_services(fake: str) -> None:
 def test_connection_test_lists_models(fake: str) -> None:
     assert providers.list_models(providers.find("ollama"), fake, "", providers.Call(), 5, False) == ["model-a",
                                                                                                     "model-b"]
+
+
+def test_model_lists_keep_chat_models_and_errors_read_plainly(fake: str) -> None:
+    gemini = providers.find("gemini")
+    names = ["text-embedding-004", "gemini-3.6-flash", "imagen-4", "aaa-chat", "gemini-flash-latest",
+             "gemini-2.5-flash-preview-tts", "gemini-3.6-flash"]
+    assert providers.chat_models(gemini, names) == ["gemini-flash-latest", "gemini-3.6-flash", "aaa-chat"]
+    FakeAI.mode = "404list"
+    with pytest.raises(providers.AIError) as err:
+        providers.list_models(providers.find("ollama"), fake, "", providers.Call(), 5, False)
+    assert str(err.value).startswith("404: models/gemeini-flash-latest is not found") and "[{" not in str(err.value)
+    FakeAI.mode = "ok"
+    providers.list_models(providers.find("claude"), fake, "k", providers.Call(), 5, False)
+    assert FakeAI.seen_get[-1].endswith("/models?limit=1000")  # Anthropic pages its list; one page holds them all
+
+
+def _assistant(tmp_path: Path, **settings: Any) -> Any:
+    import importlib.util
+
+    from pythonator.sdk import ServiceInfo
+
+    spec = importlib.util.spec_from_file_location("ai_plugin_under_test", PLUGIN / "plugin.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    a = module.Assistant(settings={"provider": "Google Gemini", "api_key": "k", **settings},
+                         services={"s1": ServiceInfo("s1", "web", "python", "sandbox", "running")},
+                         permissions=frozenset({"ui"}), data_dir=tmp_path)  # no network: nothing is fetched
+    a.panels = []
+    a.show = a.panels.append
+    a.on_start()
+    return a
+
+
+def _model_select(panel: dict[str, Any]) -> dict[str, Any]:
+    return next(i for row in panel["items"] if row["type"] == "row" for i in row["items"]
+                if i.get("action") == "model")
+
+
+def test_model_picker_uses_the_cached_list_and_remembers_the_choice(tmp_path: Path) -> None:
+    from pythonator.plugins.host import Panel
+
+    a = _assistant(tmp_path, model="gemeini-flash-latest")
+    a.models["gemini"] = {"when": time.time(), "base": a._base(a._provider()),
+                          "models": ["gemini-flash-latest", "gemini-3.6-flash"]}
+    a.render(force=True)
+    Panel.model_validate(a.panels[-1])
+    select = _model_select(a.panels[-1])
+    assert select["value"] == "gemeini-flash-latest" and "gemini-3.6-flash" in select["options"]
+    assert "isn't one of Google Gemini's models" in json.dumps(a.panels[-1])  # the typo is pointed out
+    a.on_action("model", "gemini-3.6-flash")
+    assert _model_select(a.panels[-1])["value"] == "gemini-3.6-flash"
+    assert json.loads((tmp_path / "model.json").read_text()) == {"gemini": "gemini-3.6-flash"}
+    assert _assistant(tmp_path)._model(providers.find("gemini")) == "gemini-3.6-flash", "kept after a restart"
+    a.settings["model"] = "gemini-flash-latest"  # typed in the settings later: that wins
+    a.on_settings()
+    assert a._model(providers.find("gemini")) == "gemini-flash-latest"
+    assert "Couldn't" not in a.status and a.fetching is False  # no network permission: no fetch was tried
 
 
 def test_metadata_address_is_refused_before_connecting() -> None:

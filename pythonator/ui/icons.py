@@ -6,13 +6,23 @@ from collections.abc import Callable
 from functools import cache
 from pathlib import Path
 
-from PyQt6.QtCore import QFileInfo, QPointF, Qt
-from PyQt6.QtGui import QAbstractFileIconProvider, QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
+from PyQt6.QtCore import QFileInfo, QPointF, QRectF, Qt
+from PyQt6.QtGui import (
+    QAbstractFileIconProvider,
+    QColor,
+    QFont,
+    QIcon,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+    QPolygonF,
+)
 from PyQt6.QtWidgets import QFileIconProvider
 
 # The file tree's buttons and icons.
 TINT = {"new": "#4f9cf9", "file": "#8b93a3", "folder": "#d29922", "collapse": "#8b93a3", "open": "#39c5cf",
-        "close": "#8b93a3"}
+        "close": "#8b93a3"}  # the rest (the find bar's) are grey: "#8b93a3"
 
 # Language colours for the file tree, as most editors use them.
 LANG = {
@@ -94,8 +104,64 @@ def _close(p: QPainter, c: QColor) -> None:
     p.drawLine(QPointF(11.5, 4.5), QPointF(4.5, 11.5))
 
 
+def _glyph(text: str, *, underline: bool = False, size: float = 8.5) -> Draw:
+    """Letters as an icon: Aa (match case), ab (whole word), .* (regular expression)."""
+
+    def draw(p: QPainter, c: QColor) -> None:
+        font = QFont()
+        font.setPointSizeF(size)
+        font.setBold(True)
+        p.setFont(font)
+        p.setPen(c)
+        p.drawText(QRectF(0, -1 if underline else 0, 16, 16), Qt.AlignmentFlag.AlignCenter, text)
+        if underline:  # a bracket under the word: only whole words
+            p.setPen(_pen(c, 1.2))
+            p.drawPolyline(QPolygonF([QPointF(3, 11.5), QPointF(3, 13.5), QPointF(13, 13.5), QPointF(13, 11.5)]))
+
+    return draw
+
+
+def _arrow(up: bool) -> Draw:
+    def draw(p: QPainter, c: QColor) -> None:
+        p.setPen(_pen(c, 1.7))
+        tip, tail = (3.5, 12.5) if up else (12.5, 3.5)
+        p.drawLine(QPointF(8, tip), QPointF(8, tail))
+        wing = tip + (4 if up else -4)
+        p.drawLine(QPointF(8, tip), QPointF(4, wing))
+        p.drawLine(QPointF(8, tip), QPointF(12, wing))
+
+    return draw
+
+
+def _chevron(down: bool) -> Draw:
+    def draw(p: QPainter, c: QColor) -> None:
+        p.setPen(_pen(c, 1.7))
+        if down:
+            p.drawPolyline(QPolygonF([QPointF(4, 6), QPointF(8, 10), QPointF(12, 6)]))
+        else:
+            p.drawPolyline(QPolygonF([QPointF(6, 4), QPointF(10, 8), QPointF(6, 12)]))
+
+    return draw
+
+
+def _replace(every: bool) -> Draw:
+    """A line that turns into the new text: ↵ (all: with a second line above)."""
+
+    def draw(p: QPainter, c: QColor) -> None:
+        p.setPen(_pen(c, 1.6))
+        if every:
+            p.drawLine(QPointF(3, 3.5), QPointF(11, 3.5))
+        p.drawPolyline(QPolygonF([QPointF(13, 6), QPointF(13, 11), QPointF(4, 11)]))
+        p.drawPolyline(QPolygonF([QPointF(6.5, 8.5), QPointF(4, 11), QPointF(6.5, 13.5)]))
+
+    return draw
+
+
 SHAPES: dict[str, Draw] = {
     "new": _plus, "file": _page, "folder": _folder, "collapse": _collapse, "open": _open, "close": _close,
+    "case": _glyph("Aa"), "word": _glyph("ab", underline=True), "regex": _glyph(".*", size=10),
+    "up": _arrow(True), "down": _arrow(False), "more": _chevron(False), "less": _chevron(True),
+    "replace": _replace(False), "replace_all": _replace(True),
 }
 
 
@@ -122,6 +188,7 @@ def icon(name: str, color: str = "") -> QIcon:
     out = QIcon()
     out.addPixmap(_render(shape, tint), QIcon.Mode.Normal)
     out.addPixmap(_render(shape, "#6e7681", alpha=150), QIcon.Mode.Disabled)
+    out.addPixmap(_render(shape, "#9aa5ff"), QIcon.Mode.Normal, QIcon.State.On)  # a toggle that is on
     return out
 
 

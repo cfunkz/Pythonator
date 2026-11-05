@@ -31,12 +31,10 @@ from PyQt6.Qsci import (
 from PyQt6.QtCore import QDir, QModelIndex, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QColor, QDesktopServices, QFileSystemModel, QKeySequence, QShortcut, QWheelEvent
 from PyQt6.QtWidgets import (
-    QCheckBox,
     QFileDialog,
     QHBoxLayout,
     QInputDialog,
     QMessageBox,
-    QPushButton,
     QTabBar,
     QToolButton,
     QTreeView,
@@ -46,8 +44,9 @@ from PyQt6.QtWidgets import (
 
 from ..core.store import write_atomic
 from . import theme
+from .findbar import FindBar
 from .icons import LANG, TINT, FileIcons, icon
-from .widgets import label, line, tabs
+from .widgets import label, tabs
 
 MAX_EDIT = 20 * 1024 * 1024  # bigger files open read only, without highlighting
 
@@ -196,26 +195,6 @@ class CodeEditor(QsciScintilla):
             return
         if e is not None:
             super().wheelEvent(e)
-
-
-class FindBar(QWidget):
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.find_edit = line("", "Find")
-        self.replace_edit = line("", "Replace with")
-        self.case = QCheckBox("Aa")
-        self.case.setToolTip("Match case")
-        self.regex = QCheckBox(".*")
-        self.regex.setToolTip("Regular expression")
-        self.next = QPushButton("Next")
-        self.one = QPushButton("Replace")
-        self.all = QPushButton("All")
-        close = QPushButton("×")
-        close.clicked.connect(self.hide)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 4, 0, 0)
-        for w in (self.find_edit, self.replace_edit, self.case, self.regex, self.next, self.one, self.all, close):
-            layout.addWidget(w)
 
 
 def _bad_name(name: str) -> str:
@@ -372,16 +351,13 @@ class EditorPanel(QWidget):
             b.clicked.connect(lambda _c=False, f=slot: f())
             row.addWidget(b)
         self.empty = label("Open a file from the tree under the services.\n"
-                           "Ctrl+S saves · Ctrl+F finds · Ctrl+click adds a caret · Ctrl+ +/− zooms\n"
+                           "Ctrl+S saves · Ctrl+F finds · Ctrl+H replaces · Ctrl+click adds a caret · Ctrl+ +/− zooms\n"
                            "Shift+wheel scrolls a page · Ctrl+End jumps to the end")
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty.setProperty("muted", True)
-        self.findbar = FindBar()
+        self.findbar = FindBar(self.current, self.status.emit)
         self.findbar.hide()
-        self.findbar.find_edit.returnPressed.connect(self._find_next)
-        self.findbar.next.clicked.connect(self._find_next)
-        self.findbar.one.clicked.connect(self._replace_one)
-        self.findbar.all.clicked.connect(self._replace_all)
+        self.tabs.currentChanged.connect(lambda _i: self.findbar.refresh() if self.findbar.isVisible() else None)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -390,6 +366,8 @@ class EditorPanel(QWidget):
         layout.addWidget(self.empty, 1)
         layout.addWidget(self.findbar)
         for keys, slot in ((QKeySequence.StandardKey.Save, self.save), (QKeySequence.StandardKey.Find, self.show_find),
+                           ("Ctrl+H", lambda: self.findbar.open(replace=True)),
+                           ("F3", lambda: self._step(True)), ("Shift+F3", lambda: self._step(False)),
                            ("Ctrl+=", lambda: self.zoom(1)),  # Ctrl++ and Ctrl+- are the editor's own keys
                            ("Ctrl+0", lambda: self.set_font_size(BASE_SIZE)),
                            ("Ctrl+W", lambda: self.close_tab(self.tabs.currentIndex()))):
@@ -414,6 +392,7 @@ class EditorPanel(QWidget):
             QMessageBox.warning(self, "Can't open", str(exc))
             return
         editor.modificationChanged.connect(lambda _m, e=editor: self._title(e))
+        editor.textChanged.connect(lambda e=editor: self.findbar.text_changed() if e is self.current() else None)
         editor.cursorPositionChanged.connect(lambda _l, _c: self._cursor())
         editor.SCN_ZOOM.connect(lambda e=editor: self._zoomed(e))  # Ctrl+, Ctrl-, Ctrl+wheel in that editor
         index = self.tabs.addTab(editor, icon("file", LANG.get(path.suffix.lower(), TINT["file"])), path.name)
@@ -502,42 +481,12 @@ class EditorPanel(QWidget):
             self.set_font_size(ed.font_size)
 
     def show_find(self) -> None:
-        self.findbar.show()
-        ed = self.current()
-        if ed is not None and ed.hasSelectedText():
-            self.findbar.find_edit.setText(ed.selectedText())
-        self.findbar.find_edit.setFocus()
-        self.findbar.find_edit.selectAll()
+        self.findbar.open()
 
-    def _find_next(self) -> bool:
-        ed = self.current()
-        if ed is None or not self.findbar.find_edit.text():
-            return False
-        bar = self.findbar
-        found = ed.findFirst(bar.find_edit.text(), bar.regex.isChecked(), bar.case.isChecked(), False, True)
-        if not found:
-            self.status.emit("Not found")
-        return bool(found)
-
-    def _replace_one(self) -> None:
-        ed = self.current()
-        if ed is not None and ed.hasSelectedText():
-            ed.replace(self.findbar.replace_edit.text())
-        self._find_next()
-
-    def _replace_all(self) -> None:
-        ed = self.current()
-        if ed is None or not self.findbar.find_edit.text():
-            return
-        count = 0
-        ed.beginUndoAction()
-        ed.setCursorPosition(0, 0)
-        while ed.findFirst(self.findbar.find_edit.text(), self.findbar.regex.isChecked(), self.findbar.case.isChecked(),
-                           False, False) and count < 100_000:
-            ed.replace(self.findbar.replace_edit.text())
-            count += 1
-        ed.endUndoAction()
-        self.status.emit(f"Replaced {count}")
+    def _step(self, forward: bool) -> None:
+        if not self.findbar.isVisible():
+            self.findbar.open()
+        self.findbar.step(forward=forward)
 
     def _sync_empty(self) -> None:
         has = self.tabs.count() > 0
