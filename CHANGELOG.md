@@ -12,6 +12,7 @@ Pythonator follows [semantic versioning](https://semver.org/). Each release list
   (carriage returns) like a terminal. Scrolling big files never waits on syntax colouring.
 - Plugin panels (the AI assistant) no longer take the keyboard: a redraw keeps your typing, cursor and focus.
 - **Start all** and login start services one after another, so many services don't spike the CPU together.
+- Own environments are made reliably in the Windows sandbox (pip is set up as a step of its own).
 
 ## 0.0.1
 

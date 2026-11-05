@@ -41,10 +41,14 @@ def _python_install(folder: Path, prog: str) -> list[Argv]:
     home = venv_home(venv) if venv else None
     if venv is None:
         venv = folder / ".venv"
-        steps.append([prog, "-m", "venv", str(venv)])
+        steps.append([prog, "-m", "venv", "--without-pip", str(venv)])
     elif not venv_python(venv).is_file() or (home is not None and not home.exists()):
-        steps.append([prog, "-m", "venv", "--clear", str(venv)])
+        steps.append([prog, "-m", "venv", "--clear", "--without-pip", str(venv)])
     py = str(venv_python(venv))
+    if steps:
+        # pip as a step of its own: venv's own ensurepip call drops PYTHONPATH, and with it the Windows sandbox's
+        # fix-ups (Python 3.13 makes private temp folders that an AppContainer can't open), so it fails there.
+        steps.append([py, "-m", "ensurepip", "--upgrade", "--default-pip"])
     if (folder / "requirements.txt").is_file():
         steps.append([py, "-m", "pip", "install", "--disable-pip-version-check", "-r", "requirements.txt"])
     elif (folder / "pyproject.toml").is_file():

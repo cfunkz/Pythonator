@@ -19,7 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "docs" / "exampl
 
 
 def main(program: str) -> int:
-    with tempfile.TemporaryDirectory(prefix="pythonator-smoke-") as tmp:
+    # The killed background service may hold its log open a moment longer: that mustn't hide the result.
+    with tempfile.TemporaryDirectory(prefix="pythonator-smoke-", ignore_cleanup_errors=True) as tmp:
         home, project = Path(tmp, "data"), Path(tmp, "project")
         project.mkdir()
         (project / "hello.py").write_text("print('smoke test ok', flush=True)\n", encoding="utf-8")
@@ -55,6 +56,7 @@ def main(program: str) -> int:
         finally:
             if daemon.poll() is None:
                 daemon.kill()
+                daemon.wait(30)
 
 
 if __name__ == "__main__":
