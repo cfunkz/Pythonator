@@ -264,10 +264,7 @@ def test_custom_commands_and_services_use_the_projects_own_environment(tmp_path:
     tool.write_text("#!/bin/sh\n")
     tool.chmod(0o755)
     svc = Service(name="c", folder=str(tmp_path), runtime="custom", command=["uvicorn", "app:app"])
-    if IS_WINDOWS:
-        assert service_argv(svc)[0].lower() == str(tool).lower()
-    else:
-        assert service_argv(svc)[0] == str(tool)
+    assert os.path.normcase(service_argv(svc)[0]) == os.path.normcase(str(tool))
     env = runtimes.activated({"PATH": "/usr/bin"}, tmp_path)
     assert env["PATH"].split(os.pathsep)[0] == str(bins) and env["VIRTUAL_ENV"] == str(tmp_path / ".venv")
     monkeypatch.setenv("__PYVENV_LAUNCHER__", "C:/Pythonator/.venv/Scripts/python.exe")
