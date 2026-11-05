@@ -2,7 +2,7 @@
 
 Pythonator follows [semantic versioning](https://semver.org/). Each release lists what changed for users.
 
-## Unreleased
+## 0.0.2
 
 - **Own environment** per service, on by default: Start makes the project's `.venv` (or `node_modules`, `vendor`)
   when it's missing, Deno, Go, .NET and Rust get a private package cache, and nothing comes from global installs.
