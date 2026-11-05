@@ -305,6 +305,20 @@ def test_own_environment_is_made_on_start_and_recreated(harness: DaemonHarness, 
     assert (project / ".venv" / "pyvenv.cfg").is_file() and not marker.exists()
 
 
+def test_own_environment_installs_requirements_in_the_sandbox(harness: DaemonHarness, project: Path) -> None:
+    """The setup steps (venv, pip, requirements) write .venv inside the project even in Sandbox mode, where the
+    venv's own interpreter is otherwise only read."""
+    (project / "where.py").write_text("import sys\nprint('prefix', sys.prefix, flush=True)\n")
+    (project / "requirements.txt").write_text("")  # an empty list: pip runs, offline is fine
+    sid = harness.add(name="env-sandbox", folder=str(project), entry="where.py", restart="never", mode="sandbox")
+    harness.ok({"op": "start", "id": sid})
+    harness.wait(lambda: "prefix" in harness.output(sid) or harness.states(sid)[-1:] == ["failed"],
+                 timeout=180_000)
+    assert "prefix" in harness.output(sid), harness.output(sid)
+    assert any((project / ".venv").glob("lib*/python*/site-packages/pip")) or \
+        (project / ".venv" / "Lib" / "site-packages" / "pip").is_dir()
+
+
 def test_own_environment_off_uses_the_runtime_as_is(harness: DaemonHarness, project: Path) -> None:
     (project / "hi.py").write_text("print('hi there', flush=True)\n")
     sid = harness.add(name="global", folder=str(project), entry="hi.py", restart="never", own_env=False)

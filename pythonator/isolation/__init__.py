@@ -73,7 +73,12 @@ def policy_for(service: Service, argv: list[str], dirs: DataDirs, *, task: bool)
     if service.runtime in ("node", "bun") and (node := runtimes.which("node")):  # npm and npx are node scripts
         programs.append(node)
     for prog in programs:
-        grants +=[Grant(p, False) for p in runtime_folders(prog) if p.exists() and not forbidden_read(p, dirs)]
+        for p in runtime_folders(prog):
+            if not p.exists() or forbidden_read(p, dirs):
+                continue
+            if write and p.resolve().is_relative_to(folder):
+                continue  # the project's own .venv: setup steps write it, so it mustn't be bound read-only on top
+            grants.append(Grant(p, False))
     if own_env_vars(service, dirs):
         grants.append(Grant(env_cache(dirs, service), True))
     for extra in service.sandbox.folders:
