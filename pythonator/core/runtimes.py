@@ -189,6 +189,61 @@ def venv_python(venv: Path) -> Path:
     return venv / ("Scripts/python.exe" if IS_WINDOWS else "bin/python")
 
 
+def project_bins(folder: Path) -> list[Path]:
+    """The project's own program folders, as an activated environment puts them first on PATH: the venv's
+    Scripts (or bin) and node_modules/.bin."""
+    bins = [venv / ("Scripts" if IS_WINDOWS else "bin")] if (venv := project_venv(folder)) else []
+    if (folder / "node_modules" / ".bin").is_dir():
+        bins.append(folder / "node_modules" / ".bin")
+    return bins
+
+
+def which_in_project(program: str, folder: Path) -> str | None:
+    """A custom command's program: the project's own (``python``, ``uvicorn``, ``pip`` from its venv,
+    ``vite`` from node_modules) before the computer's."""
+    bins = project_bins(folder)
+    found = shutil.which(program, path=os.pathsep.join(map(str, bins))) if bins else None
+    return found or which(program)
+
+
+def activated(env: dict[str, str], folder: Path) -> dict[str, str]:
+    """``env`` as in an activated environment: the project's program folders first on PATH, and VIRTUAL_ENV,
+    so what the service itself starts (``pip``, ``python -m``) comes from its own environment too."""
+    bins = project_bins(folder)
+    if not bins:
+        return env
+    key = next((k for k in env if k.upper() == "PATH"), "PATH")
+    out = {**env, key: os.pathsep.join([*map(str, bins), env.get(key, "")]).rstrip(os.pathsep)}
+    if venv := project_venv(folder):
+        out["VIRTUAL_ENV"] = str(venv)
+    return out
+
+
+def shell_argv(line: str, *, container: bool = False) -> tuple[list[str], str | None]:
+    """A command line typed into the console's shell: ``(argv, Windows command line)``. cmd.exe on Windows (its
+    ``/s /c "…"`` takes the line exactly as typed), sh elsewhere and in containers."""
+    if IS_WINDOWS and not container:
+        comspec = str(Path(os.environ.get("SYSTEMROOT", r"C:\Windows"), "System32", "cmd.exe"))
+        return [comspec, "/d", "/s", "/c", line], f'"{comspec}" /d /s /c "{line}"'
+    return ["/bin/sh", "-c", line], None
+
+
+def direct_python(argv: list[str], env: dict[str, str]) -> tuple[list[str], dict[str, str]]:
+    """Windows: run a venv's Python as its own ``python.exe`` redirector would, without the redirector. That
+    small launcher re-finds pyvenv.cfg from its own path and fails with exit code 106 when it can't; Python
+    itself does the same lookup from ``__PYVENV_LAUNCHER__``, with one process less in the service's tree."""
+    prog = Path(argv[0]) if argv else Path()
+    venv = prog.parent.parent
+    if not IS_WINDOWS or prog.name.lower() != "python.exe" or prog.parent.name.lower() != "scripts" \
+            or not (venv / "pyvenv.cfg").is_file():
+        return argv, env
+    home = venv_home(venv)
+    base = home / "python.exe" if home else None
+    if base is None or not base.is_file():
+        return argv, env
+    return [str(base), *argv[1:]], {**env, "__PYVENV_LAUNCHER__": str(prog)}
+
+
 def venv_has_pip(venv: Path) -> bool:
     return (venv / "Lib" / "site-packages" / "pip").is_dir() or any(venv.glob("lib/python*/site-packages/pip"))
 

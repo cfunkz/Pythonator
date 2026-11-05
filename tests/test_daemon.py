@@ -347,3 +347,18 @@ def test_own_environment_off_uses_the_runtime_as_is(harness: DaemonHarness, proj
     harness.ok({"op": "start", "id": sid})
     harness.wait(lambda: "hi there" in harness.output(sid))
     assert not (project / ".venv").exists()
+
+
+def test_console_shell_runs_next_to_the_service_in_its_environment(harness: DaemonHarness, project: Path) -> None:
+    """The console's shell: a command in the service's folder, while the service runs, with its own output."""
+    (project / "s.py").write_text("import time\nprint('up', flush=True)\nwhile True:\n    time.sleep(0.2)\n")
+    sid = harness.add(name="sh", folder=str(project), entry="s.py", restart="never", own_env=False)
+    harness.ok({"op": "start", "id": sid})
+    harness.wait(lambda: "up" in harness.output(sid))
+    harness.ok({"op": "shell", "id": sid, "line": "echo from-the-shell"})
+    harness.wait(lambda: "$ done (exit code 0)" in harness.output(sid))
+    out = harness.output(sid)
+    assert "$ echo from-the-shell" in out and "from-the-shell" in out.split("$ echo from-the-shell", 1)[1]
+    assert harness.states(sid)[-1] == "running"  # the service itself goes on
+    harness.ok({"op": "stop", "id": sid})
+    harness.wait(lambda: harness.states(sid)[-1] == "stopped", timeout=20_000)

@@ -147,7 +147,8 @@ class InputLine(QLineEdit):
 
 
 class Console(QWidget):
-    submitted = pyqtSignal(str)
+    submitted = pyqtSignal(str)  # a line for the program's stdin
+    shell_submitted = pyqtSignal(str)  # a command for the service's shell
     clear_requested = pyqtSignal()
     open_log_requested = pyqtSignal()
 
@@ -187,14 +188,17 @@ class Console(QWidget):
         il = QHBoxLayout(inp)
         il.setContentsMargins(8, 6, 8, 6)
         il.setSpacing(6)
-        stdin = QLabel("stdin")
-        stdin.setProperty("muted", True)
-        stdin.setFont(theme.mono_font(9))
+        self.shell = tool("stdin", "Switch between the program's input (stdin) and a shell command (Ctrl+`)",
+                          checkable=True)
+        self.shell.setFont(theme.mono_font(9))
+        self.shell.setShortcut(QKeySequence("Ctrl+`"))
+        self.shell.toggled.connect(self._mode_changed)
         self.input = InputLine()
         self.input.setFont(theme.mono_font(10))
-        self.input.setPlaceholderText("Type a line for the program's input and press Enter")
-        send = tool("Send", "Send the line to the program")
-        il.addWidget(stdin)
+        self.histories: tuple[list[str], list[str]] = ([], [])  # stdin's and the shell's, kept apart
+        send = tool("Send", "Send the line (Enter)")
+        self._mode_changed(False)
+        il.addWidget(self.shell)
         il.addWidget(self.input, 1)
         il.addWidget(send)
 
@@ -247,9 +251,22 @@ class Console(QWidget):
 
     def _submit(self) -> None:
         text = self.input.text()
+        if self.shell.isChecked() and not text.strip():
+            return
         self.input.remember(text)
         self.input.clear()
-        self.submitted.emit(text)
+        (self.shell_submitted if self.shell.isChecked() else self.submitted).emit(text)
+
+    def _mode_changed(self, shell: bool) -> None:
+        """stdin: the line goes to the running program. shell: it runs as a command in the service's folder,
+        with its environment first on PATH and in its isolation (a sandboxed service's shell is sandboxed)."""
+        self.histories[not shell][:] = self.input.history  # put away the other mode's history
+        self.input.history = self.histories[shell]
+        self.input.remember("")
+        self.shell.setText("shell" if shell else "stdin")
+        self.input.setPlaceholderText("A command to run in the service's folder, its sandbox and environment "
+                                      "(pip list, npm ls, dir…)" if shell else
+                                      "Type a line for the program's input and press Enter")
 
     def clear(self) -> None:
         self._queue.clear()
@@ -258,12 +275,27 @@ class Console(QWidget):
         self._parser = Parser()
         self.view.clear()
         self.count.clear()
+        self._loaded()
 
     def set_text(self, text: str) -> None:
+        """Show a service's log tail: it appears at once, at its end, not scrolling through as it's drawn."""
         self.clear()
         self.follow.setChecked(True)
+        at = len(text)
+        for _ in range(self.max_lines):  # only what the console keeps
+            if (at := text.rfind("\n", 0, at)) <= 0:
+                break
+        text = text[at + 1:] if at > 0 else text
+        if not text:
+            return
         self.append(text)
         self._fast = len(text)
+        self.view.setUpdatesEnabled(False)  # until it's all drawn: then one paint, already at the bottom
+
+    def _loaded(self) -> None:
+        if not self.view.updatesEnabled():
+            self.view.setUpdatesEnabled(True)
+            self._to_end()
 
     def append(self, text: str) -> None:
         """Queue output; it's drawn by the next frames. Only appending happens here, so it's cheap however often."""
@@ -322,6 +354,7 @@ class Console(QWidget):
     def _flush(self) -> None:
         if not self._queue:
             self._timer.stop()
+            self._loaded()
             return
         if not self._showing():  # nobody sees it: keep about what the console would hold, draw nothing
             if self._queued > self.max_lines * 150:
@@ -370,6 +403,8 @@ class Console(QWidget):
             pos = end
             last, now = time.perf_counter() - now, time.perf_counter()
         self._fast = max(0, self._fast - pos)
+        if not self._fast:
+            self._loaded()
         flood = len(text) > keep // 2 or pos >= FRAME_MAX * frame_ms // FRAME_MS
         if self._timer.interval() != (ms := FLOOD_FRAME_MS if flood else FRAME_MS):
             self._timer.setInterval(ms)

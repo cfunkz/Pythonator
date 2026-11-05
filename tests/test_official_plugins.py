@@ -100,3 +100,22 @@ def test_health_probe_against_a_real_server(tmp_path: Path) -> None:
         assert ms >= 0
     finally:
         server.shutdown()
+
+
+def test_health_asks_the_port_the_server_really_listens_on() -> None:
+    from pythonator.sdk import ServiceInfo
+
+    health = plugin_module("health")
+    plugin = health.Health()
+    def svc(sid: str, ports: tuple[int, ...] = (), listening: tuple[int, ...] = (), state: str = "running") -> Any:
+        return ServiceInfo(id=sid, name=sid, runtime="python", mode="sandbox", state=state, ports=ports,
+                           listening=listening)
+
+    plugin.services = {
+        "a": svc("a", (8764,), (8000,)),  # set up for 8764, started with --port 8000
+        "b": svc("b", (8764,), (8764, 9000)),
+        "c": svc("c", (8764,)),  # not listening yet
+        "d": svc("d", (), (5000,)),  # no port set up
+        "e": svc("e", (1,), state="stopped"),
+    }
+    assert {svc.id: port for svc, port in plugin.targets()} == {"a": 8000, "b": 8764, "c": 8764, "d": 5000}

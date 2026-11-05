@@ -62,7 +62,7 @@ def _call(name: str, fn: Any, *args: Any) -> Any:
 def _read_stdin(inbox: queue.Queue[dict[str, Any] | None]) -> None:
     """Replies to requests go straight to the thread waiting for them, so a handler can wait for one while the
     main loop is busy calling it; everything else is queued for the main loop, in order."""
-    for raw in sys.stdin:
+    for raw in sys.stdin.buffer:  # bytes: the host writes UTF-8, whatever this computer's code page is
         try:
             msg = json.loads(raw)
         except ValueError:

@@ -53,6 +53,9 @@ class State(StrEnum):
     TASK = "task"  # installing packages or pulling code
 
 
+# Exit codes of the small python.exe a venv has on Windows, when it can't hand over to the real Python.
+VENV_LAUNCHER = {101: "it couldn't start the real Python", 103: "the Python the venv was made from is gone",
+                 106: "it couldn't find the venv's pyvenv.cfg", 107: "the venv's pyvenv.cfg is unreadable or wrong"}
 QUEUED = "Starting in turn"  # the note of a service waiting in the start queue
 MAKING_ENV = "Setting up its environment"  # the task that makes a project's own environment
 
@@ -94,6 +97,10 @@ class Slot:
     live_skipped: int = 0  # output too fast for the live view, not yet noted there
     live_noted: float = 0.0
     after_steps: Callable[[], None] | None = None  # what to do once its task steps succeeded (start it)
+    shell: Runner | None = None  # a command typed into the console's shell, running next to the service
+    shell_partial: str = ""
+    shell_decoder: codecs.IncrementalDecoder = field(
+        default_factory=lambda: codecs.getincrementaldecoder("utf-8")(errors="replace"))
 
 
 class Supervisor:
@@ -227,22 +234,30 @@ class Supervisor:
 
     def _on_output(self, item: Output) -> None:
         data = item.source.take()  # always: the program may be waiting for it
-        slot = self.slots.get(item.key.split(":")[0])
+        sid, _, kind = item.key.partition(":")
+        slot = self.slots.get(sid)
         if slot is None or not data:
             return
-        text = slot.partial + slot.decoder.decode(data)
+        shell = kind == "shell"  # its own line buffer: its lines and the program's don't cut into each other
+        text = (slot.shell_partial if shell else slot.partial) + \
+            (slot.shell_decoder if shell else slot.decoder).decode(data)
         cut = text.rfind("\n") + 1
         if cut == 0 and len(text) < 4096:
-            slot.partial = text
-            return
-        if cut == 0:
+            cut = 0
+        elif cut == 0:
             cut = len(text)
-        slot.partial = text[cut:]
-        slot.pending.append(slot.log.write(text[:cut]))
+        if shell:
+            slot.shell_partial = text[cut:]
+        else:
+            slot.partial = text[cut:]
+        if cut:
+            slot.pending.append(slot.log.write(text[:cut]))
 
-    def _flush_partial(self, slot: Slot) -> None:
-        rest = slot.partial + slot.decoder.decode(b"", final=True)
-        slot.partial = ""
+    def _flush_partial(self, slot: Slot, *, shell: bool = False) -> None:
+        if shell:
+            rest, slot.shell_partial = slot.shell_partial + slot.shell_decoder.decode(b"", final=True), ""
+        else:
+            rest, slot.partial = slot.partial + slot.decoder.decode(b"", final=True), ""
         if rest:
             slot.pending.append(slot.log.write(rest + "\n"))
 
@@ -251,10 +266,14 @@ class Supervisor:
         slot = self.slots.get(sid)
         if slot is None:
             return
-        runner = slot.task if kind == "task" else slot.runner
+        runner = slot.task if kind == "task" else slot.shell if kind == "shell" else slot.runner
         if runner is not None:  # the last of its output, before the exit is reported
             self._on_output(Output(item.key, runner))
-        self._flush_partial(slot)
+        self._flush_partial(slot, shell=kind == "shell")
+        if kind == "shell":
+            slot.shell = None
+            self.note(slot, f"$ done ({_describe_exit(item.code)})")
+            return
         if kind == "task":
             self._task_step_done(slot, item.code)
             return
@@ -280,6 +299,10 @@ class Supervisor:
             return
         crashed = item.code != 0
         self.note(slot, f"{'Crashed' if crashed else 'Exited'} ({described}) after {_duration(item.runtime)}")
+        if sys.platform == "win32" and item.code in VENV_LAUNCHER and item.runtime < 5 \
+                and slot.service.runtime == "python":
+            self.note(slot, f"That code is from the venv's python.exe launcher: {VENV_LAUNCHER[item.code]}. "
+                            "Packages ▾ → Recreate environment makes the venv again.")
         policy = slot.service.restart
         if slot.service.schedule:
             self._set(slot, State.WAITING, "crashed" if crashed else "exited", described)
@@ -339,6 +362,8 @@ class Supervisor:
 
     def remove(self, sid: str) -> None:
         slot = self.slot(sid)
+        if slot.shell:
+            slot.shell.kill()
 
         def gone() -> None:
             slot.log.close()
@@ -449,6 +474,8 @@ class Supervisor:
     def stop(self, sid: str) -> None:
         slot = self.slot(sid)
         slot.restart_at = 0.0
+        if slot.shell:  # Stop ends a shell command running next to it too
+            slot.shell.kill()
         if slot.task:
             slot.steps.clear()
             slot.task.stop(5)
@@ -470,6 +497,33 @@ class Supervisor:
             self.stop(sid)
         else:
             self.start(sid)
+
+    def shell(self, sid: str, line: str) -> None:
+        """Run a command typed into the console's shell: in the service's folder and isolation, with its own
+        environment first on PATH, next to the running service. While one runs, lines go to its input."""
+        slot = self.slot(sid)
+        if slot.shell is not None:
+            if not slot.shell.write(line + "\n"):
+                raise ValueError("The shell command is ending")
+            slot.pending.append(slot.log.write(f"\x1b[36m> {line}\x1b[0m\n"))
+            return
+        service = slot.service
+        if slot.task or slot.state is State.TASK:
+            raise ValueError("Wait for its install to finish")
+        if service.mode is Mode.FULL and not service.full_access_ok:
+            raise ValueError("Start it once and confirm Full access first: its shell runs with the same access")
+        argv, cmdline = runtimes.shell_argv(line, container=service.mode is Mode.CONTAINER)
+        try:
+            cmd = isolation.prepare(service, self.dirs, task=argv, cmdline=cmdline)
+        except (isolation.IsolationError, OSError) as exc:
+            raise ValueError(str(exc)) from exc
+        runner = Runner(f"{sid}:shell", cmd, self.queue)  # type: ignore[arg-type]
+        try:
+            runner.start()
+        except OSError as exc:
+            raise ValueError(f"Couldn't start the shell: {exc}") from exc
+        slot.shell = runner
+        slot.pending.append(slot.log.write(f"\x1b[36m$ {line}\x1b[0m\n"))
 
     def write(self, sid: str, text: str) -> None:
         slot = self.slot(sid)
@@ -790,12 +844,14 @@ class Supervisor:
                 slot.runner.stop(min(slot.service.stop_timeout, timeout))
             if slot.task:
                 slot.task.stop(3)
+            if slot.shell:
+                slot.shell.kill()
         end = time.monotonic() + timeout + 2
         while time.monotonic() < end and any(s.runner or s.task for s in self.slots.values()):
             self.tick()
             time.sleep(0.05)
         for slot in self.slots.values():
-            for runner in (slot.runner, slot.task):
+            for runner in (slot.runner, slot.task, slot.shell):
                 if runner:
                     runner.kill()
             slot.log.flush()

@@ -36,7 +36,16 @@ class Health(Plugin):
         self.render()
 
     def targets(self) -> list[tuple[ServiceInfo, int]]:
-        return [(s, s.ports[0]) for s in self.services.values() if s.ports and s.state == "running"]
+        """Each running server and the port to ask: the one it really listens on when that isn't the declared
+        one (started with --port 8000 while its settings say 8764), else the declared one."""
+        out = []
+        for s in self.services.values():
+            if s.state != "running" or not (s.ports or s.listening):
+                continue
+            declared = s.ports[0] if s.ports else 0
+            port = declared if declared and (not s.listening or declared in s.listening) else s.listening[0]
+            out.append((s, port))
+        return out
 
     def on_tick(self) -> None:
         if time.monotonic() >= self.next_check:

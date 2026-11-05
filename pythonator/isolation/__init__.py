@@ -6,6 +6,7 @@ for can't be set up exactly, :func:`prepare` raises :class:`IsolationError` and 
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from ..core import runtimes
@@ -36,9 +37,9 @@ def service_argv(service: Service, task: list[str] | None = None) -> list[str]:
     if task is not None:
         return task
     folder = Path(service.folder)
-    if service.runtime == runtimes.CUSTOM:
+    if service.runtime == runtimes.CUSTOM:  # as typed, no shell; the project's own programs first
         argv = [*service.command, *service.args]
-        if found := (runtimes.which(argv[0]) if not Path(argv[0]).is_absolute() else argv[0]):
+        if found := (runtimes.which_in_project(argv[0], folder) if not Path(argv[0]).is_absolute() else argv[0]):
             argv[0] = found
         return argv
     rt = runtimes.RUNTIMES[service.runtime]
@@ -62,6 +63,12 @@ def _check_windows_batch(argv: list[str]) -> None:
                 raise IsolationError('Arguments of a .bat or .cmd file can\'t contain " % ^ & | < > ! or newlines')
 
 
+def _in_windows(path: Path) -> bool:
+    """Under C:\\Windows: every sandbox may read it already (cmd.exe for the console's shell), never touch it."""
+    root = os.environ.get("SYSTEMROOT", "") if IS_WINDOWS else ""
+    return bool(root) and path.resolve().is_relative_to(Path(root).resolve())
+
+
 def policy_for(service: Service, argv: list[str], dirs: DataDirs, *, task: bool) -> Policy:
     folder = Path(service.folder).resolve()
     write = task or service.sandbox.write_project
@@ -74,7 +81,7 @@ def policy_for(service: Service, argv: list[str], dirs: DataDirs, *, task: bool)
         programs.append(node)
     for prog in programs:
         for p in runtime_folders(prog):
-            if not p.exists() or forbidden_read(p, dirs):
+            if not p.exists() or forbidden_read(p, dirs) or _in_windows(p):
                 continue
             if write and p.resolve().is_relative_to(folder):
                 continue  # the project's own .venv: setup steps write it, so it mustn't be bound read-only on top
@@ -94,8 +101,9 @@ def policy_for(service: Service, argv: list[str], dirs: DataDirs, *, task: bool)
                   lan=net.expose == "lan", grants=grants)
 
 
-def prepare(service: Service, dirs: DataDirs, *, task: list[str] | None = None) -> Command:
-    """The command that runs ``service`` (or one of its ``task`` steps, such as an install) in its mode."""
+def prepare(service: Service, dirs: DataDirs, *, task: list[str] | None = None, cmdline: str | None = None) -> Command:
+    """The command that runs ``service`` (or one of its ``task`` steps, such as an install) in its mode.
+    ``cmdline``: Windows, the exact command line of ``task`` (a shell command for cmd.exe)."""
     folder = Path(service.folder)
     if not folder.is_dir():
         raise IsolationError(f"The folder {folder} doesn't exist")
@@ -107,14 +115,18 @@ def prepare(service: Service, dirs: DataDirs, *, task: list[str] | None = None) 
     _check_windows_batch(argv)
     env = base_env(service, sandboxed=service.mode is Mode.SANDBOX)
     env.update(own_env_vars(service, dirs))
+    if service.runtime in ("python", "node", "bun", runtimes.CUSTOM):
+        env = runtimes.activated(env, folder)
     if service.mode is Mode.FULL:
-        return Command(argv, folder, env, describe="Full access: runs as you, no sandbox", shown=argv)
+        run, env = runtimes.direct_python(argv, env)
+        return Command(run, folder, env, describe="Full access: runs as you, no sandbox", shown=argv,
+                       cmdline=cmdline if run is argv else None)
     policy = policy_for(service, argv, dirs, task=task is not None)
     name = f"svc-{service.id}"
     if IS_WINDOWS:
         from . import windows
 
-        cmd = windows.wrap(argv, folder, env, policy, service.id, dirs)
+        cmd = windows.wrap(argv, folder, env, policy, service.id, dirs, cmdline)
     else:
         home, tmp = private_dirs(dirs, name)
         if IS_MAC:

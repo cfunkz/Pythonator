@@ -2,6 +2,23 @@
 
 Pythonator follows [semantic versioning](https://semver.org/). Each release lists what changed for users.
 
+## 0.0.8
+
+- Windows: Full access Python services no longer exit at once with code 106. The venv's small `python.exe`
+  launcher is skipped: Pythonator starts the venv's real Python, which finds the venv itself. A crash with one of
+  that launcher's codes now says what it means.
+- The console's input has a **stdin / shell** switch (Ctrl+\`). Shell runs a command (`pip list`, `npm ls`, `dir`)
+  in the service's folder, in its own sandbox or container, with its environment first on PATH, while the service
+  keeps running.
+- Custom start commands run as typed, without a shell, and take their program from the project's `.venv` (and
+  `node_modules/.bin`) before PATH, as in an activated environment. Python, Node and custom services get that
+  PATH too, and Pythonator's own venv no longer leaks into a service that runs on the computer's Python.
+- Selecting a service shows its log already at the bottom, instead of scrolling through it.
+- Plugins read what Pythonator sends them as UTF-8 on every Windows code page. This fixes the AI assistant's
+  "surrogates not allowed" error.
+- Health checks ask the port a server really listens on, when it isn't the one in its settings.
+- Guard names its whole-computer rule clearly instead of showing "computer overload".
+
 ## 0.0.7
 
 - Windows: starting, stopping or restarting a service no longer turns the mouse pointer into the busy one. Every

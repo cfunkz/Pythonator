@@ -54,6 +54,7 @@ SESSION_ENV = frozenset({
 # Variables of Pythonator's own interpreter and Qt: never passed to any service.
 APP_ENV_PREFIXES = ("QT_", "PYTHONATOR_", "_PYI_", "_MEI")
 APP_ENV = frozenset({"PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "PYTHONNOUSERSITE", "VIRTUAL_ENV", "CONDA_PREFIX",
+                     "__PYVENV_LAUNCHER__",  # Pythonator run from a venv: a service's Python would think it's in it
                      "LD_PRELOAD", "LD_LIBRARY_PATH_ORIG", "TCL_LIBRARY", "TK_LIBRARY"})
 # Folders in a home folder that hold credentials: never shared into a sandbox automatically.
 SECRET_DIRS = (".ssh", ".gnupg", ".aws", ".azure", ".docker", ".kube", ".password-store", ".config/gh",

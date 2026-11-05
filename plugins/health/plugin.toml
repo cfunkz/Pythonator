@@ -2,7 +2,7 @@
 [plugin]
 id = "health"
 name = "Health checks"
-version = "1.0.0"
+version = "1.0.1"
 api = 1
 entry = "plugin.py"
 description = "Checks the web servers you run: opens each one's port on this computer every few seconds and shows status and response time in a panel."

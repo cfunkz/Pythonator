@@ -66,6 +66,14 @@ class Input(Ident):
     text: str = Field(max_length=65_536)
 
 
+class Shell(Ident):
+    """A command typed into the console's shell (cmd.exe on Windows, sh elsewhere), run in the service's
+    isolation; while one runs, further lines go to its input."""
+
+    op: Literal["shell"]
+    line: str = Field(min_length=1, max_length=8192, pattern=r"^[^\r\n\x00]*$")
+
+
 class Install(Ident):
     op: Literal["install"]
 
@@ -168,7 +176,8 @@ class PluginRemove(PluginOp):
 
 
 Request = Annotated[
-    Hello | Add | Update | Remove | Start | Stop | Restart | Input | Install | Recreate | Pull | Tail | Clear | Watch
+    Hello | Add | Update | Remove | Start | Stop | Restart | Input | Shell | Install | Recreate | Pull | Tail | Clear
+    | Watch
     | Check
     | Reorder | StartAll | SaveSettings | Simple | Shutdown | PluginEnable | PluginSettings | PluginGrant | PluginAction
     | PluginProposal | PluginInstall | PluginRemove,

@@ -145,13 +145,16 @@ class Guard(Plugin):
             rules.append(f"≤ {self.settings['max_memory_mb']} MB")
         if self.settings.get("max_cpu"):
             rules.append(f"≤ {self.settings['max_cpu']}% CPU")
-        if self.settings.get("system_cpu", 95) or self.settings.get("system_ram", 92):
-            rules.append("computer overload")
+        cpu, ram = self.settings.get("system_cpu", 95), self.settings.get("system_ram", 92)
+        if cpu or ram:  # a rule that watches the whole computer, not a problem it found
+            rules.append("warn when the computer is overloaded ("
+                         + ", ".join(f"{name} over {v}%" for name, v in (("CPU", cpu), ("RAM", ram)) if v) + ")")
         rows = [list(v) for v in self.violations]
         self.show(ui.panel(
             "Guard",
-            ui.row(ui.stat("Rules", ", ".join(rules) or "defaults"), ui.stat("Violations", str(len(rows)),
-                                                                             "warn" if rows else "ok")),
+            ui.row(ui.stat("Rules on", str(len(rules))), ui.stat("Violations", str(len(rows)),
+                                                                  "warn" if rows else "ok")),
+            ui.text("Rules: " + ("; ".join(rules) if rules else "none") + ".", "muted"),
             ui.table(["Time", "Service", "Problem", "Action"], rows[:100]) if rows
             else ui.text("No violations. Rules are under Plugins → Guard → Settings.", "muted"),
             ui.button("Clear", "clear"),

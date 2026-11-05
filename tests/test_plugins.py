@@ -7,6 +7,7 @@ third-party treatment a downloaded plugin would: its own sandbox, test mode and 
 from __future__ import annotations
 
 import shutil
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -208,3 +209,19 @@ def test_official_plugins_run_sandboxed(dirs: Any, qtbot: Any) -> None:
 def plugin_state_all(h: DaemonHarness) -> list[dict[str, Any]]:
     events = [e for e in h.events if e.get("ev") == "plugins"]
     return list(events[-1]["plugins"]) if events else []
+
+
+def test_worker_reads_utf8_whatever_the_code_page(monkeypatch: Any) -> None:
+    """Windows gives a plugin's stdin the ANSI code page: "━" (E2 94 81) became "â”\\udc81", which then broke
+    sending it on as UTF-8 ("surrogates not allowed")."""
+    import io
+    import json as json_
+    import queue
+
+    from pythonator.plugins import worker
+
+    line = json_.dumps({"t": "output", "id": "x", "lines": ["━ ok …"]}, ensure_ascii=False).encode() + b"\n"
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(line), encoding="cp1252", errors="surrogateescape"))
+    inbox: queue.Queue[Any] = queue.Queue()
+    worker._read_stdin(inbox)
+    assert inbox.get()["lines"] == ["━ ok …"]

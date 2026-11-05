@@ -2,7 +2,7 @@
 [plugin]
 id = "guard"
 name = "Guard"
-version = "1.1.0"
+version = "1.1.1"
 api = 1
 entry = "plugin.py"
 description = "Security rules for your services: which modes and ports are allowed, who may reach them, and a watchdog that stops runaway services and keeps the computer from being overloaded."

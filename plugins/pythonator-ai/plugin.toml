@@ -2,7 +2,7 @@
 [plugin]
 id = "pythonator-ai"
 name = "AI assistant"
-version = "1.0.0"
+version = "1.0.1"
 api = 2
 entry = "plugin.py"
 description = "Ask Claude, OpenAI, Gemini, DeepSeek or your own Ollama about one service: its crashes, logs and code. It only suggests changes; you review and apply them."

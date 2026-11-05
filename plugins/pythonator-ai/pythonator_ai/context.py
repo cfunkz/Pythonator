@@ -186,5 +186,6 @@ def build(service_text: str, logs: list[str], file_list: list[str], files: list[
         remaining -= len(block)
     data = "<service_data>\n" + "\n\n".join(chunks) + "\n</service_data>"
     clean_q, _ = safety.redact(question, extra_secrets)
-    text = f"{data}\n\nMy question:\n{clean_q}"
+    # Lone surrogates (undecodable bytes somewhere upstream) can't be sent as UTF-8: they become "?".
+    text = f"{data}\n\nMy question:\n{clean_q}".encode("utf-8", "replace").decode("utf-8")
     return Bundle(text, redacted, included, len(text.encode()))

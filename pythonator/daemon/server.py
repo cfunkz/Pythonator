@@ -246,6 +246,8 @@ class Daemon:
                 s.restart(sid)
             case p.Input(id=sid, text=text):
                 s.write(sid, text)
+            case p.Shell(id=sid, line=line):
+                s.shell(sid, line)
             case p.Install(id=sid):
                 s.install(sid)
             case p.Recreate(id=sid):

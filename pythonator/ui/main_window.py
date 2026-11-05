@@ -274,6 +274,7 @@ class MainWindow(QMainWindow):
 
         self.console = Console(self.settings.console_lines)
         self.console.submitted.connect(self._send_input)
+        self.console.shell_submitted.connect(self._send_shell)
         self.console.clear_requested.connect(self.clear_console)
         self.console.open_log_requested.connect(self.open_log)
         work = QSplitter(Qt.Orientation.Vertical)
@@ -620,6 +621,11 @@ class MainWindow(QMainWindow):
         if self.current:
             self.client.request({"op": "input", "id": self.current, "text": text},
                                 lambda ok, _d, err: None if ok else self._status(err, 4000))
+
+    def _send_shell(self, line: str) -> None:
+        if self.current:
+            self.client.request({"op": "shell", "id": self.current, "line": line},
+                                lambda ok, _d, err: None if ok else self._status(err, 6000))
 
     def new_service(self, preset: dict[str, Any] | None = None) -> None:
         preset = dict(preset or {})

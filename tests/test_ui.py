@@ -292,3 +292,17 @@ def test_plugins_dialog_refresh_keeps_a_half_typed_setting(qtbot: Any) -> None:
     assert fields[0] in dlg.detail.findChildren(QLineEdit) and fields[0].text() == "half typed"
     dlg.refresh([{**plugin, "running": False}])  # something shown changed: drawn again
     assert fields[0] not in [w for w in dlg.detail.findChildren(QLineEdit) if w.isVisible()]
+
+
+def test_a_shown_log_appears_at_its_end_at_once(qtbot: Any) -> None:
+    """Selecting a service shows its log tail already scrolled to the bottom, never scrolling through it."""
+    console = Console(max_lines=1000)
+    qtbot.addWidget(console)
+    console.resize(600, 300)
+    console.show()
+    console.set_text("".join(f"line {i}\n" for i in range(5000)))
+    assert not console.view.updatesEnabled()  # nothing half-drawn is painted
+    qtbot.waitUntil(lambda: console.view.updatesEnabled(), timeout=5000)
+    bar = console.view.verticalScrollBar()
+    assert bar is not None and bar.value() == bar.maximum()
+    assert "line 4999" in console.view.toPlainText() and "line 3000\n" not in console.view.toPlainText()

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -247,3 +248,41 @@ def test_secrets_are_masked(tmp_path: Path) -> None:
     assert (tmp_path / "s.log.1").exists()
     assert sum(1 for _ in tmp_path.glob("s.log*")) == 2  # rotated, no more than one backup
     log.close()
+
+
+def test_custom_commands_and_services_use_the_projects_own_environment(tmp_path: Path, monkeypatch: Any) -> None:
+    """Like an activated venv: a custom command's program comes from the project's venv (and node_modules/.bin)
+    first, PATH has them first, and Pythonator's own venv never leaks into a service."""
+    import os
+
+    from pythonator.isolation import base, service_argv
+
+    bins = tmp_path / ".venv" / ("Scripts" if IS_WINDOWS else "bin")
+    bins.mkdir(parents=True)
+    (tmp_path / ".venv" / "pyvenv.cfg").write_text("home = /nowhere\n")
+    tool = bins / ("uvicorn.exe" if IS_WINDOWS else "uvicorn")
+    tool.write_text("#!/bin/sh\n")
+    tool.chmod(0o755)
+    svc = Service(name="c", folder=str(tmp_path), runtime="custom", command=["uvicorn", "app:app"])
+    assert service_argv(svc)[0] == str(tool)
+    env = runtimes.activated({"PATH": "/usr/bin"}, tmp_path)
+    assert env["PATH"].split(os.pathsep)[0] == str(bins) and env["VIRTUAL_ENV"] == str(tmp_path / ".venv")
+    monkeypatch.setenv("__PYVENV_LAUNCHER__", "C:/Pythonator/.venv/Scripts/python.exe")
+    assert "__PYVENV_LAUNCHER__" not in base.base_env(svc, sandboxed=False)
+
+
+def test_windows_full_access_runs_a_venvs_python_without_its_redirector(tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.setattr(runtimes, "IS_WINDOWS", True)
+    home = tmp_path / "Python313"
+    home.mkdir()
+    (home / "python.exe").write_text("")
+    scripts = tmp_path / "proj" / ".venv" / "Scripts"
+    scripts.mkdir(parents=True)
+    (scripts.parent / "pyvenv.cfg").write_text(f"home = {home}\n")
+    venv_py = str(scripts / "python.exe")
+    argv, env = runtimes.direct_python([venv_py, "-u", "app.py"], {"A": "1"})
+    assert argv == [str(home / "python.exe"), "-u", "app.py"]
+    assert env == {"A": "1", "__PYVENV_LAUNCHER__": venv_py}
+    assert runtimes.direct_python(["node", "x.js"], {}) == (["node", "x.js"], {})
+    (home / "python.exe").unlink()  # the base Python is gone: leave it to the venv's own launcher to say so
+    assert runtimes.direct_python([venv_py], {})[0] == [venv_py]
