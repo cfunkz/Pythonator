@@ -1,0 +1,95 @@
+# An official plugin, bundled with Pythonator and off until you enable it (Plugins ▾ → Manage plugins…).
+[plugin]
+id = "pythonator-ai"
+name = "AI assistant"
+version = "1.0.0"
+api = 2
+entry = "plugin.py"
+description = "Ask Claude, OpenAI, Gemini, DeepSeek or your own Ollama about one service: its crashes, logs and code. It only suggests changes; you review and apply them."
+permissions = ["network", "ui", "read_logs", "read_files", "propose_changes"]
+author = "cfunkz <hello@routezero.tech>"
+homepage = "https://github.com/cfunkz/Pythonator/tree/main/plugins/pythonator-ai"
+
+[[plugin.settings]]
+key = "provider"
+label = "AI service"
+kind = "choice"
+choices = ["Claude (Anthropic)", "OpenAI", "Google Gemini", "DeepSeek", "Ollama (self-hosted)", "Other OpenAI-compatible server"]
+default = "Claude (Anthropic)"
+
+[[plugin.settings]]
+key = "api_key"
+label = "API key"
+kind = "secret"
+help = "Kept in your system keychain (Windows Credential Manager, macOS Keychain, or the Secret Service on Linux), never in Pythonator's settings. Not needed for Ollama."
+
+[[plugin.settings]]
+key = "model"
+label = "Model"
+kind = "text"
+default = ""
+help = "Empty uses the service's default: claude-opus-5-5, gpt-6.1-sol, gemini-flash-latest, deepseek-v4-flash or qwen2.5-coder. Any model name the service knows works."
+
+[[plugin.settings]]
+key = "base_url"
+label = "Server address (self-hosted only)"
+kind = "text"
+default = ""
+help = "For Ollama or another OpenAI-compatible server, e.g. http://localhost:11434/v1. Ignored for Claude, OpenAI, Gemini and DeepSeek, whose addresses are fixed."
+
+[[plugin.settings]]
+key = "allow_lan_http"
+label = "Allow plain http:// on my network"
+kind = "bool"
+default = false
+help = "Only for a self-hosted server on another computer of your home or office network. Off: plain http:// goes to this computer only."
+
+[[plugin.settings]]
+key = "effort"
+label = "Effort (Claude)"
+kind = "choice"
+choices = ["low", "medium", "high"]
+default = "medium"
+help = "How hard Claude thinks before answering. Higher is slower and costs more."
+
+[[plugin.settings]]
+key = "include_files"
+label = "Include the service's files"
+kind = "bool"
+default = true
+help = "Files from tracebacks, the ones you add, the entry file and project files like requirements.txt. Secret files are never read."
+
+[[plugin.settings]]
+key = "log_lines"
+label = "Output lines sent"
+kind = "int"
+default = 300
+help = "The latest lines of the service's output (at most 2000)."
+
+[[plugin.settings]]
+key = "max_context_kb"
+label = "Most text sent per question (KB)"
+kind = "int"
+default = 120
+help = "Logs and files together. At most 600."
+
+[[plugin.settings]]
+key = "max_output_tokens"
+label = "Longest answer (tokens)"
+kind = "int"
+default = 16000
+help = "At most 64000."
+
+[[plugin.settings]]
+key = "requests_per_hour"
+label = "Questions per hour, at most"
+kind = "int"
+default = 60
+help = "A cost guard. At most 300."
+
+[[plugin.settings]]
+key = "timeout"
+label = "Time limit per answer (seconds)"
+kind = "int"
+default = 180
+help = "At most 600."

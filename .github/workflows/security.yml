@@ -1,0 +1,33 @@
+name: Security
+
+# Known vulnerabilities in every locked dependency, on every change and weekly (new advisories appear for old
+# versions too). Turn on CodeQL's default setup and Dependabot alerts in the repository's Security settings:
+# they need no workflow here.
+on:
+  push:
+    branches: [main, experimental]
+  pull_request:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pip-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: "3.13"
+      - run: python -m pip install --require-hashes -r requirements-dev.lock
+      - name: The app's dependencies
+        run: pip-audit --strict --require-hashes --disable-pip -r requirements.lock
+      - name: Development and build dependencies
+        run: |
+          pip-audit --strict --require-hashes --disable-pip -r requirements-dev.lock
+          pip-audit --strict --require-hashes --disable-pip -r packaging/requirements-build.lock

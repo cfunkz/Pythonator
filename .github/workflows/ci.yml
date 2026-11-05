@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  push:
+    branches: [main, experimental]
+  pull_request:
+
+# Read-only token: nothing in CI writes to the repository.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: "3.13"
+      # pytest-qt loads QtGui even for the catalog test, and QtGui needs these on a bare runner.
+      - run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+      - run: python -m pip install --require-hashes -r requirements-dev.lock && python -m pip install --no-deps -e .
+      - run: ruff check pythonator plugins tests docs/examples packaging
+      - run: mypy
+      - name: mypy, each official plugin
+        run: for p in plugins/*/plugin.py; do mypy "$p" || exit 1; done
+      - name: The official plugin catalog matches the plugins
+        run: python -m pytest -q tests/test_plugins.py -k catalog
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: ${{ matrix.python }}
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 bubblewrap
+      - run: python -m pip install --require-hashes -r requirements-dev.lock && python -m pip install --no-deps -e .
+      # Stock Ubuntu 24.04 blocks bubblewrap's user namespace with AppArmor: the sandbox must notice and keep
+      # Landlock + seccomp. Test that first, then allow bubblewrap so the full sandbox is tested too.
+      - if: runner.os == 'Linux'
+        name: Sandbox with bubblewrap blocked
+        run: python -m pytest -q -rs tests/test_sandbox.py
+      - if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - run: python -m pytest -q -rs
+      - if: failure() && runner.os == 'macOS'
+        name: What Seatbelt denied
+        run: /usr/bin/log show --last 15m --style compact --predicate 'sender == "Sandbox"' | tail -n 200
+
+  build:
+    # The installers and downloads as a release ships them, each installed and started once.
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: windows-latest, program: dist/Pythonator/Pythonator.exe}
+          - {os: ubuntu-22.04, program: dist/Pythonator/Pythonator}
+          - {os: macos-latest, program: dist/Pythonator.app/Contents/MacOS/Pythonator}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: "3.13"
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+      - if: runner.os == 'Windows'
+        name: Install Inno Setup (for the installer)
+        shell: bash
+        run: |
+          if [ ! -f "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" ]; then choco install innosetup --no-progress -y; fi
+      - run: python -m pip install --require-hashes -r packaging/requirements-build.lock && python -m pip install --no-deps .
+      - run: python packaging/build.py
+      - name: Smoke test
+        shell: bash
+        run: |
+          "${{ matrix.program }}" --version
+          python packaging/smoke_test.py "${{ matrix.program }}"
+      - if: runner.os == 'Linux'
+        name: Install the .deb, start it, remove it
+        run: |
+          sudo apt-get install -y ./release/*.deb
+          python packaging/smoke_test.py /usr/bin/pythonator
+          sudo apt-get remove -y pythonator
+      - if: runner.os == 'Windows'
+        name: Install with the installer, start it, uninstall it
+        shell: pwsh
+        run: ./packaging/test_installer.ps1
+      - if: runner.os == 'macOS'
+        name: Open the .dmg and start the app inside
+        shell: bash
+        run: |
+          hdiutil attach release/*.dmg -mountpoint /tmp/pythonator-dmg -nobrowse
+          python packaging/smoke_test.py /tmp/pythonator-dmg/Pythonator.app/Contents/MacOS/Pythonator
+          hdiutil detach /tmp/pythonator-dmg
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6.0.0
+        with:
+          name: pythonator-${{ runner.os }}
+          path: release/
+          if-no-files-found: error
+          retention-days: 14

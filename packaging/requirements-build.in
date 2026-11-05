@@ -1,0 +1,6 @@
+# What a release build installs besides Pythonator itself (installed with --no-deps). After a change:
+#   uv pip compile packaging/requirements-build.in --universal --python-version 3.12 --generate-hashes \
+#       -o packaging/requirements-build.lock
+-r ../requirements.lock
+pyinstaller
+pillow  # turns icon.ico into the .icns a Mac app needs

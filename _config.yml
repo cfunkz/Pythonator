@@ -1,0 +1,80 @@
+# The website (https://cfunkz.github.io/Pythonator/): GitHub Pages builds it with Jekyll from this branch.
+# The pages are the Markdown files in docs/; the design lives in website/. Preview: see docs/development.md.
+title: Pythonator
+description: Run bots, web servers and workers in any language, each in its own sandbox, on Windows, macOS and Linux.
+url: https://cfunkz.github.io
+baseurl: /Pythonator
+repository: cfunkz/Pythonator
+layouts_dir: website/_layouts
+includes_dir: website/_includes
+markdown: kramdown
+kramdown:
+  input: GFM
+  hard_wrap: false
+  syntax_highlighter_opts:
+    disable: true  # site.js colours code blocks the same way on every page
+plugins:
+  - jekyll-relative-links
+  - jekyll-optional-front-matter
+  - jekyll-titles-from-headings
+  - jekyll-default-layout
+  - jekyll-readme-index
+optional_front_matter:
+  remove_originals: true
+readme_index:
+  remove_originals: true
+relative_links:
+  enabled: true
+  collections: false
+titles_from_headings:
+  strip_title: true
+defaults:
+  - scope: {path: ""}
+    values: {layout: default}
+exclude:
+  - README.md  # the landing page (website/index.html) says it better
+  - pythonator
+  - plugins
+  - tests
+  - packaging
+  - build
+  - dist
+  - "*.egg-info"
+  - pyproject.toml
+  - requirements.lock
+  - uv.lock
+  - LICENSE
+  - vendor
+  - Gemfile
+  - Gemfile.lock
+
+# The sidebar, in reading order.
+docs_nav:
+  - title: Start
+    pages:
+      - {title: Overview, url: /docs/}
+      - {title: Getting started, url: /docs/getting-started.html}
+      - {title: FAQ, url: /docs/faq.html}
+  - title: Using Pythonator
+    pages:
+      - {title: Services, url: /docs/services.html}
+      - {title: Isolation modes, url: /docs/isolation.html}
+      - {title: Ports and APIs, url: /docs/networking.html}
+      - {title: Languages, url: /docs/languages.html}
+      - {title: Git, url: /docs/git.html}
+      - {title: Plugins, url: /docs/plugins.html}
+  - title: Building on it
+    pages:
+      - {title: Writing a plugin, url: /docs/plugin-development.html}
+      - {title: Plugin API, url: /docs/plugin-api.html}
+      - {title: Background service API, url: /docs/service-api.html}
+      - {title: Adding a language, url: /docs/adding-a-language.html}
+      - {title: Architecture, url: /docs/architecture.html}
+  - title: Trust
+    pages:
+      - {title: Security, url: /docs/security.html}
+      - {title: Glossary, url: /docs/glossary.html}
+  - title: Project
+    pages:
+      - {title: Development and CI, url: /docs/development.html}
+      - {title: Changelog, url: /CHANGELOG.html}

@@ -1,0 +1,6 @@
+# Git normalises line endings of text files; the hash check of official plugins ignores them too.
+* text=auto
+*.png binary
+*.ico binary
+*.icns binary
+*.jpg binary

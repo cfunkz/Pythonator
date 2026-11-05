@@ -1,0 +1,105 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pythonator"
+dynamic = ["version"]
+description = "Run long-running scripts, web servers and bots on Windows, macOS and Linux: sandboxed, supervised, with a fast editor and plugins."
+readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+authors = [{ name = "cfunkz", email = "hello@routezero.tech" }]
+# Six runtime dependencies, all widely used and maintained. Anything else is the standard library.
+dependencies = [
+    "PyQt6>=6.11,!=6.12.0,<7", # the window (GPL-3.0, like Pythonator); 6.12.0's type stubs break mypy
+    "PyQt6-QScintilla>=2.14", # the code editor: Scintilla's lexers, folding, fast with big files
+    "psutil>=6.0",           # process trees, CPU/RAM, listening ports, on every OS
+    "pydantic>=2.9,<3",      # typed, validated settings, service files and IPC messages
+    "platformdirs>=4.2",     # the right data folder on each OS
+    "cronsim>=2.7,<3",       # cron schedules for jobs (tiny, pure Python)
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Environment :: X11 Applications :: Qt",
+    "Topic :: System :: Monitoring",
+    "Typing :: Typed",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.13",
+    "ruff>=0.8",
+    "pytest>=8",
+    "pytest-qt>=4.4",
+    "types-psutil",
+    "pip-audit>=2.7",
+]
+
+[project.gui-scripts]
+pythonator = "pythonator.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/cfunkz/Pythonator"
+Documentation = "https://github.com/cfunkz/Pythonator/tree/main/docs"
+Issues = "https://github.com/cfunkz/Pythonator/issues"
+
+[tool.setuptools.dynamic]
+version = { attr = "pythonator.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["pythonator*"]
+
+[tool.setuptools.package-data]
+pythonator = ["py.typed", "resources/*", "plugins/official.json"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+files = ["pythonator", "tests"]  # plugins are checked one by one: each has its own plugin.py
+mypy_path = "plugins/pythonator-ai"  # the AI assistant plugin's package, for its tests
+# Windows and macOS branches are written so they type check on Linux, as CI does.
+platform = "linux"
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]  # Windows-only code reads as unreachable when checked as Linux
+module = ["pythonator.daemon.winproc", "pythonator.isolation.windows"]
+warn_unreachable = false
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "S", "PL", "PTH", "TID251"]
+ignore = [
+    "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR2004",  # complexity heuristics
+    "S603", "S607",       # we run programs on purpose; argv lists only, never a shell
+    "S404",               # subprocess is how a supervisor works
+    "PLC0415",            # platform-specific imports stay inside the functions that need them
+    "PLW0603",            # one module-level cache is deliberate
+    "PLR0917",            # keyword-only would not make the platform wrappers clearer
+    "PLW0108",            # Qt signals pass arguments the slot must not get: the lambda is the point
+    "RUF001", "RUF002", "RUF003",  # the UI uses real typography (…, −, ×, ’) on purpose
+    "S606",               # the launcher execs the service on purpose, after the sandbox is in place
+]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"PyQt6.QtCore.QJsonDocument".msg = "Qt's JSON/CBOR parsers had CVE-2026-105924; use the json module."
+"PyQt6.QtCore.QJsonValue".msg = "Qt's JSON/CBOR parsers had CVE-2026-105924; use the json module."
+"PyQt6.QtCore.QCborValue".msg = "Qt's JSON/CBOR parsers had CVE-2026-105924; use the json module."
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S108", "PLR2004", "S105", "S106"]
+"plugins/*/tests/*" = ["S101"]
+"pythonator/isolation/*" = ["S108"]   # paths inside the sandbox or container, not host temp files
+"pythonator/isolation/container.py" = ["S108", "S104"]  # "LAN" exposure binds all interfaces when asked
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+qt_api = "pyqt6"

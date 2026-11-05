@@ -1,0 +1,209 @@
+"""Models, the store, runtimes, schedules, ANSI colours and log masking."""
+
+from __future__ import annotations
+
+import json
+from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
+from pydantic import ValidationError
+
+from pythonator.core import ansi, runtimes, schedule
+from pythonator.core.logs import Masker, ServiceLog, secrets_of
+from pythonator.core.models import Mode, Service, Settings
+from pythonator.core.store import Store, import_old, write_atomic
+from pythonator.paths import IS_WINDOWS, DataDirs
+
+
+def svc(folder: Path, **kw: object) -> Service:
+    return Service.model_validate({"name": "bot", "folder": str(folder), "entry": "main.py", **kw})
+
+
+# -- models -----------------------------------------------------------------------------------------------
+
+
+def test_cpu_limits(project: Path) -> None:
+    from pythonator.core import limits
+
+    assert svc(project).cpu_percent == 0
+    with pytest.raises(ValidationError):
+        svc(project, cpu_percent=-1)
+    n = limits.cores()
+    assert limits.effective(50) == (50 if n > 0.5 else 0)
+    assert limits.effective(n * 100) == 0, "all cores is no limit"
+    assert limits.job_cpu_rate(100) == round(10_000 / n)
+    assert limits.job_cpu_rate(1) >= 1 and limits.job_cpu_rate(10**6) == 10_000
+    assert limits.describe(150) == "1.5 cores (150% of one core)"
+    assert limits.describe(100) == "1 core (100% of one core)"
+
+
+def test_typed_limits_are_checked() -> None:
+    from pythonator.core import limits
+
+    total = 16 * 1024
+    for text, mb in (("", 0), ("no limit", 0), ("512M", 512), ("2G", 2048), ("1.5 GB", 1536), ("1,5g", 1536),
+                     ("800", 800), ("0.5 GiB", 512), ("65536k", 64)):
+        assert limits.parse_memory(text, total) == (mb, ""), text
+    assert limits.parse_memory("3T", total) == (total, "lowered to 16 GB, all the memory this computer has")
+    for text, percent in (("", 0), ("1.5", 150), ("1.5 cores", 150), ("150%", 150), ("50 %", 50), (".5", 50)):
+        assert limits.parse_cpu(text, 4) == (percent, ""), text
+    assert limits.parse_cpu("9", 4) == (0, "all 4 cores is no limit")
+    for bad in ("2 gigs", "-1G", "8", "1e9", "512M; rm -rf /", "nan"):
+        with pytest.raises(limits.LimitError):
+            limits.parse_memory(bad, total)
+    for bad in ("abc", "0.01", "-2", "1.5 GB", "inf"):
+        with pytest.raises(limits.LimitError):
+            limits.parse_cpu(bad, 4)
+    for mb in (512, 1536, 2048, 800):  # what the box shows reads back the same
+        assert limits.parse_memory(limits.format_memory(mb), total)[0] == mb
+    assert limits.parse_cpu(limits.format_cpu(150), 4)[0] == 150
+
+
+def test_service_defaults_are_safe(project: Path) -> None:
+    s = svc(project)
+    assert s.mode is Mode.SANDBOX
+    assert not s.network.enabled or s.network.expose.value == "local"
+    assert not s.full_access_ok
+
+
+def test_service_refuses_unknown_fields_and_bad_values(project: Path) -> None:
+    assert not hasattr(svc(project, surprise=1), "surprise")  # files from newer versions: unknown fields dropped
+    with pytest.raises(ValidationError):
+        svc(project, runtime="cobol")
+    with pytest.raises(ValidationError):
+        svc(project, entry="--version")
+    with pytest.raises(ValidationError):
+        svc(project, env={"LD_PRELOAD": "/tmp/x.so"})
+    with pytest.raises(ValidationError):
+        svc(project, schedule="every 1s")
+    with pytest.raises(ValidationError):
+        svc(project, runtime="custom", command=[])
+
+
+# -- store ------------------------------------------------------------------------------------------------
+
+
+def test_store_round_trip_and_private_files(dirs: DataDirs, project: Path) -> None:
+    store = Store(dirs)
+    store.save_services([svc(project)])
+    assert [s.name for s in store.load_services()] == ["bot"]
+    if not IS_WINDOWS:  # Windows has no mode bits; the per-user profile folder's ACL keeps it private
+        assert dirs.services_file.stat().st_mode & 0o077 == 0
+
+
+def test_store_skips_bad_entries_and_keeps_a_copy(dirs: DataDirs, project: Path) -> None:
+    good = svc(project).model_dump(mode="json")
+    dirs.services_file.write_text(json.dumps({"version": 1, "services": [good, {"name": "\x00"}, good]}))
+    store = Store(dirs)
+    loaded = store.load_services()
+    assert len(loaded) == 1  # the bad one skipped, the duplicate id dropped
+    assert store.problems
+    assert list(dirs.root.glob("services.json.bad*"))
+
+
+def test_store_survives_garbage(dirs: DataDirs) -> None:
+    dirs.services_file.write_text("{not json")
+    dirs.settings_file.write_text('{"theme": "neon"}')
+    store = Store(dirs)
+    assert store.load_services() == []
+    assert store.load_settings() == Settings()
+
+
+def test_write_atomic_leaves_no_temp_files(tmp_path: Path) -> None:
+    target = tmp_path / "x.json"
+    write_atomic(target, "1")
+    write_atomic(target, "2")
+    assert target.read_text() == "2"
+    assert [p.name for p in tmp_path.iterdir()] == ["x.json"]
+
+
+def test_import_from_0_0_9(dirs: DataDirs, tmp_path: Path, project: Path) -> None:
+    old = tmp_path / "pythonator.json"
+    old.write_text(json.dumps({"services": [
+        {"id": "AB12", "name": "old bot", "target": str(project / "bot.py"), "mode": "script", "args": "--x 1",
+         "sandbox": True},
+        {"name": "\x00broken"},
+    ]}))
+    services = import_old(dirs, old)
+    assert [s.name for s in services] == ["old bot"]
+    assert services[0].args == ["--x", "1"]
+    assert services[0].mode is Mode.SANDBOX
+
+
+# -- runtimes ---------------------------------------------------------------------------------------------
+
+
+def test_detect(project: Path) -> None:
+    (project / "go.mod").write_text("module x\n")
+    rt, _entry = runtimes.detect(project)
+    assert rt is not None and rt.key == "go"
+    assert runtimes.for_entry("server.js") is runtimes.RUNTIMES["node"]
+    assert runtimes.for_entry("app.jar") is runtimes.RUNTIMES["java"]
+
+
+def test_run_commands() -> None:
+    r = runtimes.RUNTIMES
+    assert r["python"].run("/py", "main.py", ["-v"]) == ["/py", "-u", "main.py", "-v"]
+    assert r["java"].run("/java", "app.jar", []) == ["/java", "-jar", "app.jar"]
+    assert r["go"].run("/go", "", [])[:2] == ["/go", "run"]
+
+
+def test_which_ignores_the_current_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = tmp_path / "python3"
+    fake.write_text("#!/bin/sh\n")
+    fake.chmod(0o755)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PATH", "")
+    assert runtimes.which("python3") is None
+
+
+def test_python_prefers_the_project_venv(project: Path) -> None:
+    import venv
+
+    venv.create(project / ".venv", with_pip=False)
+    prog = runtimes.program(runtimes.RUNTIMES["python"], project)
+    assert prog is not None and Path(prog).is_relative_to(project / ".venv")
+
+
+# -- schedules, ANSI, logs --------------------------------------------------------------------------------
+
+
+def test_schedules() -> None:
+    now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    assert (schedule.next_run("every 15m", now) - now).total_seconds() == 900
+    assert schedule.next_run("0 3 * * *", now) == datetime(2026, 1, 2, 3, 0, tzinfo=UTC)
+    assert schedule.next_run("@hourly", now).hour == 13
+    for bad in ("every 5s", "every", "61 * * * *", "every 0m"):
+        with pytest.raises(ValueError):
+            schedule.check(bad)
+
+
+def test_ansi_keeps_colours_and_drops_everything_else() -> None:
+    runs = ansi.Parser().feed("\x1b[1;31merror\x1b[0m plain\x1b]0;evil title\x07\x1b[2J!")
+    assert [t for t, _ in runs] == ["error", " plain", "!"]
+    assert runs[0][1].bold and runs[0][1].fg
+    assert ansi.strip("\x1b[32mok\x1b[0m") == "ok"  # noqa: B005 - ansi.strip, not str.strip
+
+
+def test_ansi_across_chunks() -> None:
+    p = ansi.Parser()
+    first = p.feed("a\x1b[3")
+    second = p.feed("2mb")
+    assert "".join(t for t, _ in first + second) == "ab"
+    assert second[-1][1].fg
+
+
+def test_secrets_are_masked(tmp_path: Path) -> None:
+    secrets = secrets_of({"DISCORD_TOKEN": "abc.def.ghi", "API_KEY": "sk-123456", "PORT": "8000", "PASSWORD": "x"})
+    assert "8000" not in secrets and "x" not in secrets
+    mask = Masker(secrets)
+    assert "abc.def.ghi" not in mask("logged in with abc.def.ghi and sk-123456")
+    log = ServiceLog(tmp_path / "s.log", max_bytes=200, backups=1)
+    for i in range(50):
+        log.write(f"line {i}\n")
+    log.flush()
+    assert "line 49" in log.tail()
+    assert (tmp_path / "s.log.1").exists()
+    assert sum(1 for _ in tmp_path.glob("s.log*")) == 2  # rotated, no more than one backup
+    log.close()

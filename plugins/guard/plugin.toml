@@ -1,0 +1,69 @@
+# A security / firewall policy plugin: rules checked before a service starts, and a watchdog while it runs.
+[plugin]
+id = "guard"
+name = "Guard"
+version = "1.1.0"
+api = 1
+entry = "plugin.py"
+description = "Security rules for your services: which modes and ports are allowed, who may reach them, and a watchdog that stops runaway services and keeps the computer from being overloaded."
+permissions = ["policy", "inspect", "control", "ui"]
+author = "cfunkz <hello@routezero.tech>"
+homepage = "https://github.com/cfunkz/Pythonator/tree/main/plugins/guard"
+
+[[plugin.settings]]
+key = "block_full"
+label = "Don't start services in Full access mode"
+kind = "bool"
+default = false
+
+[[plugin.settings]]
+key = "block_lan"
+label = "Don't let other computers reach any service"
+kind = "bool"
+default = false
+
+[[plugin.settings]]
+key = "allowed_ports"
+label = "Allowed ports"
+kind = "text"
+default = ""
+help = "For example 3000-3999, 8000-8100, 443. Empty: any port."
+
+[[plugin.settings]]
+key = "undeclared_ports"
+label = "Act when a service listens on a port it didn't declare"
+kind = "bool"
+default = true
+
+[[plugin.settings]]
+key = "max_memory_mb"
+label = "Memory limit for any service (MB, 0 = none)"
+kind = "int"
+default = 0
+
+[[plugin.settings]]
+key = "max_cpu"
+label = "CPU limit for any service (% of one core for 30 s, 0 = none)"
+kind = "int"
+default = 0
+
+[[plugin.settings]]
+key = "system_cpu"
+label = "Computer overloaded: CPU over (% of all cores for 30 s, 0 = off)"
+kind = "int"
+default = 95
+help = "Then the service using the most CPU gets the action below, if it uses at least a quarter of the computer."
+
+[[plugin.settings]]
+key = "system_ram"
+label = "Computer overloaded: memory in use over (%, 0 = off)"
+kind = "int"
+default = 92
+help = "Then the service using the most memory gets the action below, if it uses at least a tenth of the memory."
+
+[[plugin.settings]]
+key = "action"
+label = "When a running service breaks a rule"
+kind = "choice"
+default = "warn"
+choices = ["warn", "stop", "restart"]

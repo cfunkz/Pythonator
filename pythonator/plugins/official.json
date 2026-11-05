@@ -1,0 +1,8 @@
+{
+  "plugins": {
+    "guard": "5b3abac504fbd92ac7543cc28c1a3f5a7d53e7fec782ab97fdbdba0db2462c3c",
+    "health": "5cf96c47ef1f404e62b6746f912e3d9fada7e6dbbf2f056f6d4bc342cee1d6d8",
+    "pythonator-ai": "dcab9c2a57179f8ae3b1407e30f39a632db595f7a0050e63d67f483bc44d4a57",
+    "webhooks": "b85185f24f03c07365aba0fb32bd64e54b77082a19e1731e98aa380daa98f415"
+  }
+}

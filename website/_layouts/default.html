@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+{% include head.html %}
+</head>
+<body class="docs-page">
+{% include header.html %}
+<div class="docs-shell">
+  <aside class="sidebar" id="sidebar" aria-label="Documentation">
+    <button class="sidebar-toggle" type="button" aria-expanded="false" aria-controls="sidebar-links">
+      <span>Documentation</span>
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    </button>
+    <nav id="sidebar-links">
+      {%- for group in site.docs_nav %}
+      <div class="nav-group">
+        <div class="nav-title">{{ group.title }}</div>
+        {%- for item in group.pages %}
+        {%- assign item_url = item.url | relative_url -%}
+        {%- assign here = page.url | relative_url -%}
+        <a href="{{ item_url }}"{% if item_url == here %} aria-current="page"{% endif %}>{{ item.title }}</a>
+        {%- endfor %}
+      </div>
+      {%- endfor %}
+    </nav>
+  </aside>
+  <main class="content" id="content">
+    <article class="prose">
+      {%- if page.title and page.title != site.title %}
+      <h1>{{ page.title }}</h1>
+      {%- endif %}
+      {{ content }}
+    </article>
+    <div class="page-meta">
+      <a href="https://github.com/{{ site.repository }}/edit/main/{{ page.path }}">Edit this page on GitHub</a>
+    </div>
+  </main>
+  <aside class="toc" aria-label="On this page">
+    <div class="toc-inner">
+      <div class="nav-title">On this page</div>
+      <nav id="toc"></nav>
+    </div>
+  </aside>
+</div>
+{% include footer.html %}
+</body>
+</html>

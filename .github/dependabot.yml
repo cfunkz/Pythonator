@@ -1,0 +1,23 @@
+# Pull requests that update the pinned GitHub Actions and the locked dependencies. The cooldown waits a week after a
+# release, so a compromised version that is pulled quickly never arrives here; security updates skip it.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: pip
+    directories: ["/", "/packaging"]
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      python:
+        patterns: ["*"]

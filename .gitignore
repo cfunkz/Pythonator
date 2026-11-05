@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.venv/
+venv/
+
+# Builds
+build/
+dist/
+release/
+
+# Website preview (docs/development.md)
+_site/
+.jekyll-cache/
+Gemfile
+Gemfile.lock
+vendor/
+
+# Editor and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log

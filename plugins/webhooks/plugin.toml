@@ -1,0 +1,53 @@
+# An event plugin with network access: alerts when a service crashes, gives up or recovers.
+[plugin]
+id = "webhooks"
+name = "Webhooks"
+version = "1.0.0"
+api = 1
+entry = "plugin.py"
+description = "Alerts on Discord, Slack, Telegram, Teams, ntfy or any JSON endpoint when a service crashes, gives up or recovers."
+permissions = ["network", "read_logs"]
+author = "cfunkz <hello@routezero.tech>"
+homepage = "https://github.com/cfunkz/Pythonator/tree/main/plugins/webhooks"
+
+[[plugin.settings]]
+key = "urls"
+label = "Webhook URLs"
+kind = "lines"
+help = "One per line. Discord and Slack webhooks, https://api.telegram.org/bot<token>/sendMessage?chat_id=<id>, https://ntfy.sh/<topic>, a Teams workflow URL, or any https endpoint (gets JSON)."
+
+[[plugin.settings]]
+key = "on_crash"
+label = "When a service crashes"
+kind = "bool"
+default = true
+
+[[plugin.settings]]
+key = "on_gave_up"
+label = "When Pythonator gives up restarting it"
+kind = "bool"
+default = true
+
+[[plugin.settings]]
+key = "on_recover"
+label = "When it runs again after a crash"
+kind = "bool"
+default = true
+
+[[plugin.settings]]
+key = "on_stop"
+label = "When it is started or stopped"
+kind = "bool"
+default = false
+
+[[plugin.settings]]
+key = "log_lines"
+label = "Last output lines in a crash alert"
+kind = "int"
+default = 10
+
+[[plugin.settings]]
+key = "min_gap"
+label = "Seconds between alerts for one service"
+kind = "int"
+default = 60
