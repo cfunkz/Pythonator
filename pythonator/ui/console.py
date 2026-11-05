@@ -1,5 +1,10 @@
 """The live console: a bar (find, wrap, follow, open log, clear), the output with ANSI colours and clickable links,
-and a line for the program's input. Appends are batched per frame, so a flood never freezes the window."""
+and a line for the program's input.
+
+Output is drawn on a timer, a few milliseconds a frame, so a flooding program never makes the editor or the rest of
+the window wait. When it prints faster than that, the console skips ahead to the newest output (with a note; the log
+has everything), and while it can't be seen it only keeps the newest lines. A carriage return rewrites the line, as in
+a terminal, so a progress bar stays one short line instead of growing without end."""
 
 from __future__ import annotations
 
@@ -34,11 +39,13 @@ from PyQt6.QtWidgets import (
 from ..core.ansi import Parser
 from . import theme
 
-# Drawing is budgeted, as in 0.0.9, so a flooding program can't starve the window (and the editor with it).
-FRAME_MS = 33  # how often waiting output is drawn
-DRAW_BUDGET = 0.010  # seconds of each frame that drawing may take
-SLICE = 8_000  # characters drawn between two looks at the clock
-BACKLOG = 400_000  # characters waiting to be drawn; older ones are skipped with a note (the log has everything)
+FRAME_MS = 50  # how often waiting output is drawn (the background service sends it as often)
+DRAW_BUDGET = 0.003  # seconds of each frame that drawing may take: a key press waits at most about this long
+SLICE = 2_000  # characters drawn between two looks at the clock
+LONG_LINE = 8_000  # longer lines are broken: one huge line is slow to lay out on every change
+BEHIND = 1.0  # more than this many seconds of drawing waiting: skip to the newest output
+BACKLOG = 4_000_000  # characters kept waiting at most, however slow the drawing
+SGR = re.compile(r"\x1b\[[0-9;]*m")
 URL = re.compile(r"https?://[^\s<>\"'`\x1b]+[^\s<>\"'`\x1b.,;:!?)\]]")
 
 
@@ -183,14 +190,18 @@ class Console(QWidget):
         self._parser = Parser()
         self._queue: list[str] = []
         self._queued = 0  # characters in _queue
-        self._skipped = 0  # characters skipped since the last frame
+        self._skipped = 0  # lines skipped and not yet noted
+        self._cr = False  # a carriage return held back: a line feed may follow in the next piece
+        self._rate = 400_000.0  # characters drawn per second of drawing, measured
+        self._caught_up = 0.0  # when the console last checked it isn't behind
+        self._fast = 0  # characters of a shown log tail, drawn with a bigger budget: nobody types while it loads
         self._formats: dict[tuple[str, bool, bool, bool, bool, str], QTextCharFormat] = {}
         self._timer = QTimer(self)
         self._timer.setInterval(FRAME_MS)
         self._timer.timeout.connect(self._flush)
         self._find_timer = QTimer(self)  # re-searching 20,000 lines on every flush would cost more than drawing
         self._find_timer.setSingleShot(True)
-        self._find_timer.setInterval(400)
+        self._find_timer.setInterval(1000)
         self._find_timer.timeout.connect(self._highlight)
 
     # -- text -----------------------------------------------------------------------------------------------
@@ -203,7 +214,8 @@ class Console(QWidget):
 
     def clear(self) -> None:
         self._queue.clear()
-        self._queued = self._skipped = 0
+        self._queued = self._skipped = self._fast = 0
+        self._cr = False
         self._parser = Parser()
         self.view.clear()
         self.count.clear()
@@ -212,22 +224,40 @@ class Console(QWidget):
         self.clear()
         self.follow.setChecked(True)
         self.append(text)
+        self._fast = len(text)
 
     def append(self, text: str) -> None:
+        """Queue output; it's drawn by the next frames. Only appending happens here, so it's cheap however often."""
+        if not text:
+            return
         self._queue.append(text)
         self._queued += len(text)
-        if self._queued > BACKLOG:  # keep the newest: drop whole pieces from the front, then cut the first one
-            while len(self._queue) > 1 and self._queued - len(self._queue[0]) > BACKLOG:
-                dropped = self._queue.pop(0)
-                self._queued -= len(dropped)
-                self._skipped += len(dropped)
-            if self._queued > BACKLOG:
-                cut = self._queue[0].find("\n", self._queued - BACKLOG) + 1 or self._queued - BACKLOG
-                self._queue[0] = self._queue[0][cut:]
-                self._queued -= cut
-                self._skipped += cut
+        if self._queued > BACKLOG:
+            self._skip(self._queued - BACKLOG // 2)
         if not self._timer.isActive():
             self._timer.start()
+
+    def _skip(self, chars: int) -> None:
+        """Drop about the oldest ``chars`` waiting characters, at a line end, and count the lines for the note."""
+        skipped = 0
+        while self._queue and len(self._queue[0]) <= chars:  # whole pieces first, then into the next one
+            piece = self._queue.pop(0)
+            chars -= len(piece)
+            self._queued -= len(piece)
+            skipped += piece.count("\n")
+        if self._queue and chars > 0:
+            first = self._queue[0]
+            cut = first.find("\n", chars) + 1 or len(first)
+            skipped += first.count("\n", 0, cut)
+            self._queue[0] = first[cut:]
+            self._queued -= cut
+        self._skipped += skipped  # a progress bar's skipped redraws (no line ends) need no note
+        self._parser = Parser()  # the colour set in what was skipped no longer applies
+        self._cr = False
+
+    def _showing(self) -> bool:
+        window = self.window()
+        return self.view.isVisible() and self.view.height() > 4 and not (window is not None and window.isMinimized())
 
     def _format(self, fg: str, bold: bool, dim: bool, italic: bool, underline: bool, href: str = "") -> QTextCharFormat:
         key = (fg, bold, dim, italic, underline, href)
@@ -254,35 +284,66 @@ class Console(QWidget):
         if not self._queue:
             self._timer.stop()
             return
+        if not self._showing():  # nobody sees it: keep about what the console would hold, draw nothing
+            if self._queued > self.max_lines * 150:
+                self._skip(self._queued - self.max_lines * 100)
+            return
+        began = time.perf_counter()
+        if not self._fast and began - self._caught_up >= BEHIND:  # once a second at most: one note a second
+            self._caught_up = began
+            keep = max(64_000, int(self._rate * DRAW_BUDGET * 1000 / FRAME_MS * BEHIND))
+            if self._queued > keep * 1.5:
+                self._skip(self._queued - keep)
         text = "".join(self._queue)
         self._queue.clear()
         self._queued = 0
+        if self._cr:
+            text = "\r" + text
+        if "\r" in text:
+            text = text.replace("\r\n", "\n")
+            self._cr = text.endswith("\r")
+            if self._cr:
+                text = text[:-1]
         self._writing = True
-        began = time.perf_counter()
         cursor = QTextCursor(self.view.document())
         cursor.movePosition(QTextCursor.MoveOperation.End)
         cursor.beginEditBlock()
         if self._skipped:
-            cursor.insertText(f"[… {self._skipped:,} characters skipped here to keep up; the log has all of them]\n",
+            if cursor.block().length() > 1:
+                cursor.insertText("\n")
+            lines = f"{self._skipped:,} line" + ("s" if self._skipped != 1 else "")
+            cursor.insertText(f"[… {lines} skipped here to keep up; the log has all of them]\n",
                               self._format(theme.color("muted"), False, True, False, False))
             self._skipped = 0
-        pos = 0
-        while pos < len(text) and (pos == 0 or time.perf_counter() - began < DRAW_BUDGET):
-            end = text.find("\n", pos + SLICE) + 1 or len(text)  # whole lines, so a link is never split
+        budget = DRAW_BUDGET * 4 if self._fast else DRAW_BUDGET
+        pos, last, now = 0, 0.0, time.perf_counter()
+        while pos < len(text) and (pos == 0 or now + last - began < budget):  # stop before it runs over
+            end = text.rfind("\n", pos, pos + SLICE) + 1 or min(len(text), pos + SLICE)  # whole lines when it can
             self._draw(cursor, text[pos:end])
             pos = end
-        if pos < len(text):  # the rest waits for the next frame
-            self._queue.append(text[pos:])
-            self._queued = len(text) - pos
+            last, now = time.perf_counter() - now, time.perf_counter()
+        self._fast = max(0, self._fast - pos)
+        if pos < len(text):  # the rest waits for the next frame, with its held-back carriage return
+            self._queue.append(text[pos:] + ("\r" if self._cr else ""))
+            self._queued = len(self._queue[0])
+            self._cr = False
         self._trim()
         cursor.endEditBlock()
         if self.follow.isChecked():
             self._to_end()
         self._writing = False
+        spent = time.perf_counter() - began
+        if spent > 0.001:
+            self._rate = 0.8 * self._rate + 0.2 * (pos / spent)
         if self.search.text() and not self._find_timer.isActive():
             self._find_timer.start()
 
     def _draw(self, cursor: QTextCursor, text: str) -> None:
+        if "\r" in text:
+            text = self._rewrite(cursor, text)
+        first = text.find("\n")
+        if cursor.block().length() + (len(text) if first < 0 else first) > LONG_LINE:
+            cursor.insertText("\n")
         for chunk, s in self._parser.feed(text):
             pos = 0
             for m in URL.finditer(chunk) if "://" in chunk else ():
@@ -293,11 +354,24 @@ class Console(QWidget):
             if pos < len(chunk):
                 cursor.insertText(chunk[pos:], self._format(s.fg, s.bold, s.dim, s.italic, s.underline))
 
+    @staticmethod
+    def _rewrite(cursor: QTextCursor, text: str) -> str:
+        """A carriage return starts the line again: keep what follows the last one (and the colours before it).
+        In the first line that means wiping what's already drawn of the line too."""
+        lines = text.split("\n")
+        for i, line in enumerate(lines):
+            if (at := line.rfind("\r")) >= 0:
+                lines[i] = "".join(SGR.findall(line, 0, at)) + line[at + 1:]
+                if i == 0 and cursor.block().length() > 1:
+                    cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock, QTextCursor.MoveMode.KeepAnchor)
+                    cursor.removeSelectedText()
+        return "\n".join(lines)
+
     def _trim(self) -> None:
-        """Drop the oldest lines over the limit in one cut, a tenth at a time. QPlainTextEdit's own limit walks
+        """Drop the oldest lines over the limit in one cut, a twentieth at a time. QPlainTextEdit's own limit walks
         block by block and was most of the cost under heavy output."""
         doc = self.view.document()
-        if doc is None or doc.blockCount() <= self.max_lines + self.max_lines // 10:
+        if doc is None or doc.blockCount() <= self.max_lines + self.max_lines // 20:
             return
         cut = QTextCursor(doc)
         cut.setPosition(0)

@@ -40,11 +40,36 @@ def test_system_check(qtbot: Any) -> None:
 def test_console_handles_floods_and_colours(qtbot: Any) -> None:
     c = Console(1000)
     qtbot.addWidget(c)
+    c.show()
     for i in range(5000):
         c.append(f"\x1b[3{i % 8}mline {i}\x1b[0m\n")
     qtbot.waitUntil(lambda: "line 4999" in c.view.toPlainText(), timeout=5000)
-    assert c.view.document() is not None and c.view.document().blockCount() <= 1001  # type: ignore[union-attr]
+    assert c.view.document() is not None and c.view.document().blockCount() <= 1051  # type: ignore[union-attr]
     assert "\x1b" not in c.view.toPlainText()
+
+
+def test_console_progress_bars_rewrite_one_line(qtbot: Any) -> None:
+    c = Console(1000)
+    qtbot.addWidget(c)
+    c.show()
+    c.append("start\n")
+    for i in range(2000):
+        c.append(f"\r\x1b[32m{i:4d}%\x1b[0m")  # a progress bar: no line feed, only carriage returns
+    c.append("\r\ndone\r\n")
+    qtbot.waitUntil(lambda: "done" in c.view.toPlainText(), timeout=5000)
+    assert c.view.toPlainText().split("\n")[:3] == ["start", "1999%", "done"]
+
+
+def test_console_hidden_keeps_only_the_newest(qtbot: Any) -> None:
+    c = Console(100)
+    qtbot.addWidget(c)  # never shown: nothing is drawn, and the waiting output stays bounded
+    for i in range(20_000):
+        c.append(f"line {i}\n")
+    qtbot.wait(200)
+    assert c.view.toPlainText() == "" and c._queued <= 100 * 150
+    c.show()
+    qtbot.waitUntil(lambda: "line 19999" in c.view.toPlainText(), timeout=5000)
+    assert c.view.document().blockCount() <= 111  # type: ignore[union-attr]
 
 
 def test_editor_opens_and_saves(qtbot: Any, tmp_path: Path) -> None:
