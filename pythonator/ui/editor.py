@@ -152,10 +152,6 @@ class CodeEditor(QsciScintilla):
         self.SendScintilla(QsciScintilla.SCI_SETADDITIONALSELECTIONTYPING, 1)
         self.setEolMode(QsciScintilla.EolMode.EolUnix)
         self.SendScintilla(QsciScintilla.SCI_SETSCROLLWIDTHTRACKING, 1)
-        # Fast scrolling never waits on the lexer: it styles the whole file in idle time, not when Ctrl+End or a
-        # scrollbar drag first shows a far part. The visible page's line layouts are kept between frames.
-        self.SendScintilla(QsciScintilla.SCI_SETIDLESTYLING, QsciScintilla.SC_IDLESTYLING_ALL)
-        self.SendScintilla(QsciScintilla.SCI_SETLAYOUTCACHE, QsciScintilla.SC_CACHE_PAGE)
         self.read_only = False
         size = path.stat().st_size
         with path.open("rb") as f:
@@ -372,8 +368,7 @@ class EditorPanel(QWidget):
             b.clicked.connect(lambda _c=False, f=slot: f())
             row.addWidget(b)
         self.empty = label("Open a file from the tree under the services.\n"
-                           "Ctrl+S saves · Ctrl+F finds · Ctrl+click adds a caret · Ctrl+ +/− zooms\n"
-                           "Shift+wheel scrolls a page · Ctrl+End jumps to the end")
+                           "Ctrl+S saves · Ctrl+F finds · Ctrl+click adds a caret · Ctrl+ +/− zooms")
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty.setProperty("muted", True)
         self.findbar = FindBar()
