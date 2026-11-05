@@ -146,8 +146,9 @@ def test_window_start_all_and_stop_all(harness: DaemonHarness, dirs: DataDirs, p
     try:
         qtbot.waitUntil(lambda: window.client.ready and len(window.services) == 2, timeout=10_000)
         window.act_start_all.trigger()
+        # One after another; the first also makes the folder's .venv (slow in a Windows AppContainer).
         qtbot.waitUntil(lambda: all(window.states.get(s, {}).get("state") == "running" for s in (a, b)),
-                        timeout=20_000)
+                        timeout=90_000)
         qtbot.waitUntil(lambda: "up" in harness.output(b), timeout=20_000)
         assert window.sb_running.text() == "2 of 2 running"
         window.act_stop_all.trigger()
@@ -175,6 +176,21 @@ def test_start_all_starts_in_order_a_few_at_a_time(harness: DaemonHarness, proje
     harness.wait(lambda: all("running" in harness.states(s) for s in sids), timeout=30_000)
     started = [e["id"] for e in harness.events if e.get("ev") == "state" and e.get("state") == "starting"]
     assert started[:3] == [sids[2], sids[0], sids[1]]  # one after another, in the new order
+    harness.ok({"op": "stop_all"})
+    harness.wait(lambda: all(harness.states(s)[-1] == "stopped" for s in sids), timeout=20_000)
+
+
+def test_services_sharing_a_folder_make_its_environment_once(harness: DaemonHarness, project: Path) -> None:
+    """All at once, two services of one folder: one makes its .venv, the other waits for it, then both run."""
+    (project / "s.py").write_text("import time\nprint('up', flush=True)\nwhile True:\n    time.sleep(0.2)\n")
+    sids = [harness.add(name=f"w{i}", folder=str(project), entry="s.py", restart="never") for i in range(2)]
+    snap = harness.ok({"op": "snapshot"})
+    harness.ok({"op": "settings", "settings": {**snap["settings"], "start_at_once": 0}})
+    harness.ok({"op": "start_all", "ids": sids})
+    harness.wait(lambda: all("up" in harness.output(s) for s in sids), timeout=120_000)
+    out = harness.output(sids[0]) + harness.output(sids[1])
+    assert out.count("Making its own environment first") == 1
+    assert "which is making this folder's environment" in out
     harness.ok({"op": "stop_all"})
     harness.wait(lambda: all(harness.states(s)[-1] == "stopped" for s in sids), timeout=20_000)
 

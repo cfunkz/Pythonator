@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QSplitter,
     QStatusBar,
+    QSystemTrayIcon,
     QToolBar,
     QToolButton,
     QVBoxLayout,
@@ -93,7 +94,7 @@ def short(text: str) -> str:
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, dirs: DataDirs) -> None:
+    def __init__(self, dirs: DataDirs, settings: Settings | None = None) -> None:
         super().__init__()
         self.setWindowTitle("Pythonator")
         self.resize(1360, 860)
@@ -103,13 +104,15 @@ class MainWindow(QMainWindow):
         self.services: dict[str, Service] = {}
         self.states: dict[str, dict[str, Any]] = {}
         self.stats: dict[str, dict[str, Any]] = {}
-        self.settings = Settings()
+        self.settings = settings or Settings()  # the saved ones, until the background service sends its own
         self.plugins: list[dict[str, Any]] = []
         self.capabilities: list[tuple[str, str]] = []
         self.current = ""
         self.plugins_dialog: PluginsDialog | None = None
         self.proposals: dict[str, ProposalDialog] = {}
         self._restored = False
+        self._quitting = False  # closing for real, not into the tray
+        self.tray: QSystemTrayIcon | None = None
         self._icons: tuple[Any, ...] = ()
         self._build_toolbar()
         self._build_body()
@@ -119,6 +122,7 @@ class MainWindow(QMainWindow):
         self.client.disconnected.connect(lambda: self._status("Background service lost; reconnecting…"))
         self._status("Connecting to the background service…")
         self._set_services([])
+        self._update_tray()
         QTimer.singleShot(0, self.client.connect_daemon)  # after the first paint: the window never waits for it
 
     # -- construction -------------------------------------------------------------------------------------
@@ -153,7 +157,7 @@ class MainWindow(QMainWindow):
         self.plugins_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         tb.addWidget(self.plugins_button)
         act("System check", "What Pythonator runs on and what the sandbox enforces", self.system_check)
-        act("Settings", "Start order, how many start at once, and removing several services", self.show_settings)
+        act("Settings", "Starting services, logs, the tray and starting with the computer", self.show_settings)
         help_button = button("Help ▾", "Documentation, licensing, support and credits")
         help_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         menu = QMenu(self)
@@ -177,9 +181,20 @@ class MainWindow(QMainWindow):
         title = QLabel("SERVICES")
         title.setProperty("section", True)
         title.setContentsMargins(14, 0, 0, 0)
-        sl.addWidget(title)
+        head = QHBoxLayout()
+        head.setContentsMargins(0, 0, 8, 0)
+        head.addWidget(title, 1)
         self.list = ServiceList()
+        for text, tip, step in (("↑", "Move the selected services up (Alt+↑)", -1),
+                                ("↓", "Move the selected services down (Alt+↓)", 1)):
+            b = button(text, tip + ": Start all and sign-in start them in this order")
+            b.setAutoRaise(True)
+            b.clicked.connect(lambda _c=False, st=step: self.list.shift(st))
+            head.addWidget(b)
+        sl.addLayout(head)
         self.list.selected.connect(self._select)
+        self.list.reordered.connect(lambda ids: self.client.request({"op": "reorder", "ids": ids}))
+        self.list.remove_requested.connect(self.remove_service)
         self.list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list.customContextMenuRequested.connect(
             lambda pos: self._service_menu(QMenu(self)).exec(self.list.mapToGlobal(pos)) if self.current else None)
@@ -338,6 +353,7 @@ class MainWindow(QMainWindow):
             self._set_services(msg["services"])
             for st in msg["states"]:
                 self._on_state(st)
+            self._update_tray()
             if not self._restored:
                 self._restored = True
                 self.editor.set_font_size(self.settings.editor_font_size)
@@ -566,6 +582,10 @@ class MainWindow(QMainWindow):
             message["confirmed"] = confirmed
         self.client.request(message, lambda ok, _d, err: self._op_done(op, sid, ok, err))
 
+    def _op_each(self, op: str, ids: list[str]) -> None:
+        for sid in ids:
+            self._op(op, sid=sid)
+
     def _recreate(self) -> None:
         service = self.services.get(self.current)
         if service is None:
@@ -621,11 +641,16 @@ class MainWindow(QMainWindow):
                                 lambda ok, _d, err: None if ok else self._notice("error", err))
 
     def remove_service(self) -> None:
-        service = self.services.get(self.current)
-        if service and QMessageBox.question(self, "Remove", f"Remove {service.name}? Its files stay where they "
-                                            "are; its logs and sandbox folders are deleted.") \
-                == QMessageBox.StandardButton.Yes:
-            self.client.request({"op": "remove", "id": service.id})
+        """Remove the selected services (one or several), after one question."""
+        chosen = [self.services[i] for i in self.list.selected_ids() if i in self.services]
+        if not chosen:
+            return
+        names = ", ".join(s.name for s in chosen[:5]) + (f" and {len(chosen) - 5} more" if len(chosen) > 5 else "")
+        what = names if len(chosen) == 1 else f"{len(chosen)} services ({names})"
+        if QMessageBox.question(self, "Remove", f"Remove {what}? Their files stay where they are; their logs and "
+                                "sandbox folders are deleted.") == QMessageBox.StandardButton.Yes:
+            for service in chosen:
+                self.client.request({"op": "remove", "id": service.id})
 
     def from_git(self) -> None:
         dialog = GitDialog(self)
@@ -646,9 +671,53 @@ class MainWindow(QMainWindow):
     def show_settings(self) -> None:
         from .settings_dialog import SettingsDialog
 
-        dialog = SettingsDialog(self.settings, list(self.services.values()), self.client.request, self)
+        dialog = SettingsDialog(self.settings, self.client.request, self)
         if dialog.exec():
             self.settings = dialog.settings
+            self._update_tray()
+
+    # -- the tray -----------------------------------------------------------------------------------------
+
+    def _update_tray(self) -> None:
+        """Settings → Window: closing the window leaves Pythonator in the tray."""
+        want = self.settings.tray and QSystemTrayIcon.isSystemTrayAvailable()
+        if app := QApplication.instance():
+            app.setQuitOnLastWindowClosed(not want)  # type: ignore[attr-defined]
+        if not want:
+            if self.tray is not None:
+                self.tray.hide()
+                self.tray.deleteLater()
+                self.tray = None
+            return
+        if self.tray is not None:
+            return
+        self.tray = QSystemTrayIcon(self.windowIcon(), self)
+        self.tray.setToolTip("Pythonator")
+        menu = QMenu(self)
+        menu.addAction("Show Pythonator", self.show_window)
+        menu.addSeparator()
+        menu.addAction("Start all", self.act_start_all.trigger)
+        menu.addAction("Stop all", self.act_stop_all.trigger)
+        menu.addSeparator()
+        menu.addAction("Quit", self.quit)
+        self.tray.setContextMenu(menu)
+        self.tray.activated.connect(
+            lambda why: self.show_window() if why == QSystemTrayIcon.ActivationReason.Trigger else None)
+        self.tray.show()
+
+    def show_window(self) -> None:
+        self.showNormal() if self.isMinimized() else self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def quit(self) -> None:
+        self._quitting = True
+        if self.isHidden():
+            self.show()  # the questions on closing need a window
+        if self.close():
+            QApplication.quit()
+        else:
+            self._quitting = False
 
     def system_check(self) -> None:
         def show(ok: bool, data: Any, error: str) -> None:
@@ -684,14 +753,23 @@ class MainWindow(QMainWindow):
         service = self.services.get(self.current)
         if service is None:
             return menu
-        menu.addAction("Configure…", self.edit_service)
-        menu.addAction("Open folder", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(service.folder)))
-        if url := self.web_url():
-            menu.addAction(f"Copy address ({url})", lambda: self._copy(url))
-        menu.addAction("Open log", self.open_log)
-        menu.addAction("Clear console", self.clear_console)
+        chosen = self.list.selected_ids()
+        if len(chosen) > 1:
+            n = len(chosen)
+            menu.addAction(f"Start {n} services", lambda: self.client.request({"op": "start_all", "ids": chosen}))
+            menu.addAction(f"Stop {n} services", lambda: self._op_each("stop", chosen))
+        else:
+            menu.addAction("Configure…", self.edit_service)
+            menu.addAction("Open folder", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(service.folder)))
+            if url := self.web_url():
+                menu.addAction(f"Copy address ({url})", lambda: self._copy(url))
+            menu.addAction("Open log", self.open_log)
+            menu.addAction("Clear console", self.clear_console)
         menu.addSeparator()
-        menu.addAction("Remove…", self.remove_service)
+        menu.addAction("Move up\tAlt+↑", lambda: self.list.shift(-1))
+        menu.addAction("Move down\tAlt+↓", lambda: self.list.shift(1))
+        menu.addSeparator()
+        menu.addAction(f"Remove {len(chosen)} services…" if len(chosen) > 1 else "Remove…", self.remove_service)
         return menu
 
     # -- drag a script or folder onto the window ----------------------------------------------------------
@@ -716,18 +794,27 @@ class MainWindow(QMainWindow):
 
     # -- closing ------------------------------------------------------------------------------------------
 
+    def _remember_window(self) -> None:
+        if self.client.ready:
+            geometry = bytes(self.saveGeometry().toHex().data()).decode()
+            self.settings = self.settings.model_copy(
+                update={"window_geometry": geometry, "editor_font_size": self.editor.font_size})
+            self.client.request({"op": "settings", "settings": self.settings.model_dump(mode="json")})
+
     def closeEvent(self, event: QCloseEvent | None) -> None:
+        if self.tray is not None and not self._quitting:  # into the tray; services keep running
+            self._remember_window()
+            self.hide()
+            if event:
+                event.ignore()
+            return
         if self.editor.unsaved() and QMessageBox.question(
                 self, "Unsaved files", "Some files have unsaved changes. Close anyway?") \
                 != QMessageBox.StandardButton.Yes:
             if event:
                 event.ignore()
             return
-        if self.client.ready:  # remember the window before anything else
-            geometry = bytes(self.saveGeometry().toHex().data()).decode()
-            self.client.request({"op": "settings", "settings": self.settings.model_copy(
-                update={"window_geometry": geometry, "editor_font_size": self.editor.font_size}).model_dump(
-                mode="json")})
+        self._remember_window()  # before anything else
         running = [s for s, st in self.states.items() if st.get("state") in (*theme.LIVE, "waiting")]
         if running and self.client.ready:
             box = QMessageBox(QMessageBox.Icon.Question, "Close Pythonator",

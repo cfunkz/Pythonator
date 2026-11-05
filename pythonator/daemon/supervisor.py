@@ -54,6 +54,7 @@ class State(StrEnum):
 
 
 QUEUED = "Starting in turn"  # the note of a service waiting in the start queue
+MAKING_ENV = "Setting up its environment"  # the task that makes a project's own environment
 
 
 class NeedsConfirmation(Exception):
@@ -108,6 +109,7 @@ class Supervisor:
         self._last_second = 0.0
         self._launches: list[tuple[str, bool]] = []  # services waiting their turn to start: (id, automatic)
         self._launching: dict[str, float] = {}  # started from the queue and still starting: id -> when
+        self._env_waits: set[str] = set()  # waiting for another service to make their shared folder's environment
         self._stop = threading.Event()
         for service in store.load_services():
             self.slots[service.id] = Slot(service, self._new_log(service))
@@ -199,6 +201,13 @@ class Supervisor:
                 self.emit({"ev": "output", "id": slot.service.id, "text": text})
         if self._launches:
             self._next_launch()
+        for sid in list(self._env_waits):
+            waiting = self.slots.get(sid)
+            if waiting is None or waiting.state is not State.STARTING or waiting.runner or waiting.task:
+                self._env_waits.discard(sid)
+            elif self._env_maker(waiting) is None:
+                self._env_waits.discard(sid)
+                self._prepare_env(waiting)
         now = time.monotonic()
         if now - self._last_second >= 1.0:
             self._last_second = now
@@ -394,8 +403,19 @@ class Supervisor:
         if not steps:
             self._launch(slot)
             return
+        if (maker := self._env_maker(slot)) is not None:  # two services, one folder: one makes it, the other waits
+            if slot.service.id not in self._env_waits:
+                self._env_waits.add(slot.service.id)
+                self.note(slot, f"Waiting for {maker.service.name}, which is making this folder's environment")
+            return
         self.note(slot, f"Making its own environment first: {why}")
-        self._run_steps(slot, steps, "Setting up its environment", then=lambda: self._launch(slot))
+        self._run_steps(slot, steps, MAKING_ENV, then=lambda: self._launch(slot))
+
+    def _env_maker(self, slot: Slot) -> Slot | None:
+        """Another service that is making the environment of this service's folder right now."""
+        folder = Path(slot.service.folder)
+        return next((o for o in self.slots.values() if o is not slot and o.state is State.TASK
+                     and o.task_name == MAKING_ENV and Path(o.service.folder) == folder), None)
 
     def _launch(self, slot: Slot) -> None:
         service = slot.service
@@ -458,11 +478,13 @@ class Supervisor:
             raise ValueError("It isn't running")
         slot.pending.append(slot.log.write(f"\x1b[36m> {text.rstrip()}\x1b[0m\n"))
 
-    def start_all(self) -> None:
-        self._start_in_turn(list(self.slots), auto=False)
+    def start_all(self, ids: list[str] | None = None) -> None:
+        """Start every service (or these), in list order, as Settings → Starting services says."""
+        wanted = set(ids) if ids is not None else None
+        self._start_in_turn([i for i in self.slots if wanted is None or i in wanted], auto=False)
 
     def _start_in_turn(self, sids: list[str], *, auto: bool) -> None:
-        """Start these in list order, a few at a time (Settings: start at once), not all together: each start
+        """Start these in list order, one after another by default (Settings: start at once): each start
         (imports, a new environment) is a burst of CPU and disk, and twenty at once stall the whole computer."""
         for sid in sids:
             slot = self.slots.get(sid)
@@ -484,7 +506,8 @@ class Supervisor:
                 slot.state is State.RUNNING and now - at < WARMUP))
             if not starting or now - at > LAUNCH_WAIT:
                 del self._launching[sid]
-        while self._launches and len(self._launching) < self.settings.start_at_once:
+        limit = self.settings.start_at_once  # 0: all at once
+        while self._launches and (not limit or len(self._launching) < limit):
             sid, auto = self._launches.pop(0)
             slot = self.slots.get(sid)
             if slot is None or slot.state is not State.WAITING or slot.note != QUEUED:
@@ -683,6 +706,9 @@ class Supervisor:
     def save_settings(self, settings: Settings) -> None:
         self.settings = settings
         self.store.save_settings(settings)
+        for slot in self.slots.values():  # log rotation applies to the open logs at once
+            slot.log.max_bytes = settings.log_max_mb * 1024 * 1024
+            slot.log.backups = settings.log_backups
 
     # -- stats --------------------------------------------------------------------------------------------
 

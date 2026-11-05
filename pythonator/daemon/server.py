@@ -264,8 +264,8 @@ class Daemon:
                 s.save_settings(settings.model_copy(update=keep))  # plugin state changes only through its ops
             case p.Reorder(ids=ids):
                 s.reorder(list(ids))
-            case p.Simple(op="start_all"):
-                s.start_all()
+            case p.StartAll(ids=ids):
+                s.start_all(None if ids is None else list(ids))
             case p.Simple(op="stop_all"):
                 s.stop_all()
             case p.Simple(op="snapshot"):

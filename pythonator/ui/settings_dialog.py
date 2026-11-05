@@ -1,115 +1,95 @@
-"""Settings: how Start all and login start services (how many at a time, in what order), and tidying up the
-list: move services up and down, remove several at once."""
+"""Settings: how Start all and sign-in start services, log rotation, the tray and starting with the computer.
+The services' order itself is the service list's (move them with Alt+↑ / Alt+↓ there)."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
 
-from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QAbstractItemView,
+    QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
-    QHBoxLayout,
-    QListWidget,
-    QListWidgetItem,
+    QGroupBox,
     QMessageBox,
-    QPushButton,
+    QSystemTrayIcon,
     QVBoxLayout,
 )
 
-from ..core.models import Service, Settings
+from ..core.models import Settings
+from ..paths import IS_WINDOWS
+from . import login
 from .widgets import label, spin
 
 Request = Callable[..., None]
+ONE, FEW, ALL = range(3)  # the start modes, as the combo box lists them
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, settings: Settings, services: list[Service], request: Request, parent: Any = None) -> None:
+    def __init__(self, settings: Settings, request: Request, parent: Any = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        self.setMinimumWidth(460)
+        self.setMinimumWidth(440)
         self.settings = settings
         self.request = request
-        self.order = [s.id for s in services]
 
-        form = QFormLayout()
-        self.at_once = spin(1, 64, settings.start_at_once)
-        self.at_once.setToolTip("1 starts them one after another")
-        self.at_once.setMaximumWidth(110)
-        form.addRow("Start at once", self.at_once)
-        form.addRow("", label("<b>Start all</b> and login start services in the order below, this many together. "
-                              "The next one starts as soon as one before it is up (running for 2 s), so a dozen "
-                              "services don't all load at the same moment.", muted=True))
+        self.mode = QComboBox()
+        self.mode.addItems(["One after another (top to bottom)", "A few at a time", "All at once"])
+        n = settings.start_at_once
+        self.mode.setCurrentIndex(ALL if n == 0 else ONE if n == 1 else FEW)
+        self.at_once = spin(2, 64, max(2, n or 4), suffix=" together")
+        self.mode.currentIndexChanged.connect(lambda i: self.at_once.setEnabled(i == FEW))
+        self.at_once.setEnabled(self.mode.currentIndex() == FEW)
+        starting = QFormLayout()
+        starting.addRow("Start services", self.mode)
+        starting.addRow("", self.at_once)
+        starting.addRow(label("Start all and sign-in use the service list's order: select services there and move "
+                              "them with Alt+↑ / Alt+↓. The next one starts when the one before it has been running "
+                              "for 2 s. All at once suits fast machines with few services.", muted=True))
 
-        self.list = QListWidget()
-        self.list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)  # Ctrl / Shift+click
-        for s in services:
-            item = QListWidgetItem(s.name)
-            item.setData(Qt.ItemDataRole.UserRole, s.id)
-            self.list.addItem(item)
-        up, down = QPushButton("Move up"), QPushButton("Move down")
-        self.remove = QPushButton("Remove…")
-        self.remove.setProperty("danger", True)
-        up.clicked.connect(lambda: self.shift(-1))
-        down.clicked.connect(lambda: self.shift(1))
-        self.remove.clicked.connect(self.remove_selected)
-        side = QVBoxLayout()
-        for b in (up, down):
-            side.addWidget(b)
-        side.addStretch(1)
-        side.addWidget(self.remove)
-        row = QHBoxLayout()
-        row.addWidget(self.list, 1)
-        row.addLayout(side)
+        self.log_mb = spin(1, 1024, settings.log_max_mb, suffix=" MB")
+        self.log_backups = spin(0, 50, settings.log_backups, suffix=" old logs")
+        logs = QFormLayout()
+        logs.addRow("Rotate a log at", self.log_mb)
+        logs.addRow("Keep", self.log_backups)
 
+        self.tray = QCheckBox("Keep Pythonator in the tray when the window is closed")
+        self.tray.setChecked(settings.tray)
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            self.tray.setEnabled(False)
+            self.tray.setToolTip("This desktop has no tray")
+        self.login_was = login.enabled()
+        self.login = QCheckBox("Start Pythonator with Windows" if IS_WINDOWS else "Start Pythonator when I sign in")
+        self.login.setChecked(self.login_was)
+        self.login.setToolTip("It opens in the tray (or minimised); services set to start with Pythonator start "
+                              "then, in order")
+        window = QVBoxLayout()
+        window.addWidget(self.tray)
+        window.addWidget(self.login)
+
+        layout = QVBoxLayout(self)
+        for title, inner in (("Starting services", starting), ("Logs", logs), ("Window", window)):
+            box = QGroupBox(title)
+            box.setLayout(inner)
+            layout.addWidget(box)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.save)
         buttons.rejected.connect(self.reject)
-        layout = QVBoxLayout(self)
-        layout.addLayout(form)
-        layout.addWidget(label("Services, in start order (select several with Ctrl or Shift)", muted=True))
-        layout.addLayout(row, 1)
         layout.addWidget(buttons)
 
-    def ids(self) -> list[str]:
-        items = (self.list.item(i) for i in range(self.list.count()))
-        return [str(item.data(Qt.ItemDataRole.UserRole)) for item in items if item is not None]
-
-    def selected_rows(self) -> list[int]:
-        return sorted(self.list.row(item) for item in self.list.selectedItems())
-
-    def shift(self, step: int) -> None:
-        """Move the selected services one place up or down, together."""
-        rows = self.selected_rows()
-        if not rows or (step < 0 and rows[0] == 0) or (step > 0 and rows[-1] == self.list.count() - 1):
-            return
-        for r in rows if step < 0 else reversed(rows):
-            item = self.list.takeItem(r)
-            self.list.insertItem(r + step, item)
-        self.list.clearSelection()
-        for r in rows:
-            if (item := self.list.item(r + step)) is not None:
-                item.setSelected(True)
-
-    def remove_selected(self) -> None:
-        items = self.list.selectedItems()
-        if not items:
-            return
-        names = ", ".join(i.text() for i in items[:5]) + (f" and {len(items) - 5} more" if len(items) > 5 else "")
-        if QMessageBox.question(self, "Remove", f"Remove {len(items)} service(s): {names}? Their files stay where "
-                                "they are; their logs and sandbox folders are deleted.") \
-                != QMessageBox.StandardButton.Yes:
-            return
-        for item in items:
-            self.request({"op": "remove", "id": str(item.data(Qt.ItemDataRole.UserRole))})
-            self.list.takeItem(self.list.row(item))
+    def start_at_once(self) -> int:
+        return {ONE: 1, ALL: 0}.get(self.mode.currentIndex(), self.at_once.value())
 
     def save(self) -> None:
-        self.settings = self.settings.model_copy(update={"start_at_once": self.at_once.value()})
+        self.settings = self.settings.model_copy(update={
+            "start_at_once": self.start_at_once(), "log_max_mb": self.log_mb.value(),
+            "log_backups": self.log_backups.value(), "tray": self.tray.isChecked()})
         self.request({"op": "settings", "settings": self.settings.model_dump(mode="json")})
-        if self.ids() != [i for i in self.order if i in self.ids()]:
-            self.request({"op": "reorder", "ids": self.ids()})
+        if self.login.isChecked() != self.login_was:
+            try:
+                login.set_enabled(self.login.isChecked())
+            except OSError as exc:
+                QMessageBox.warning(self, "Settings", f"Couldn't change starting with the computer: {exc}")
         self.accept()

@@ -2,6 +2,17 @@
 
 Pythonator follows [semantic versioning](https://semver.org/). Each release lists what changed for users.
 
+## 0.0.6
+
+- **Start all** and sign-in start services one after another, top to bottom, by default. **Settings → Starting
+  services** can start a few at a time or all at once instead.
+- The service list itself orders services: select several with Ctrl or Shift, move them with the ↑ ↓ buttons or
+  Alt+↑ / Alt+↓, remove them together with Delete or the right-click menu, which can also start or stop them all.
+  The separate start-order window is gone.
+- **Settings** has log rotation (size and how many old logs are kept, applied at once), keeping Pythonator in the
+  tray when its window is closed, and starting it with Windows (or at sign-in on macOS and Linux), in the tray.
+- Two services in one folder no longer make its `.venv` at the same time: one makes it, the other waits.
+
 ## 0.0.5
 
 - **Start all** and login start services in a queue: in list order, a few at a time (**Settings → Start at once**,

@@ -102,13 +102,21 @@ class Reorder(Req):
     ids: list[Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9-]{0,62}$")]] = Field(max_length=10_000)
 
 
+class StartAll(Req):
+    """Start every service, or only these, in list order and as many at a time as the settings say."""
+
+    op: Literal["start_all"]
+    ids: list[Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9-]{0,62}$")]] | None = Field(default=None,
+                                                                                         max_length=10_000)
+
+
 class SaveSettings(Req):
     op: Literal["settings"]
     settings: Settings
 
 
 class Simple(Req):
-    op: Literal["start_all", "stop_all", "snapshot", "capabilities", "ping"]
+    op: Literal["stop_all", "snapshot", "capabilities", "ping"]
 
 
 class Shutdown(Req):
@@ -162,7 +170,7 @@ class PluginRemove(PluginOp):
 Request = Annotated[
     Hello | Add | Update | Remove | Start | Stop | Restart | Input | Install | Recreate | Pull | Tail | Clear | Watch
     | Check
-    | Reorder | SaveSettings | Simple | Shutdown | PluginEnable | PluginSettings | PluginGrant | PluginAction
+    | Reorder | StartAll | SaveSettings | Simple | Shutdown | PluginEnable | PluginSettings | PluginGrant | PluginAction
     | PluginProposal | PluginInstall | PluginRemove,
     Field(discriminator="op"),
 ]

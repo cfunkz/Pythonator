@@ -152,31 +152,65 @@ def test_plugin_panels_render_text_as_plain_text(qtbot: Any) -> None:
     assert widget.textFormat().name == "PlainText"  # type: ignore[attr-defined]
 
 
-def test_settings_moves_and_removes_several_services(qtbot: Any, tmp_path: Path, monkeypatch: Any) -> None:
-    from PyQt6.QtWidgets import QMessageBox
-
+def test_settings_start_mode_logs_and_sign_in(qtbot: Any, tmp_path: Path, monkeypatch: Any) -> None:
     from pythonator.core.models import Settings
-    from pythonator.ui.settings_dialog import SettingsDialog
+    from pythonator.ui import login
+    from pythonator.ui.settings_dialog import ALL, FEW, SettingsDialog
+
+    monkeypatch.setattr(login, "IS_WINDOWS", False)
+    monkeypatch.setattr(login.sys, "platform", "linux")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    sent: list[dict[str, Any]] = []
+    dlg = SettingsDialog(Settings(), lambda msg, *_: sent.append(msg))
+    qtbot.addWidget(dlg)
+    assert dlg.start_at_once() == 1 and not dlg.at_once.isEnabled()  # one after another by default
+    dlg.mode.setCurrentIndex(FEW)
+    dlg.at_once.setValue(3)
+    dlg.log_mb.setValue(25)
+    dlg.log_backups.setValue(7)
+    dlg.login.setChecked(True)
+    dlg.save()
+    saved = sent[-1]["settings"]
+    assert (saved["start_at_once"], saved["log_max_mb"], saved["log_backups"]) == (3, 25, 7)
+    entry = (tmp_path / "autostart" / "pythonator.desktop").read_text()
+    assert login.HIDDEN in entry and login.enabled()
+    dlg = SettingsDialog(Settings.model_validate(saved), lambda msg, *_: sent.append(msg))
+    qtbot.addWidget(dlg)
+    assert dlg.login.isChecked() and dlg.start_at_once() == 3
+    dlg.mode.setCurrentIndex(ALL)
+    dlg.login.setChecked(False)
+    dlg.save()
+    assert sent[-1]["settings"]["start_at_once"] == 0 and not login.enabled()
+
+
+def test_service_list_moves_and_removes_several(qtbot: Any, tmp_path: Path) -> None:
+    from PyQt6.QtCore import QItemSelectionModel, Qt
+
+    from pythonator.ui.service_list import ServiceList
 
     services = [Service(name=n, folder=str(tmp_path), entry="a.py") for n in ("a", "b", "c", "d")]
-    sent: list[dict[str, Any]] = []
-    dlg = SettingsDialog(Settings(), services, lambda msg, *_: sent.append(msg))
-    qtbot.addWidget(dlg)
-    dlg.list.item(2).setSelected(True)  # type: ignore[union-attr]
-    dlg.list.item(3).setSelected(True)  # type: ignore[union-attr]
-    dlg.shift(-1)
-    assert [dlg.list.item(i).text() for i in range(4)] == ["a", "c", "d", "b"]  # type: ignore[union-attr]
-    dlg.at_once.setValue(2)
-    dlg.save()
-    assert any(m["op"] == "settings" and m["settings"]["start_at_once"] == 2 for m in sent)
-    assert [m["ids"] for m in sent if m["op"] == "reorder"] == [[services[i].id for i in (0, 2, 3, 1)]]
-    dlg.list.clearSelection()
-    dlg.list.item(0).setSelected(True)  # type: ignore[union-attr]
-    dlg.list.item(3).setSelected(True)  # type: ignore[union-attr]
-    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
-    dlg.remove_selected()
-    assert sorted(m["id"] for m in sent if m["op"] == "remove") == sorted([services[0].id, services[1].id])
-    assert dlg.ids() == [services[2].id, services[3].id]
+    view = ServiceList()
+    qtbot.addWidget(view)
+    view.set_services(services)
+    orders: list[list[str]] = []
+    removes: list[bool] = []
+    view.reordered.connect(orders.append)
+    view.remove_requested.connect(lambda: removes.append(True))
+    sel = view.selectionModel()
+    assert sel is not None
+    flag = QItemSelectionModel.SelectionFlag
+    sel.setCurrentIndex(view.rows.index(2), flag.ClearAndSelect)
+    sel.select(view.rows.index(3), flag.Select)
+    assert view.selected_ids() == [services[2].id, services[3].id]
+    qtbot.keyClick(view, Qt.Key.Key_Up, Qt.KeyboardModifier.AltModifier)
+    assert orders == [[services[i].id for i in (0, 2, 3, 1)]]
+    view.set_services([services[i] for i in (0, 2, 3, 1)])  # the background service's echo keeps the selection
+    assert view.selected_ids() == [services[2].id, services[3].id]
+    view.shift(-1)
+    view.shift(-1)  # already at the top: nothing
+    assert orders[-1] == [services[i].id for i in (2, 3, 0, 1)] and len(orders) == 2
+    qtbot.keyClick(view, Qt.Key.Key_Delete)
+    assert removes == [True]
 
 
 def test_plugins_dialog(qtbot: Any) -> None:

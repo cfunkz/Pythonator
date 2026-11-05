@@ -15,7 +15,10 @@ from . import theme
 
 
 def main(args: list[str]) -> int:
-    app = QApplication([sys.argv[0], *args])
+    from .login import HIDDEN
+
+    hidden = HIDDEN in args  # started at sign-in
+    app = QApplication([sys.argv[0], *(a for a in args if a != HIDDEN)])
     app.setApplicationName("Pythonator")
     app.setApplicationVersion(__version__)
     app.setOrganizationName("Pythonator")
@@ -24,11 +27,14 @@ def main(args: list[str]) -> int:
         app.setWindowIcon(QIcon(str(icon)))
     dirs = DataDirs()
     dirs.ensure()
-    settings = Store(dirs).load_settings()  # read-only here: only the theme, before the first paint
+    settings = Store(dirs).load_settings()  # read-only here: the theme before the first paint, and the tray
     theme.apply(app, settings.theme)
 
     from .main_window import MainWindow  # after the theme, so widgets pick it up
 
-    window = MainWindow(dirs)
-    window.show()
+    window = MainWindow(dirs, settings)
+    if not hidden:
+        window.show()
+    elif not settings.tray:  # no tray to wait in: minimised, so it is still on the taskbar
+        window.showMinimized()
     return app.exec()

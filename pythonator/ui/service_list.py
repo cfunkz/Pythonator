@@ -23,7 +23,7 @@ from PyQt6.QtCore import (
     QTimer,
     pyqtSignal,
 )
-from PyQt6.QtGui import QColor, QFont, QMouseEvent, QPainter
+from PyQt6.QtGui import QColor, QFont, QKeyEvent, QMouseEvent, QPainter
 from PyQt6.QtWidgets import QAbstractItemView, QListView, QStyle, QStyledItemDelegate, QStyleOptionViewItem, QWidget
 
 from ..core.models import Service
@@ -143,10 +143,31 @@ class ServiceModel(QAbstractListModel):
 
     def set_services(self, services: list[Service]) -> None:
         old = self.by_id
+        if [r.service.id for r in self.rows] == [s.id for s in services]:  # same list: keep the selection
+            for row, service in zip(self.rows, services, strict=True):
+                row.service = service
+            self.changed()
+            return
         self.beginResetModel()
         self.rows = [Row(s, old[s.id].state, old[s.id].stats) if s.id in old else Row(s) for s in services]
         self.by_id = {r.service.id: r for r in self.rows}
         self.endResetModel()
+
+    def move(self, ids: set[str], step: int) -> list[str] | None:
+        """Move these rows one place up (-1) or down (1), together; the new order, or None if they can't go."""
+        rows = [i for i, r in enumerate(self.rows) if r.service.id in ids]
+        if not rows or (step < 0 and rows[0] == 0) or (step > 0 and rows[-1] == len(self.rows) - 1):
+            return None
+        order = list(self.rows)
+        for i in rows if step < 0 else reversed(rows):
+            order[i], order[i + step] = order[i + step], order[i]
+        self.layoutAboutToBeChanged.emit()
+        where = {id(r): n for n, r in enumerate(order)}
+        old = [i for i in self.persistentIndexList() if i.isValid()]
+        self.changePersistentIndexList(old, [self.index(where[id(self.rows[i.row()])]) for i in old])
+        self.rows = order
+        self.layoutChanged.emit()
+        return [r.service.id for r in order]
 
     def changed(self, sid: str | None = None) -> None:
         if not self.rows:
@@ -286,7 +307,11 @@ class ServiceDelegate(QStyledItemDelegate):
 
 
 class ServiceList(QListView):
+    """Ctrl/Shift+click selects several; Alt+↑/↓ moves the selected services, Delete removes them."""
+
     selected = pyqtSignal(str)
+    reordered = pyqtSignal(list)  # the services' ids in their new order
+    remove_requested = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -297,6 +322,7 @@ class ServiceList(QListView):
         self.setMouseTracking(True)
         self.setUniformItemSizes(True)
         self.setVerticalScrollMode(QListView.ScrollMode.ScrollPerPixel)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         if sel := self.selectionModel():
             sel.currentChanged.connect(lambda cur, _prev: self.selected.emit(self.id_at(cur)))
         self._clock = QTimer(self)  # uptimes and "in 4m" move on once a second
@@ -310,6 +336,27 @@ class ServiceList(QListView):
     def current_id(self) -> str:
         return self.id_at(self.currentIndex())
 
+    def selected_ids(self) -> list[str]:
+        """The selected services in list order (the current one if none is selected)."""
+        sel = self.selectionModel()
+        rows = sorted(i.row() for i in sel.selectedRows()) if sel else []
+        ids = [self.rows.rows[r].service.id for r in rows if r < len(self.rows.rows)]
+        return ids or ([cur] if (cur := self.current_id()) else [])
+
+    def shift(self, step: int) -> None:
+        if (order := self.rows.move(set(self.selected_ids()), step)) is not None:
+            self.scrollTo(self.currentIndex())
+            self.reordered.emit(order)
+
+    def keyPressEvent(self, e: QKeyEvent | None) -> None:
+        if e is not None and e.modifiers() == Qt.KeyboardModifier.AltModifier \
+                and e.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+            self.shift(-1 if e.key() == Qt.Key.Key_Up else 1)
+        elif e is not None and e.key() == Qt.Key.Key_Delete and not e.modifiers():
+            self.remove_requested.emit()
+        else:
+            super().keyPressEvent(e)
+
     def select(self, sid: str) -> None:
         row = self.rows.by_id.get(sid)
         if row is not None:
@@ -318,7 +365,9 @@ class ServiceList(QListView):
     def set_services(self, services: list[Service]) -> None:
         keep = self.current_id()
         self.rows.set_services(services)
-        if keep in self.rows.by_id:
+        if keep and self.current_id() == keep:
+            pass  # the same list: the selection stays as it is
+        elif keep in self.rows.by_id:
             self.select(keep)
         elif self.rows.rows:
             self.setCurrentIndex(self.rows.index(0))
