@@ -2,6 +2,13 @@
 
 Pythonator follows [semantic versioning](https://semver.org/). Each release lists what changed for users.
 
+## 0.0.5
+
+- **Start all** and login start services in a queue: in list order, a few at a time (**Settings → Start at once**,
+  4 by default; 1 starts them one after another). The next one starts as soon as one before it is up.
+- **Settings** also sets the start order (move services up and down) and removes several services at once.
+- A first start no longer sets up pip when the project has nothing to install: the venv alone takes a second.
+
 ## 0.0.4
 
 - Own environments are made and filled in Sandbox mode on every system: on Linux and macOS the setup steps can
@@ -20,7 +27,6 @@ Pythonator follows [semantic versioning](https://semver.org/). Each release list
   pauses while you type or scroll, thins out floods smoothly (the log keeps everything) and handles progress bars
   (carriage returns) like a terminal. Scrolling big files never waits on syntax colouring.
 - Plugin panels (the AI assistant) no longer take the keyboard: a redraw keeps your typing, cursor and focus.
-- **Start all** and login start services one after another, so many services don't spike the CPU together.
 
 ## 0.0.1
 

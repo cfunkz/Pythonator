@@ -45,9 +45,11 @@ def _python_install(folder: Path, prog: str) -> list[Argv]:
     elif not venv_python(venv).is_file() or (home is not None and not home.exists()):
         steps.append([prog, "-m", "venv", "--clear", "--without-pip", str(venv)])
     py = str(venv_python(venv))
-    if steps:
-        # pip as a step of its own: venv's own ensurepip call drops PYTHONPATH, and with it the Windows sandbox's
-        # fix-ups (Python 3.13 makes private temp folders that an AppContainer can't open), so it fails there.
+    needs = (folder / "requirements.txt").is_file() or (folder / "pyproject.toml").is_file()
+    if needs and (steps or not venv_has_pip(venv)):
+        # pip only when there is something to install: making a venv is a second, setting up pip ten more on
+        # Windows. And as a step of its own: venv's own ensurepip call drops PYTHONPATH, and with it the Windows
+        # sandbox's fix-ups (Python 3.13 makes private temp folders an AppContainer can't open), so it fails there.
         steps.append([py, "-m", "ensurepip", "--upgrade", "--default-pip"])
     if (folder / "requirements.txt").is_file():
         steps.append([py, "-m", "pip", "install", "--disable-pip-version-check", "-r", "requirements.txt"])
@@ -185,6 +187,10 @@ def project_venv(folder: Path) -> Path | None:
 
 def venv_python(venv: Path) -> Path:
     return venv / ("Scripts/python.exe" if IS_WINDOWS else "bin/python")
+
+
+def venv_has_pip(venv: Path) -> bool:
+    return (venv / "Lib" / "site-packages" / "pip").is_dir() or any(venv.glob("lib/python*/site-packages/pip"))
 
 
 def venv_home(venv: Path) -> Path | None:

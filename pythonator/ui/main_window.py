@@ -153,6 +153,7 @@ class MainWindow(QMainWindow):
         self.plugins_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         tb.addWidget(self.plugins_button)
         act("System check", "What Pythonator runs on and what the sandbox enforces", self.system_check)
+        act("Settings", "Start order, how many start at once, and removing several services", self.show_settings)
         help_button = button("Help ▾", "Documentation, licensing, support and credits")
         help_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         menu = QMenu(self)
@@ -641,6 +642,13 @@ class MainWindow(QMainWindow):
         self.plugins_dialog.refresh(self.plugins)
         self.plugins_dialog.show()
         self.plugins_dialog.raise_()
+
+    def show_settings(self) -> None:
+        from .settings_dialog import SettingsDialog
+
+        dialog = SettingsDialog(self.settings, list(self.services.values()), self.client.request, self)
+        if dialog.exec():
+            self.settings = dialog.settings
 
     def system_check(self) -> None:
         def show(ok: bool, data: Any, error: str) -> None:

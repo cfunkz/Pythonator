@@ -152,6 +152,33 @@ def test_plugin_panels_render_text_as_plain_text(qtbot: Any) -> None:
     assert widget.textFormat().name == "PlainText"  # type: ignore[attr-defined]
 
 
+def test_settings_moves_and_removes_several_services(qtbot: Any, tmp_path: Path, monkeypatch: Any) -> None:
+    from PyQt6.QtWidgets import QMessageBox
+
+    from pythonator.core.models import Settings
+    from pythonator.ui.settings_dialog import SettingsDialog
+
+    services = [Service(name=n, folder=str(tmp_path), entry="a.py") for n in ("a", "b", "c", "d")]
+    sent: list[dict[str, Any]] = []
+    dlg = SettingsDialog(Settings(), services, lambda msg, *_: sent.append(msg))
+    qtbot.addWidget(dlg)
+    dlg.list.item(2).setSelected(True)  # type: ignore[union-attr]
+    dlg.list.item(3).setSelected(True)  # type: ignore[union-attr]
+    dlg.shift(-1)
+    assert [dlg.list.item(i).text() for i in range(4)] == ["a", "c", "d", "b"]  # type: ignore[union-attr]
+    dlg.at_once.setValue(2)
+    dlg.save()
+    assert any(m["op"] == "settings" and m["settings"]["start_at_once"] == 2 for m in sent)
+    assert [m["ids"] for m in sent if m["op"] == "reorder"] == [[services[i].id for i in (0, 2, 3, 1)]]
+    dlg.list.clearSelection()
+    dlg.list.item(0).setSelected(True)  # type: ignore[union-attr]
+    dlg.list.item(3).setSelected(True)  # type: ignore[union-attr]
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    dlg.remove_selected()
+    assert sorted(m["id"] for m in sent if m["op"] == "remove") == sorted([services[0].id, services[1].id])
+    assert dlg.ids() == [services[2].id, services[3].id]
+
+
 def test_plugins_dialog(qtbot: Any) -> None:
     sent: list[Any] = []
     dlg = PluginsDialog(lambda *a: sent.append(a))

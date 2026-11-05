@@ -262,6 +262,8 @@ class Daemon:
                 keep = {k: getattr(s.settings, k) for k in ("plugins_enabled", "plugin_settings", "plugin_grants",
                                                              "plugin_live")}
                 s.save_settings(settings.model_copy(update=keep))  # plugin state changes only through its ops
+            case p.Reorder(ids=ids):
+                s.reorder(list(ids))
             case p.Simple(op="start_all"):
                 s.start_all()
             case p.Simple(op="stop_all"):

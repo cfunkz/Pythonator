@@ -54,7 +54,8 @@ A request with a field it doesn't know, a missing field or a bad value is refuse
 | `remove` | `id` | Stops and removes it, with its logs and sandbox folders (not its project) |
 | `start` | `id`, `confirmed` | Starts it. A Full access service replies `"error": "confirm_full"` until sent with `"confirmed": true` once |
 | `stop`, `restart` | `id` | |
-| `start_all`, `stop_all` | | |
+| `start_all`, `stop_all` | | `start_all` queues them in list order, `start_at_once` (a setting) at a time |
+| `reorder` | `ids` | The services' order, which `start_all` and login follow |
 | `input` | `id`, `text` | Sends a line to the program's input |
 | `install` | `id` | Install packages |
 | `pull` | `id` | git pull, fast-forward only |

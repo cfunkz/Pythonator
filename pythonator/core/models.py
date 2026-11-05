@@ -132,6 +132,7 @@ class Settings(Model):
     log_max_mb: int = Field(default=10, ge=1, le=1024)
     log_backups: int = Field(default=3, ge=0, le=50)
     default_mode: Mode = Mode.SANDBOX
+    start_at_once: int = Field(default=4, ge=1, le=64)  # Start all and login: how many start together, in order
     plugins_enabled: list[str] = Field(default_factory=lambda: ["guard", "webhooks", "health"])
     plugin_settings: dict[str, dict[str, str | int | bool]] = Field(default_factory=dict)
     plugin_grants: dict[str, list[str]] = Field(default_factory=dict)  # third-party: permissions granted

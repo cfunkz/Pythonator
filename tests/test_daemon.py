@@ -162,13 +162,19 @@ def test_window_start_all_and_stop_all(harness: DaemonHarness, dirs: DataDirs, p
         window.deleteLater()
 
 
-def test_start_all_starts_services_one_after_another(harness: DaemonHarness, project: Path) -> None:
-    """Start all doesn't launch everything at once: the next one starts after the last one is up, a moment apart."""
+def test_start_all_starts_in_order_a_few_at_a_time(harness: DaemonHarness, project: Path) -> None:
+    """Start all queues the services in list order and starts "start at once" of them together; reorder changes
+    that order."""
     (project / "s.py").write_text("import time\nprint('up', flush=True)\nwhile True:\n    time.sleep(0.2)\n")
     sids = [harness.add(name=f"s{i}", folder=str(project), entry="s.py", restart="never") for i in range(3)]
+    harness.ok({"op": "reorder", "ids": [sids[2], sids[0], sids[1]]})
+    snap = harness.ok({"op": "snapshot"})
+    assert [s["id"] for s in snap["services"]] == [sids[2], sids[0], sids[1]]
+    harness.ok({"op": "settings", "settings": {**snap["settings"], "start_at_once": 1}})
     harness.ok({"op": "start_all"})
     harness.wait(lambda: all("running" in harness.states(s) for s in sids), timeout=30_000)
-    assert "waiting" in harness.states(sids[2])  # it waited its turn
+    started = [e["id"] for e in harness.events if e.get("ev") == "state" and e.get("state") == "starting"]
+    assert started[:3] == [sids[2], sids[0], sids[1]]  # one after another, in the new order
     harness.ok({"op": "stop_all"})
     harness.wait(lambda: all(harness.states(s)[-1] == "stopped" for s in sids), timeout=20_000)
 

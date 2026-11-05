@@ -38,8 +38,8 @@ from .runner import Event, Exited, Output, Runner
 log = logging.getLogger(__name__)
 Listener = Callable[[dict[str, Any]], None]
 RESTART_WINDOW = 600.0  # seconds in which max_restarts counts
-LAUNCH_GAP = 1.5  # seconds between two services started by Start all or at login: one start's CPU spike at a time
-LAUNCH_WAIT = 15.0  # the longest a slow start (its environment being made) holds back the next one
+WARMUP = 2.0  # seconds a service counts as still starting once running: imports and first connections
+LAUNCH_WAIT = 60.0  # the longest one slow start (its environment being made) holds its place in the queue
 LIVE_LIMIT = 128 * 1024  # characters of output per service per tick sent to windows; the log gets everything
 
 
@@ -51,6 +51,9 @@ class State(StrEnum):
     WAITING = "waiting"  # a restart or the next scheduled run is due later
     FAILED = "failed"
     TASK = "task"  # installing packages or pulling code
+
+
+QUEUED = "Starting in turn"  # the note of a service waiting in the start queue
 
 
 class NeedsConfirmation(Exception):
@@ -104,8 +107,7 @@ class Supervisor:
         self._pids: dict[str, int] = {}  # read by the stats thread (a copy is swapped in, never mutated)
         self._last_second = 0.0
         self._launches: list[tuple[str, bool]] = []  # services waiting their turn to start: (id, automatic)
-        self._launched = ""  # the last one started from that line
-        self._launched_at = 0.0
+        self._launching: dict[str, float] = {}  # started from the queue and still starting: id -> when
         self._stop = threading.Event()
         for service in store.load_services():
             self.slots[service.id] = Slot(service, self._new_log(service))
@@ -460,8 +462,8 @@ class Supervisor:
         self._start_in_turn(list(self.slots), auto=False)
 
     def _start_in_turn(self, sids: list[str], *, auto: bool) -> None:
-        """Start these one after another, not all at once: each start (imports, a new environment) is a burst of
-        CPU and disk, and twenty of them together stall the whole computer."""
+        """Start these in list order, a few at a time (Settings: start at once), not all together: each start
+        (imports, a new environment) is a burst of CPU and disk, and twenty at once stall the whole computer."""
         for sid in sids:
             slot = self.slots.get(sid)
             if slot is None or slot.runner or slot.task or slot.state in (State.STARTING, State.STOPPING, State.TASK):
@@ -471,25 +473,32 @@ class Supervisor:
             self._launches = [(s, a) for s, a in self._launches if s != sid]
             self._launches.append((sid, auto))
             slot.restart_at = 0.0
-            self._set(slot, State.WAITING, "", "Starting in turn")
+            self._set(slot, State.WAITING, "", QUEUED)
         self._next_launch()
 
     def _next_launch(self) -> None:
-        while self._launches:
-            now = time.monotonic()
-            last = self.slots.get(self._launched)
-            busy = last is not None and last.state in (State.STARTING, State.TASK)
-            if self._launched_at and (now - self._launched_at < LAUNCH_GAP
-                                      or (busy and now - self._launched_at < LAUNCH_WAIT)):
-                return
+        now = time.monotonic()
+        for sid, at in list(self._launching.items()):  # which of those started earlier are still starting
+            slot = self.slots.get(sid)
+            starting = slot is not None and (slot.state in (State.STARTING, State.TASK) or (
+                slot.state is State.RUNNING and now - at < WARMUP))
+            if not starting or now - at > LAUNCH_WAIT:
+                del self._launching[sid]
+        while self._launches and len(self._launching) < self.settings.start_at_once:
             sid, auto = self._launches.pop(0)
             slot = self.slots.get(sid)
-            if slot is None or slot.state is not State.WAITING or slot.note != "Starting in turn":
+            if slot is None or slot.state is not State.WAITING or slot.note != QUEUED:
                 continue  # stopped, removed or started by hand meanwhile
-            self._launched, self._launched_at = sid, now
+            self._launching[sid] = now
             with contextlib.suppress(NeedsConfirmation, ValueError, KeyError):
                 self.start(sid, auto=auto)
-            return
+
+    def reorder(self, ids: list[str]) -> None:
+        """The services' order: the list's, and the order Start all and login start them in."""
+        known = [i for i in dict.fromkeys(ids) if i in self.slots]
+        order = known + [i for i in self.slots if i not in known]
+        self.slots = {i: self.slots[i] for i in order}
+        self._services_changed()
 
     def stop_all(self) -> None:
         for sid in list(self.slots):

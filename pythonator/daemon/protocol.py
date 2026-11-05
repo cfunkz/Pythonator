@@ -97,6 +97,11 @@ class Check(Ident):
     op: Literal["check"]  # the environment check of one service
 
 
+class Reorder(Req):
+    op: Literal["reorder"]
+    ids: list[Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9-]{0,62}$")]] = Field(max_length=10_000)
+
+
 class SaveSettings(Req):
     op: Literal["settings"]
     settings: Settings
@@ -157,7 +162,7 @@ class PluginRemove(PluginOp):
 Request = Annotated[
     Hello | Add | Update | Remove | Start | Stop | Restart | Input | Install | Recreate | Pull | Tail | Clear | Watch
     | Check
-    | SaveSettings | Simple | Shutdown | PluginEnable | PluginSettings | PluginGrant | PluginAction
+    | Reorder | SaveSettings | Simple | Shutdown | PluginEnable | PluginSettings | PluginGrant | PluginAction
     | PluginProposal | PluginInstall | PluginRemove,
     Field(discriminator="op"),
 ]
