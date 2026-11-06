@@ -31,6 +31,7 @@ class Tool:
     path: str  # where it was found, "" when it wasn't
     version: str = ""  # its own words, first line
     note: str = ""  # "engine not running", "Compose v2.29"…
+    blocked: str = ""  # Windows: the install folder sandboxes can't use (installed for all users, not shared)
 
 
 def human_bytes(n: float) -> str:
@@ -158,6 +159,15 @@ def _first_line(argv: list[str], timeout: float = 4.0) -> str:
     return text.splitlines()[0][:120] if text else ""
 
 
+def _blocked(prog: str) -> str:
+    if not IS_WINDOWS:
+        return ""
+    from ..isolation import windows
+    from ..isolation.base import runtime_folders
+
+    return next((str(f) for f in runtime_folders(prog) if windows.blocked_program_folder(f)), "")
+
+
 def tools() -> tuple[list[Tool], list[Tool]]:
     """``(runtimes, container engines)`` found on PATH, with their versions. Slow (it starts each one)."""
     found: list[Tool] = []
@@ -169,7 +179,7 @@ def tools() -> tuple[list[Tool], list[Tool]]:
             found.append(Tool(rt.label, ""))
             continue
         args = VERSION_ARGS.get(rt.key, ["--version"])
-        found.append(Tool(rt.label, prog, _first_line([prog, *args])))
+        found.append(Tool(rt.label, prog, _first_line([prog, *args]), blocked=_blocked(prog)))
     engines: list[Tool] = []
     for name in ("docker", "podman"):
         prog = runtimes.which(name)

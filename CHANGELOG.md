@@ -2,6 +2,30 @@
 
 Pythonator follows [semantic versioning](https://semver.org/). Each release lists what changed for users.
 
+## 0.0.12
+
+- Plugin panels are tabs in one Plugins dock again, as in 0.0.10: no separate windows, no lock. The console redraws
+  smoothly while you resize or move the window, as before 0.0.11.
+- Panels fit their dock: a row of cards, lists or buttons (Notify's figures and filters) wraps onto the next line
+  instead of being cut off at the edge, and a wide table scrolls sideways.
+- AI answers fit their bubble again, Markdown included: no more last lines cut off, and the note under your
+  question no longer overlaps it.
+- Windows: Node.js installed for all users (C:\Program Files\nodejs) without the read entry Windows gives
+  C:\Program Files itself made sandboxed React, Nuxt and other Node services fail with "Access is denied".
+  Pythonator now says so before the start, and **System check** offers **Let sandboxes use it…**, one
+  administrator prompt that lets sandboxes read and run (never change) that folder.
+- Project builder 1.1: Discord, Telegram and WhatsApp bots in Python or Node.js (discord.py, discord.js,
+  python-telegram-bot, grammY, and a signature-checked webhook for Meta's official WhatsApp Cloud API), an Express
+  API and a Python worker, next to the web frameworks. A bot's token goes in its Environment table. The panel has
+  **↻ Refresh**, lists the projects it made and can delete one: Pythonator asks you first, in its own window, and
+  only deletes a folder it made itself.
+- Django projects use 5.2 LTS (5.2.19 or newer), Flask 3.1.3 or newer and FastAPI 0.162 or newer.
+- The CPU and RAM meter shows Pythonator's own share (this window, the background service, plugins and every
+  service) as the brighter part of each bar, with the figures in its tooltip.
+- The Plugins window keeps every plugin's page in its width: long permission texts and setting names wrap.
+- Docker Compose on Windows: the compose plugin of Docker Desktop is found again (its folder was missing from the
+  environment of Pythonator's compose check), and an old or missing Compose is named as such.
+
 ## 0.0.11
 
 - **Notify**, a new official plugin, replaces Health checks and Webhooks (your settings move over by themselves):

@@ -69,6 +69,20 @@ def _in_windows(path: Path) -> bool:
     return bool(root) and path.resolve().is_relative_to(Path(root).resolve())
 
 
+def program_folders(service: Service, argv: list[str], dirs: DataDirs) -> list[Path]:
+    """The folders the program (and for Node, node itself: npm and npx are node scripts) is installed in."""
+    programs = [argv[0]]
+    node_script = service.runtime in ("node", "bun") or Path(argv[0]).stem.lower() in ("npm", "npx")
+    if node_script and (node := runtimes.which("node")):
+        programs.append(node)
+    out: list[Path] = []
+    for prog in programs:
+        for p in runtime_folders(prog):
+            if p.exists() and not forbidden_read(p, dirs) and not _in_windows(p) and p not in out:
+                out.append(p)
+    return out
+
+
 def policy_for(service: Service, argv: list[str], dirs: DataDirs, *, task: bool) -> Policy:
     folder = Path(service.folder).resolve()
     write = task or service.sandbox.write_project
@@ -76,16 +90,10 @@ def policy_for(service: Service, argv: list[str], dirs: DataDirs, *, task: bool)
     if why:
         raise IsolationError(f"A sandboxed service can't use {why} as its folder. Pick its project folder.")
     grants = [Grant(folder, write)]
-    programs = [argv[0]]
-    if service.runtime in ("node", "bun") and (node := runtimes.which("node")):  # npm and npx are node scripts
-        programs.append(node)
-    for prog in programs:
-        for p in runtime_folders(prog):
-            if not p.exists() or forbidden_read(p, dirs) or _in_windows(p):
-                continue
-            if write and p.resolve().is_relative_to(folder):
-                continue  # the project's own .venv: setup steps write it, so it mustn't be bound read-only on top
-            grants.append(Grant(p, False))
+    for p in program_folders(service, argv, dirs):
+        if write and p.resolve().is_relative_to(folder):
+            continue  # the project's own .venv: setup steps write it, so it mustn't be bound read-only on top
+        grants.append(Grant(p, False))
     if own_env_vars(service, dirs):
         grants.append(Grant(env_cache(dirs, service), True))
     for extra in service.sandbox.folders:
@@ -129,6 +137,7 @@ def prepare(service: Service, dirs: DataDirs, *, task: list[str] | None = None, 
     if IS_WINDOWS:
         from . import windows
 
+        windows.check_program_folders(program_folders(service, argv, dirs))
         cmd = windows.wrap(argv, folder, env, policy, service.id, dirs, cmdline)
     else:
         home, tmp = private_dirs(dirs, name)

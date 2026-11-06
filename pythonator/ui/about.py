@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QHeaderView,
     QLabel,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -312,7 +313,15 @@ class SystemCheckDialog(QDialog):
         with contextlib.suppress(RuntimeError):  # closed before the versions came
             card, grid = _card()
             for tool in [*found, *engines]:
-                if tool.path:
+                if tool.blocked:
+                    _row(grid, "!", "warn", tool.name, tool.version or "found",
+                         f"sandboxed services can't run it from {tool.blocked}")
+                    share = QPushButton("Let sandboxes use it…")
+                    share.setToolTip("One administrator prompt: every sandbox may then read and run the programs in "
+                                     "this folder (never change them), as Windows allows for C:\\Program Files")
+                    share.clicked.connect(lambda _c=False, f=tool.blocked: self._share(f))
+                    grid.addWidget(share, grid.rowCount() - 1, 3)
+                elif tool.path:
                     _row(grid, "✓", "ok", tool.name, tool.version or "found", tool.note or tool.path)
                 else:
                     _row(grid, "–", "faint", tool.name, "not found on PATH")
@@ -321,6 +330,20 @@ class SystemCheckDialog(QDialog):
             self.column.replaceWidget(self.tools_card, card)
             self.tools_card.deleteLater()
             self.tools_card, self.tools_grid = card, grid
+
+    def _share(self, folder: str) -> None:
+        from ..isolation import windows
+
+        bridge = _Found(self)
+        bridge.done.connect(lambda ok, message: (QMessageBox.information if ok else QMessageBox.warning)(
+            self, "Sandboxes", str(message)))
+
+        def work() -> None:  # waits for the administrator prompt, off the window's thread
+            ok, message = windows.share_program_folder(Path(folder))
+            with contextlib.suppress(RuntimeError):
+                bridge.done.emit(ok, message)
+
+        threading.Thread(target=work, daemon=True, name="share-folder").start()
 
     def _copy(self) -> None:
         clipboard = QGuiApplication.clipboard()

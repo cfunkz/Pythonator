@@ -566,6 +566,15 @@ def plan_access(aces: list[Ace], sid: str, others: list[str], *, write: bool, fo
     if writers and not denied:
         steps.append("deny")
     return steps
+def shared_with_sandboxes(aces: list[Ace]) -> bool:
+    """Every AppContainer may read and run what is in the folder (ALL APPLICATION PACKAGES may read and execute
+    it, as Windows sets up C:\\Program Files), and no entry denies it."""
+    if any(a.kind == _ACE_DENY and a.applies and a.sid == ALL_APP_PACKAGES and a.mask & _READ_EXECUTE for a in aces):
+        return False
+    return any(a.kind == _ACE_ALLOW and a.applies and a.sid == ALL_APP_PACKAGES
+               and a.mask & _READ_EXECUTE == _READ_EXECUTE for a in aces)
+
+
 _HRESULT_ALREADY_EXISTS = 0x800700B7
 
 
@@ -911,6 +920,10 @@ if sys.platform == "win32":
                     removed.append(sid)
             return removed
 
+    def windows_shared_with_sandboxes(path: str) -> bool:
+        """Whether every sandbox may read ``path`` already (see :func:`shared_with_sandboxes`)."""
+        return shared_with_sandboxes(_Win().entries(path))
+
     def windows_probe() -> bool:
         """Run ``cmd /c exit 7`` in a throwaway AppContainer: True if it ran there and exited with 7."""
         api = _Win()
@@ -1085,6 +1098,9 @@ else:
 
     def windows_revoke(path: str, sids: Iterable[str]) -> list[str]:
         raise OSError("Windows permissions exist only on Windows")
+
+    def windows_shared_with_sandboxes(path: str) -> bool:
+        return True
 
     def windows_probe() -> bool:
         return False

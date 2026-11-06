@@ -23,8 +23,8 @@ PERMISSIONS: dict[str, str] = {
     "ui": "Show a panel in the window",
     "read_files": "Read your services' files, read-only (never .env files, keys or other secrets)",
     "propose_changes": "Suggest changes to your services' files; nothing is written until you review and apply it",
-    "create_services": "Create new services in new, empty folders from Pythonator's built-in project templates "
-                       "(each made by the framework's official tool, in the sandbox)",
+    "create_services": "Create services from Pythonator's built-in templates, in new folders, and ask you to "
+                       "delete the ones made so",
 }
 Text = Annotated[str, AfterValidator(lambda v: validate.arg(v))]
 

@@ -37,6 +37,12 @@ DANGEROUS_CAPS = frozenset({"ALL", "SYS_ADMIN", "SYS_PTRACE", "SYS_MODULE", "SYS
                             "NET_ADMIN", "DAC_READ_SEARCH", "MKNOD", "BPF", "PERFMON", "MAC_ADMIN", "MAC_OVERRIDE",
                             "AUDIT_CONTROL", "LINUX_IMMUTABLE", "SYSLOG"})
 NAMESPACES = ("network_mode", "pid", "ipc", "uts", "userns_mode", "cgroup")
+# What the engine's CLI needs from this computer's environment. On Windows it finds its Compose plugin under
+# %ProgramFiles%\Docker\cli-plugins (Docker Desktop) or %ProgramData%, so those stay; nothing else of yours does.
+KEEP = ("PATH", "PATHEXT", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "PROGRAMFILES", "PROGRAMW6432",
+        "PROGRAMFILES(X86)", "PROGRAMDATA", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP",
+        "XDG_RUNTIME_DIR", "XDG_CONFIG_HOME", "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG", "DOCKER_CERT_PATH",
+        "DOCKER_TLS_VERIFY", "CONTAINER_HOST", "CONTAINER_CONNECTION")
 EVERYWHERE = ("", "0.0.0.0", "::", "[::]")  # noqa: S104 - what to refuse, not a bind
 
 
@@ -66,9 +72,7 @@ def base(prog: str, service: Service) -> list[str]:
 def environment(service: Service) -> dict[str, str]:
     """The compose CLI's own environment: what it needs to reach the engine, and the service's variables (for
     ``${VAR}`` in the compose file). Values never go on a command line."""
-    keep = ("PATH", "SYSTEMROOT", "HOME", "USERPROFILE", "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG",
-            "XDG_RUNTIME_DIR", "TEMP", "TMP", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA")
-    env = {k: os.environ[k] for k in keep if os.environ.get(k)}
+    env = {k: os.environ[k] for k in KEEP if os.environ.get(k)}
     if service.env_file:
         env.update(read_env_file(Path(service.folder) / service.env_file))
     env.update(service.env)
@@ -172,9 +176,13 @@ def read_config(prog: str, service: Service) -> dict[str, Any]:
     except (OSError, subprocess.SubprocessError) as exc:
         raise IsolationError(f"Couldn't check the compose file: {exc}") from None
     if done.returncode != 0:
-        why = (done.stderr or done.stdout).strip().splitlines()
-        raise IsolationError("Couldn't check the compose file (Compose v2.24 or newer reads it for Pythonator): "
-                             + (why[-1][:300] if why else f"exit code {done.returncode}"))
+        lines = [line.strip() for line in (done.stderr or done.stdout).splitlines() if line.strip()]
+        why = next((line for line in lines if not line.startswith("Run '")), "") or f"exit code {done.returncode}"
+        if "unknown command" in why or "not a docker command" in why:
+            why += " (the engine has no Compose plugin: install Docker Compose 2.24 or newer)"
+        elif "unknown flag" in why:
+            why += " (Pythonator needs Docker Compose 2.24 or newer: update Docker Desktop, or the compose plugin)"
+        raise IsolationError(f"Couldn't check the compose file: {why[:400]}")
     try:
         data = json.loads(done.stdout)
     except ValueError:

@@ -60,7 +60,7 @@ plugin is imported to read it.
 | `ui` | `show` displays a panel |
 | `read_files` | `list_files` and `read_file` on a service's folder, read-only (API 2) |
 | `propose_changes` | `propose_change` opens a review window for the user (API 2) |
-| `create_services` | `project_templates` and `create_project`: a new service from a built-in template (API 4) |
+| `create_services` | `project_templates`, `create_project`, `list_projects` and `delete_project`: services from built-in templates (API 4) |
 
 Official plugins get what they declare. Third-party plugins get only what the user grants, which can be less.
 `self.permissions` holds what this run was granted, and `self.test_mode` whether it is in test mode.
@@ -112,10 +112,12 @@ An exception in any of them is reported in the plugin's Activity with its traceb
 | `list_files(id)` | `{"files": [{"path", "size"}], "hidden", "truncated", "entry"}` | `read_files` |
 | `read_file(id, path)` | `{"path", "text", "truncated", "size"}` | `read_files` |
 | `propose_change(id, path, edits, summary)` | Returns a proposal id; the answer comes as `on_proposal` | `propose_changes` |
-| `project_templates()` | `[{"key", "label", "tool", "port", "ready", "needs"}]`: what can be made on this computer | `create_services` |
+| `project_templates()` | `{"templates": [{"key", "label", "tool", "port", "kind", "ready", "needs"}], "folder"}`: what can be made on this computer | `create_services` |
 | `create_project(template, name, folder="", start=False)` | `{"id", "folder", "port"}`: the new service; it is made in its own sandbox, its progress shows in its console and as events | `create_services` |
+| `list_projects()` | `[{"id", "name", "template", "folder", "state", "port"}]`: the services made from templates | `create_services` |
+| `delete_project(id)` | Asks the user, in Pythonator's window, whether to delete that project and its folder; nothing is deleted unless they say so | `create_services` |
 
-They are safe to call from any thread. The last five wait for Pythonator's answer (15 s at most) and raise
+They are safe to call from any thread. The last seven wait for Pythonator's answer (15 s at most) and raise
 `PluginError` with the reason when refused, so call them from a thread of your own.
 
 ### Files (API 2)

@@ -169,31 +169,47 @@ def test_notify_spots_anomalies(sent: list[dict[str, Any]], tmp_path: Path) -> N
 
 
 def test_builder_only_asks_for_templates(sent: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch) -> None:
+    import time as time_
+
     builder = plugin_module("builder")
     assert builder.suggest("my-react", {"my-react", "my-react-2"}) == "my-react-3"
     plugin = builder.Builder(permissions=frozenset({"ui", "create_services"}))
     asked: list[tuple[Any, ...]] = []
+    deletions: list[str] = []
+    projects = [{"id": "abc", "name": "shop", "template": "flask", "folder": "/p/shop", "state": "stopped"}]
 
     def create(*args: Any) -> dict[str, Any]:
         asked.append(args)
         return {"folder": "/p/x", "port": 5050}
 
     monkeypatch.setattr(plugin, "project_templates", lambda: {"templates": [
-        {"key": "flask", "label": "Flask", "tool": "pip", "port": 5050, "ready": True, "needs": ""}],
-        "folder": "/p"})
+        {"key": "flask", "label": "Flask", "tool": "pip", "port": 5050, "kind": "web", "ready": True, "needs": ""},
+        {"key": "discord-js", "label": "Discord bot (Node.js)", "tool": "npm", "port": 0, "kind": "bot",
+         "ready": False, "needs": "Node.js (npm)"}], "folder": "/p"})
+    monkeypatch.setattr(plugin, "list_projects", lambda: projects)
     monkeypatch.setattr(plugin, "create_project", create)
-    plugin.on_start()
-    import time as time_
+    monkeypatch.setattr(plugin, "delete_project", deletions.append)
 
-    deadline = time_.monotonic() + 5
-    while not plugin.templates and time_.monotonic() < deadline:
-        time_.sleep(0.01)
+    def settle() -> None:
+        deadline = time_.monotonic() + 5
+        while (plugin.loading or plugin.busy) and time_.monotonic() < deadline:
+            time_.sleep(0.01)
+
+    plugin.on_start()
+    settle()
+    assert plugin.projects == projects
     plugin.on_action("create", "x")
-    assert "Choose a framework" in plugin.status[0]
+    assert "Choose a template" in plugin.status[0]
+    plugin.on_action("template", "Discord bot (Node.js)")
+    plugin.on_action("create", "bot")
+    assert "needs Node.js" in plugin.status[0] and not asked
     plugin.on_action("template", "Flask")
     plugin.on_action("create", "Bad Name")
     assert "lowercase" in plugin.status[0]
     plugin.on_action("create", "shop")
-    while plugin.busy and time_.monotonic() < deadline:
-        time_.sleep(0.01)
+    settle()
     assert asked == [("flask", "shop", "", True)]
+    plugin.on_action("delete", "nope")
+    assert "Choose a project" in plugin.status[0] and not deletions
+    plugin.on_action("delete", "shop")
+    assert deletions == ["abc"] and "confirm" in plugin.status[0]  # Pythonator asks the user; nothing else

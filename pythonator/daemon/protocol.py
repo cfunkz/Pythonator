@@ -46,6 +46,7 @@ class Update(Req):
 
 class Remove(Ident):
     op: Literal["remove"]
+    files: bool = False  # a project the Project builder made: delete its folder too
 
 
 class Start(Ident):

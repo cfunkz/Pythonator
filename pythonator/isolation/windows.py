@@ -193,6 +193,66 @@ def _forget(dirs: DataDirs, name: str) -> None:
     _write_grants(dirs, ledger)  # even when the profile was already gone
 
 
+# -- programs installed for all users ----------------------------------------------------------------------
+
+
+ALL_APP_PACKAGES = "*S-1-15-2-1"  # icacls' name for ALL APPLICATION PACKAGES
+
+
+def blocked_program_folder(folder: Path) -> bool:
+    """A program's folder that the sandbox can't use and the launcher can't share: no read access for
+    AppContainers, and not yours to change (installed for all users, such as C:\\Program Files\\nodejs set up
+    without the entry Windows gives C:\\Program Files itself)."""
+    if not IS_WINDOWS or not folder.is_dir():
+        return False
+    try:
+        if launcher.windows_shared_with_sandboxes(str(folder)):
+            return False
+    except (OSError, launcher.SandboxError):
+        return False  # can't tell: the launcher tries, and says what it couldn't do
+    return not os.access(folder, os.W_OK)
+
+
+def check_program_folders(folders: Sequence[Path]) -> None:
+    """Refuse a start that can only fail with "Access is denied", with the fix. Raises IsolationError."""
+    for folder in folders:
+        if blocked_program_folder(folder):
+            raise IsolationError(
+                f"The sandbox can't run programs from {folder}: it was installed for all users, and Windows only "
+                "lets an administrator share it with sandboxes. Fix it once: Help → System check → Let sandboxes "
+                f"use it, or in an administrator terminal: icacls \"{folder}\" "
+                f"/grant \"{ALL_APP_PACKAGES}:(OI)(CI)(RX)\" "
+                "(read and run only, as C:\\Program Files already allows). Or run this service in Container mode.")
+
+
+def share_script(folder: Path) -> str:
+    """The PowerShell that lets every sandbox read and run what is in ``folder`` (never write it)."""
+    resolved = folder.resolve()
+    if not resolved.is_dir() or any(c in str(resolved) for c in "'\"`$\n\r"):
+        raise ValueError("not a program folder")
+    path = str(resolved)
+    return "\n".join(["$ErrorActionPreference = 'Stop'",
+                      '$tool = Join-Path $env:SystemRoot "System32\\icacls.exe"',
+                      f"& $tool '{path}' /grant '{ALL_APP_PACKAGES}:(OI)(CI)(RX)' /Q | Out-Null",
+                      "exit $LASTEXITCODE"])
+
+
+def share_program_folder(folder: Path) -> tuple[bool, str]:
+    """Let sandboxes read and run ``folder``, with one UAC prompt: ``(done, message)``. Blocks (call it off the
+    GUI thread)."""
+    if not IS_WINDOWS:
+        return False, "Only needed on Windows."
+    try:
+        code = _run_elevated(share_script(folder))
+    except (OSError, ValueError) as exc:
+        return False, f"Couldn't change the permissions: {exc}"
+    if code == ERROR_CANCELLED:
+        return False, "Cancelled: Windows didn't get administrator rights."
+    if code:
+        return False, f"Windows refused the change (icacls exit code {code})."
+    return True, f"Done: sandboxed services can now run programs from {folder} (read and run only)."
+
+
 # -- Make reachable -------------------------------------------------------------------------------------
 
 

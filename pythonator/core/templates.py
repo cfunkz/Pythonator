@@ -1,11 +1,11 @@
 """New projects from each framework's official tool, as services: what the Project builder plugin can ask for.
 
 The plugin only picks a template and a name. Everything else is decided here, in Pythonator: the exact command
-(the framework's own scaffolder, pinned to a major version, or Python's venv and pip with the framework's
-documented minimal app), the new folder (which must not exist yet), and the service (Sandbox mode, this computer
-only). The scaffolder runs as a setup step in the new service's own sandbox, with the network on and write access
-to that one new folder only, like Install packages. Its packages are installed by the first Start (Own
-environment), in the same sandbox.
+(the framework's own scaffolder, pinned to a major version, or Python's venv and pip with the library's
+documented minimal app, as for the bots in :mod:`.template_files`), the new folder (which must not exist yet),
+and the service (Sandbox mode, this computer only). The scaffolder runs as a setup step in the new service's own
+sandbox, with the network on and write access to that one new folder only, like Install packages. Its packages
+are installed by the first Start (Own environment), in the same sandbox.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from typing import Any
 
 from ..paths import IS_WINDOWS
 from . import runtimes
+from . import template_files as tf
 
 NAME = re.compile(r"^[a-z][a-z0-9-]{0,39}$")  # a folder name, an npm package name and (with _) a Python module
 
@@ -72,36 +73,62 @@ class Template:
     label: str
     tool: str  # what makes it, in words
     needs: str  # the program it needs on PATH: "npm" or "python"
-    port: int
+    port: int  # 0: it serves no port (a bot that connects out)
     runtime: str
     entry: str
     args: tuple[str, ...] = ()
     requirements: str = ""  # Python: requirements.txt
-    files: dict[str, str] = field(default_factory=dict)  # Python: the documented minimal app
+    files: dict[str, str] = field(default_factory=dict)  # the documented minimal app
     command: tuple[str, ...] = ()  # node: the scaffolder, after "npm"; {name} is the project's name
+    dependencies: dict[str, str] = field(default_factory=dict)  # node without a scaffolder: package.json's
+    env: tuple[str, ...] = ()  # variables it needs, put empty in its Environment table for you to fill in
+    kind: str = "web"  # "web", "bot" or "worker", for the plugin's list
 
+
+VITE = ("--host", "127.0.0.1", "--port", "{port}", "--strictPort")
 
 TEMPLATES: dict[str, Template] = {t.key: t for t in (
     Template("react", "React (Vite)", "create-vite, Vite's official tool (npm create vite@9, React template)",
-             "npm", 5173, "node", "node_modules/vite/bin/vite.js",
-             ("--host", "127.0.0.1", "--port", "{port}", "--strictPort"),
+             "npm", 5173, "node", "node_modules/vite/bin/vite.js", VITE,
              command=("create", "vite@9", "{name}", "--", "--template", "react", "--no-interactive")),
     Template("vue", "Vue (Vite)", "create-vue, Vue's official tool (npm create vue@3, its defaults)",
-             "npm", 5173, "node", "node_modules/vite/bin/vite.js",
-             ("--host", "127.0.0.1", "--port", "{port}", "--strictPort"),
+             "npm", 5173, "node", "node_modules/vite/bin/vite.js", VITE,
              command=("create", "vue@3", "{name}", "--", "--default")),
     Template("nuxt", "Nuxt", "create-nuxt, Nuxt's official tool (npm create nuxt@4, minimal template)",
              "npm", 3000, "node", "node_modules/nuxt/bin/nuxt.mjs", ("dev", "--host", "127.0.0.1", "--port", "{port}"),
              command=("create", "nuxt@4", "{name}", "--", "--packageManager", "npm", "--gitInit=false",
                       "--no-install", "--template", "minimal")),
+    Template("express", "Express API (Node.js)", "Express 5 and its hello-world app",
+             "npm", 3000, "node", "index.js", files={"index.js": tf.EXPRESS_JS}, dependencies={"express": "^5.3.0"}),
     Template("fastapi", "FastAPI", "venv and pip with fastapi[standard], and FastAPI's first-steps app",
-             "python", 8000, "python", "main.py", requirements="fastapi[standard]>=0.115\n",
+             "python", 8000, "python", "main.py", requirements="fastapi[standard]>=0.162,<1\n",
              files={"main.py": FASTAPI_APP}),
     Template("flask", "Flask", "venv and pip with Flask, and Flask's quickstart app",
-             "python", 5050, "python", "app.py", requirements="Flask>=3.1,<4\n", files={"app.py": FLASK_APP}),
-    Template("django", "Django", "venv and pip with Django, then django-admin startproject (Django's own tool)",
+             "python", 5050, "python", "app.py", requirements="Flask>=3.1.3,<4\n", files={"app.py": FLASK_APP}),
+    Template("django", "Django", "venv and pip with Django 5.2 LTS, then django-admin startproject (Django's own tool)",
              "python", 8000, "python", "manage.py", ("runserver", "127.0.0.1:{port}"),
-             requirements="Django>=5.2,<6\n"),
+             requirements="Django>=5.2.19,<6\n"),
+    Template("discord-py", "Discord bot (Python)", "venv and pip with discord.py, and a /ping bot",
+             "python", 0, "python", "bot.py", requirements="discord.py>=2.7,<3\n", files={"bot.py": tf.DISCORD_PY},
+             env=("DISCORD_TOKEN",), kind="bot"),
+    Template("discord-js", "Discord bot (Node.js)", "discord.js 14 and a /ping bot",
+             "npm", 0, "node", "index.js", files={"index.js": tf.DISCORD_JS},
+             dependencies={"discord.js": "^14.28.1"}, env=("DISCORD_TOKEN",), kind="bot"),
+    Template("telegram-py", "Telegram bot (Python)", "venv and pip with python-telegram-bot, and an echo bot",
+             "python", 0, "python", "bot.py", requirements="python-telegram-bot>=22.8,<23\n",
+             files={"bot.py": tf.TELEGRAM_PY}, env=("TELEGRAM_TOKEN",), kind="bot"),
+    Template("telegram-js", "Telegram bot (Node.js)", "grammY and an echo bot",
+             "npm", 0, "node", "index.js", files={"index.js": tf.TELEGRAM_JS}, dependencies={"grammy": "^1.46.0"},
+             env=("TELEGRAM_TOKEN",), kind="bot"),
+    Template("whatsapp-py", "WhatsApp bot (Python)", "Flask and a webhook for Meta's WhatsApp Cloud API",
+             "python", 5060, "python", "app.py", requirements="Flask>=3.1.3,<4\n", files={"app.py": tf.WHATSAPP_PY},
+             env=("WHATSAPP_TOKEN", "WHATSAPP_VERIFY_TOKEN", "WHATSAPP_APP_SECRET"), kind="bot"),
+    Template("whatsapp-js", "WhatsApp bot (Node.js)", "Express and a webhook for Meta's WhatsApp Cloud API",
+             "npm", 3010, "node", "index.js", files={"index.js": tf.WHATSAPP_JS}, dependencies={"express": "^5.3.0"},
+             env=("WHATSAPP_TOKEN", "WHATSAPP_VERIFY_TOKEN", "WHATSAPP_APP_SECRET"), kind="bot"),
+    Template("worker-py", "Python worker", "a venv and a script that does a job every minute, and stops cleanly",
+             "python", 0, "python", "worker.py", files={"worker.py": tf.WORKER_PY}, env=("INTERVAL",),
+             kind="worker"),
 )}
 
 
@@ -110,7 +137,7 @@ def catalog() -> list[dict[str, Any]]:
     out = []
     for t in TEMPLATES.values():
         prog = _program(t)
-        out.append({"key": t.key, "label": t.label, "tool": t.tool, "port": t.port, "ready": bool(prog),
+        out.append({"key": t.key, "label": t.label, "tool": t.tool, "port": t.port, "kind": t.kind, "ready": bool(prog),
                     "needs": "" if prog else ("Node.js (npm)" if t.needs == "npm" else "Python 3")})
     return out
 
@@ -167,23 +194,25 @@ def plan(key: str, name: str, parent: Path, taken_ports: set[int]) -> Plan:
     prog = _program(t)
     if not prog:
         raise ValueError(f"{t.label} needs {'Node.js (npm)' if t.needs == 'npm' else 'Python 3'} on this computer")
-    port = free_port(t.port, taken_ports)
+    port = free_port(t.port, taken_ports) if t.port else 0
     service: dict[str, Any] = {
         "name": name, "folder": str(folder), "runtime": t.runtime, "entry": t.entry,
         "args": [a.replace("{port}", str(port)) for a in t.args], "mode": "sandbox", "own_env": True,
-        "network": {"enabled": True, "ports": [port], "expose": "local"}, "restart": "on-failure",
+        "network": {"enabled": True, "ports": [port] if port else [], "expose": "local"}, "restart": "on-failure",
+        "env": dict.fromkeys(t.env, ""),
     }
-    files: dict[str, str] = {}
+    files = {path: text.replace("{port}", str(port)) for path, text in t.files.items()}
     steps: list[list[str]] = []
     flatten = ""
-    if t.needs == "npm":
+    if t.command:  # the framework's own scaffolder makes the project
         steps.append([prog, *(a.replace("{name}", name) for a in t.command)])
         flatten = name
+    elif t.needs == "npm":  # its packages are installed by the first Start (npm install), in its sandbox
+        files["package.json"] = tf.package_json(name, t.dependencies, t.entry)
+        files[".gitignore"] = "node_modules/\n.env\n"
     else:
         files["requirements.txt"] = t.requirements
         files[".gitignore"] = GITIGNORE
-        for path, text in t.files.items():
-            files[path] = text.replace("{port}", str(port))
         steps += _python_steps(folder, prog)
         if t.key == "django":
             py = str(runtimes.venv_python(folder / ".venv"))

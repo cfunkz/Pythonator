@@ -233,9 +233,11 @@ class Daemon:
         s, pl = self.sup, self.plugins
         match req:
             case p.Add(service=service):
-                s.add(service)
+                s.add(service.model_copy(update={"made_by": None}))  # only Pythonator itself marks what it made
             case p.Update(service=service):
                 s.update(service)
+            case p.Remove(id=sid, files=True):
+                s.delete_project(sid)
             case p.Remove(id=sid):
                 s.remove(sid)
             case p.Start(id=sid, confirmed=confirmed):

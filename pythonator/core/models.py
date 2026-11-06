@@ -77,6 +77,13 @@ class GitSource(Model):
     pull_on_start: bool = False
 
 
+class MadeBy(Model):
+    """A service the Project builder made: from which template, in which new folder. Only Pythonator sets it."""
+
+    template: str = Field(pattern=r"^[a-z][a-z0-9-]{0,39}$")
+    folder: str = Field(min_length=1, max_length=4096)
+
+
 def new_id() -> str:
     return secrets.token_hex(6)
 
@@ -107,6 +114,7 @@ class Service(Model):
     git: GitSource | None = None
     schedule: Annotated[str, AfterValidator(check_schedule)] = ""  # "every 15m" or cron; empty: keep it running
     full_access_ok: bool = False  # the user confirmed Full mode for this service
+    made_by: MadeBy | None = None  # made by the Project builder: it may then delete it, folder and all
 
     @model_validator(mode="after")
     def _consistent(self) -> Service:
@@ -141,8 +149,6 @@ class Settings(Model):
     plugin_grants: dict[str, list[str]] = Field(default_factory=dict)  # third-party: permissions granted
     plugin_live: list[str] = Field(default_factory=list)  # third-party plugins taken out of test mode
     window_geometry: str = Field(default="", max_length=8192)
-    window_state: str = Field(default="", max_length=65_536)  # where the plugin panels are (QMainWindow.saveState)
-    panels_locked: bool = False  # plugin panels can't be dragged around or opened in windows of their own
 
 
 class ServiceFile(Model):

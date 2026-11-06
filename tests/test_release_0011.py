@@ -10,13 +10,24 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from PyQt6.QtCore import Qt
 
 from pythonator.core import runtimes, templates
 from pythonator.core.models import Service
 from pythonator.isolation import IsolationError, compose
 
-HAS_COMPOSE = bool(shutil.which("docker")) and subprocess.run(
-    ["docker", "compose", "version"], capture_output=True, check=False).returncode == 0
+
+def compose_version() -> tuple[int, ...]:
+    """The installed Docker Compose's version, () without one."""
+    docker = shutil.which("docker")
+    if not docker:
+        return ()
+    done = subprocess.run([docker, "compose", "version", "--short"], capture_output=True, text=True, check=False)
+    numbers = done.stdout.strip().lstrip("v").split("-")[0].split(".") if done.returncode == 0 else []
+    return tuple(int(n) for n in numbers if n.isdigit())
+
+
+HAS_COMPOSE = compose_version() >= (2, 24)  # what `compose config --no-env-resolution` needs
 
 
 def compose_service(folder: Path, **kw: Any) -> Service:
@@ -75,6 +86,15 @@ def test_compose_shell_and_unknown_steps_are_refused(tmp_path: Path) -> None:
         compose.check("/usr/bin/docker", compose_service(tmp_path, network={"enabled": False}))
 
 
+def test_compose_cli_keeps_what_it_needs_and_nothing_else(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "compose.yaml").write_text("services: {}\n")
+    monkeypatch.setenv("PROGRAMFILES", r"C:\Program Files")  # where Docker Desktop keeps the compose plugin
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "mine")
+    env = compose.environment(compose_service(tmp_path, env={"WEB_PORT": "1"}))
+    assert env["PROGRAMFILES"] == r"C:\Program Files" and env["WEB_PORT"] == "1" and env["COMPOSE_MENU"] == "false"
+    assert "AWS_SECRET_ACCESS_KEY" not in env
+
+
 def test_compose_file_must_be_in_the_folder(tmp_path: Path) -> None:
     (tmp_path / "compose.yaml").write_text("services: {}\n")
     service = compose_service(tmp_path, entry="../compose.yaml")
@@ -82,7 +102,7 @@ def test_compose_file_must_be_in_the_folder(tmp_path: Path) -> None:
         compose.compose_file(service)
 
 
-@pytest.mark.skipif(not HAS_COMPOSE, reason="docker compose isn't installed")
+@pytest.mark.skipif(not HAS_COMPOSE, reason="Docker Compose 2.24 or newer isn't installed")
 def test_compose_check_reads_the_file_as_the_engine_does(tmp_path: Path) -> None:
     (tmp_path / "compose.yaml").write_text(
         "services:\n  web:\n    image: nginx\n    ports: ['127.0.0.1:${WEB_PORT:-8080}:80']\n"
@@ -232,18 +252,19 @@ def test_system_check_says_what_the_computer_is(qtbot: Any, tmp_path: Path) -> N
 
 
 def test_markdown_shows_no_html_and_loads_nothing(qtbot: Any) -> None:
-    from PyQt6.QtCore import QUrl
+    from pythonator.ui.panels import ChatText, markdown_html
 
-    from pythonator.ui.panels import Prose
-
-    prose = Prose("# Fix\n\n**bold** <b>raw</b> ![x](file:///etc/passwd)", markdown=True)
-    qtbot.addWidget(prose)
-    text = prose.toPlainText()
-    assert "Fix" in text and "bold" in text and "**" not in text and "<b>raw</b>" in text  # HTML stays text
-    assert prose.loadResource(2, QUrl("file:///etc/passwd")) is None
-    plain = Prose("**not markdown**")
+    html = markdown_html("# Fix\n\n**bold** <b>raw</b> ![x](file:///etc/passwd) [docs](https://example.com)")
+    assert "<img" not in html and "file:///etc/passwd" not in html  # images are dropped: nothing is loaded
+    assert "&lt;b&gt;raw&lt;/b&gt;" in html and "https://example.com" in html  # HTML stays text, links stay
+    text = ChatText(markdown=True)
+    qtbot.addWidget(text)
+    text.set_text("**bold**")
+    assert "bold" in text.text() and "**" not in text.text()
+    plain = ChatText()
     qtbot.addWidget(plain)
-    assert plain.toPlainText() == "**not markdown**"
+    plain.set_text("**not markdown** <b>x</b>")
+    assert plain.text() == "**not markdown** <b>x</b>" and plain.textFormat() == Qt.TextFormat.PlainText
 
 
 def test_tables_are_updated_in_place(qtbot: Any) -> None:
@@ -263,28 +284,14 @@ def test_tables_are_updated_in_place(qtbot: Any) -> None:
     assert item is not None and item.text() == "failed"
 
 
-def test_each_plugin_panel_is_a_dock_that_can_be_a_window(qtbot: Any) -> None:
-    from PyQt6.QtCore import Qt
-    from PyQt6.QtWidgets import QDockWidget, QMainWindow
-
+def test_plugin_panels_are_tabs(qtbot: Any) -> None:
     from pythonator.sdk import ui
-    from pythonator.ui.panels import PanelDocks
+    from pythonator.ui.panels import PanelDock
 
-    window = QMainWindow()
-    qtbot.addWidget(window)
-    window.show()
-    docks = PanelDocks(window, lambda *a: None)
-    docks.update_panel("notify", "Notify", ui.panel("Notify", ui.text("ok")))
-    docks.update_panel("ai", "AI", ui.panel("AI assistant", ui.text("hi")))
-    assert docks.count() == 2 and {d.windowTitle() for d in docks.docks.values()} == {"Notify", "AI assistant"}
-    docks.show_all()
-    ai = docks.docks["ai"]
-    docks.toggle_window(ai)  # ⧉: its own window
-    qtbot.waitUntil(lambda: bool(ai.property("own_window")), timeout=3000)
-    assert ai.isFloating() and ai.windowFlags() & Qt.WindowType.WindowMinMaxButtonsHint
-    docks.toggle_window(ai)  # ⇲: back
-    assert not ai.isFloating()
-    docks.set_locked(True)
-    assert not ai.features() & QDockWidget.DockWidgetFeature.DockWidgetFloatable
-    docks.update_panel("ai", "", None)
-    assert docks.count() == 1
+    dock = PanelDock(lambda *a: None)
+    qtbot.addWidget(dock)
+    dock.update_panel("notify", "Notify", ui.panel("Notify", ui.text("ok")))
+    dock.update_panel("ai", "AI", ui.panel("AI assistant", ui.text("hi")))
+    assert dock.count() == 2 and [dock.tabText(i) for i in range(2)] == ["Notify", "AI assistant"]
+    dock.update_panel("ai", "", None)
+    assert dock.count() == 1 and "ai" not in dock.pages

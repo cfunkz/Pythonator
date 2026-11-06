@@ -75,6 +75,7 @@ class PluginsDialog(QDialog):
         ll.addWidget(install_dir)
         ll.addWidget(install_git)
         self.detail = scroll()
+        self.detail.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)  # the page fits its width
         split = QSplitter()
         split.addWidget(left)
         split.addWidget(self.detail)
@@ -175,19 +176,19 @@ class PluginsDialog(QDialog):
         layout = QVBoxLayout(box)
         checks: dict[str, QCheckBox] = {}
         for perm in p["permissions"]:
-            check = QCheckBox(PERMISSIONS.get(perm, perm))
+            row, check = _wrapped_check(PERMISSIONS.get(perm, perm))
             check.setChecked(perm in p["granted"])
             check.setEnabled(not p["official"])
             checks[perm] = check
-            layout.addWidget(check)
+            layout.addWidget(row)
         if not p["permissions"]:
             layout.addWidget(QLabel("It asks for nothing."))
         if p["official"]:
             note = QLabel("Official plugins get what they declare. They still run in a sandbox of their own.")
         else:
-            test = QCheckBox("Test mode: record what it tries to do instead of doing it")
+            test_row, test = _wrapped_check("Test mode: record what it tries to do instead of doing it")
             test.setChecked(p["test_mode"])
-            layout.addWidget(test)
+            layout.addWidget(test_row)
             apply = QPushButton("Apply")
             apply.clicked.connect(lambda: self.send({"op": "plugin_grant", "plugin": p["id"],
                                                      "permissions": [k for k, c in checks.items() if c.isChecked()],
@@ -202,6 +203,8 @@ class PluginsDialog(QDialog):
     def _settings(self, p: dict[str, Any]) -> QGroupBox:
         box = QGroupBox("Settings")
         form = QFormLayout(box)
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)  # a long label goes above its field
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         widgets: dict[str, Any] = {}
         for s in p["settings"]:
             value = p["values"].get(s["key"], s["default"])
@@ -226,7 +229,9 @@ class PluginsDialog(QDialog):
             if s.get("help"):
                 w.setToolTip(s["help"])
             widgets[s["key"]] = w
-            form.addRow(s["label"], w)
+            name = label(s["label"], plain=True, wrap=len(s["label"]) > 34)  # a long label wraps, a short doesn't
+            name.setMaximumWidth(260)
+            form.addRow(name, w)
             if s.get("help"):
                 hint = label(s["help"])
                 hint.setTextFormat(Qt.TextFormat.PlainText)
@@ -276,6 +281,20 @@ class PluginsDialog(QDialog):
         url, ok = QInputDialog.getText(self, "Install from Git", "https:// address of the plugin's repository:")
         if ok and url.strip():
             self._install(url.strip())
+
+
+def _wrapped_check(text: str) -> tuple[QWidget, QCheckBox]:
+    """A check box with a label that wraps (a QCheckBox's own text never does, so a long one widens the page)."""
+    row = QWidget()
+    line = QHBoxLayout(row)
+    line.setContentsMargins(0, 0, 0, 0)
+    check = QCheckBox()
+    words = label(text, plain=True)
+    words.setBuddy(check)
+    words.mousePressEvent = lambda _e: check.click() if check.isEnabled() else None  # type: ignore[method-assign,assignment]
+    line.addWidget(check, 0, Qt.AlignmentFlag.AlignTop)
+    line.addWidget(words, 1)
+    return row, check
 
 
 def _value(w: Any) -> str | int | bool:

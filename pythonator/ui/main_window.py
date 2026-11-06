@@ -11,6 +11,7 @@ from PyQt6.QtCore import QByteArray, QEvent, QObject, Qt, QTimer, QUrl
 from PyQt6.QtGui import QAction, QCloseEvent, QDesktopServices, QDragEnterEvent, QDropEvent, QKeySequence, QResizeEvent
 from PyQt6.QtWidgets import (
     QApplication,
+    QDockWidget,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -35,7 +36,7 @@ from .about import SITE, AboutDialog, LicensingDialog, SupportDialog, SystemChec
 from .console import Console
 from .editor import EditorPanel
 from .git_dialog import GitDialog
-from .panels import PanelDocks
+from .panels import PanelDock
 from .plugins_view import PluginsDialog
 from .proposal_dialog import ProposalDialog
 from .service_dialog import ServiceDialog
@@ -152,7 +153,8 @@ class MainWindow(QMainWindow):
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         tb.addWidget(spacer)
-        self.meter = tb.addWidget(SystemMeter())
+        self.meter_widget = SystemMeter()
+        self.meter = tb.addWidget(self.meter_widget)
         tb.addSeparator()
         self.plugins_button = button("Plugins ▾", "Turn plugins on and off, set them up, show their panels")
         self.plugins_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
@@ -296,11 +298,22 @@ class MainWindow(QMainWindow):
         main.setCollapsible(1, False)
         self.setCentralWidget(main)
 
-        self.panels = PanelDocks(self, lambda plugin, action, value: self.client.request(
+        self.panels = PanelDock(lambda plugin, action, value: self.client.request(
             {"op": "plugin_action", "plugin": plugin, "action": action, "value": value}))
-        self.panels.set_locked(self.settings.panels_locked)
+        self.dock = QDockWidget("Plugins", self)
+        self.dock.setObjectName("plugin-panels")
+        self.dock.setWidget(self.panels)
+        self.dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetMovable
+                              | QDockWidget.DockWidgetFeature.DockWidgetClosable)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock)
+        self.dock.hide()  # out of the way until asked for: the editor and console keep the width
         plugins = QMenu(self)
-        plugins.aboutToShow.connect(lambda: self._plugins_menu(plugins))
+        plugins.addAction("Manage plugins…", self.show_plugins)
+        panels = self.dock.toggleViewAction()
+        if panels is not None:
+            panels.setText("Show plugin panels")
+            plugins.addAction(panels)
+            plugins.aboutToShow.connect(lambda: panels.setEnabled(self.panels.count() > 0))
         self.plugins_button.setMenu(plugins)
 
         for keys, slot in (("F5", lambda: self._op("restart" if self._live() else "start")),
@@ -348,9 +361,6 @@ class MainWindow(QMainWindow):
                 self.editor.set_font_size(self.settings.editor_font_size)
                 if self.settings.window_geometry:
                     self.restoreGeometry(QByteArray.fromHex(self.settings.window_geometry.encode()))
-                if self.settings.window_state:  # the panels' places: each is put back when it first shows up
-                    self.restoreState(QByteArray.fromHex(self.settings.window_state.encode()))
-                self.panels.set_locked(self.settings.panels_locked)
         elif ev == "services":
             self._set_services(msg["services"])
         elif ev == "state":
@@ -360,6 +370,9 @@ class MainWindow(QMainWindow):
                 self.console.append(str(msg.get("text", "")))
         elif ev == "stats":
             items = msg.get("items", {})
+            own = (msg.get("system") or {}).get("pythonator") or {}
+            if isinstance(self.meter_widget, SystemMeter) and isinstance(own, dict):
+                self.meter_widget.set_own(float(own.get("cpu", 0) or 0), int(own.get("memory", 0) or 0))
             self.stats = dict(items)
             self.list.set_stats(items)
             self._update_header()
@@ -373,12 +386,16 @@ class MainWindow(QMainWindow):
             self.plugins_dialog.append_activity(str(msg.get("plugin")), str(msg.get("text", "")))
         elif ev == "proposal":
             self._show_proposal(msg.get("proposal"))
+        elif ev == "confirm_delete":
+            self._confirm_delete(msg)
         elif ev == "proposal_done":
             dialog = self.proposals.pop(str(msg.get("id", "")), None)
             if dialog is not None:
                 dialog.closed_elsewhere()
         elif ev == "panel":
             self.panels.update_panel(str(msg.get("plugin")), str(msg.get("name", "")), msg.get("panel"))
+            if not self.panels.count():
+                self.dock.hide()
 
     def _set_services(self, items: list[dict[str, Any]]) -> None:
         services: dict[str, Service] = {}
@@ -426,35 +443,6 @@ class MainWindow(QMainWindow):
             return
         if level == "error":
             QMessageBox.warning(self, "Pythonator", text)
-
-    def _plugins_menu(self, menu: QMenu) -> None:
-        menu.clear()
-        menu.addAction("Manage plugins…", self.show_plugins)
-        menu.addSeparator()
-        if not self.panels.count():
-            empty = menu.addAction("No plugin panels yet")
-            if empty is not None:
-                empty.setEnabled(False)
-            return
-        for dock in sorted(self.panels.docks.values(), key=lambda d: d.windowTitle().lower()):
-            toggle = dock.toggleViewAction()
-            if toggle is not None:
-                toggle.setText(dock.windowTitle() + ("  (own window)" if dock.isFloating() else ""))
-                menu.addAction(toggle)
-        menu.addSeparator()
-        menu.addAction("Show all panels, as tabs", self.panels.show_all)
-        lock = menu.addAction("Lock panel layout")
-        if lock is not None:
-            lock.setCheckable(True)
-            lock.setChecked(self.panels.locked)
-            lock.setToolTip("Panels stay where they are: no dragging, no windows of their own")
-            lock.toggled.connect(self._lock_panels)
-
-    def _lock_panels(self, locked: bool) -> None:
-        self.panels.set_locked(locked)
-        self.settings = self.settings.model_copy(update={"panels_locked": locked})
-        if self.client.ready:
-            self.client.request({"op": "settings", "settings": self.settings.model_dump(mode="json")})
 
     # -- the selected service -----------------------------------------------------------------------------
 
@@ -719,6 +707,25 @@ class MainWindow(QMainWindow):
             for service in chosen:
                 self.client.request({"op": "remove", "id": service.id})
 
+    def _confirm_delete(self, msg: dict[str, Any]) -> None:
+        """A plugin (the Project builder) asks to delete a project it made: the user decides, here."""
+        sid, name, folder = str(msg.get("id", "")), str(msg.get("name", "")), str(msg.get("folder", ""))
+        if sid not in self.services:
+            return
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Delete project")
+        box.setText(f"{msg.get('plugin') or 'A plugin'} asks to delete {name}.")
+        box.setInformativeText(f"Delete the service and its whole folder?\n\n{folder}\n\n"
+                               "Everything in it is deleted for good, your own changes too.")
+        delete = box.addButton("Delete project and folder", QMessageBox.ButtonRole.DestructiveRole)
+        only = box.addButton("Remove service, keep folder", QMessageBox.ButtonRole.ActionRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.exec()
+        if box.clickedButton() in (delete, only):
+            self.client.request({"op": "remove", "id": sid, "files": box.clickedButton() is delete},
+                                lambda ok, _d, err: None if ok else self._notice("error", err))
+
     def from_git(self) -> None:
         dialog = GitDialog(self)
         if dialog.exec() and dialog.folder is not None:
@@ -864,10 +871,8 @@ class MainWindow(QMainWindow):
     def _remember_window(self) -> None:
         if self.client.ready:
             geometry = bytes(self.saveGeometry().toHex().data()).decode()
-            state = bytes(self.saveState().toHex().data()).decode()
             self.settings = self.settings.model_copy(
-                update={"window_geometry": geometry, "window_state": state if len(state) <= 65_536 else "",
-                        "editor_font_size": self.editor.font_size, "panels_locked": self.panels.locked})
+                update={"window_geometry": geometry, "editor_font_size": self.editor.font_size})
             self.client.request({"op": "settings", "settings": self.settings.model_dump(mode="json")})
 
     def closeEvent(self, event: QCloseEvent | None) -> None:

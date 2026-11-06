@@ -55,6 +55,23 @@ If the sandbox can't be set up (an old kernel without Landlock, a locked-down ma
 AppContainers), the service shows **failed** with the reason and nothing runs. Pythonator never falls back to
 running it without the sandbox. Use Container mode, or Full access if you trust the code.
 
+### Windows: programs installed for all users
+
+A sandboxed service runs its language's program (Python, Node.js, npm...) from where it is installed, so the
+sandbox must be able to read that folder. Windows lets every sandbox read `C:\Program Files`, but some
+installers set up their folder without that entry, and only an administrator can add it. Pythonator then refuses
+the start and says so, instead of failing with *Access is denied*. **System check** marks such a runtime and
+offers **Let sandboxes use it…**: one administrator prompt that lets every sandbox read and run (never change) the
+programs in that folder, as Windows already allows for `C:\Program Files`. The same, by hand, in an administrator
+terminal:
+
+```
+icacls "C:\Program Files\nodejs" /grant "*S-1-15-2-1:(OI)(CI)(RX)"
+```
+
+A runtime installed for your user only (for example Node.js with nvm-windows or fnm, or Python from python.org
+"for me only") needs nothing: Pythonator shares it with the sandbox itself.
+
 ## Container
 
 Container mode runs the service with **Docker** or **Podman** (Podman first on Linux, as it needs no root daemon).

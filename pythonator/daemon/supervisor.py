@@ -10,6 +10,7 @@ import codecs
 import contextlib
 import json
 import logging
+import os
 import queue
 import shutil
 import stat
@@ -17,7 +18,7 @@ import sys
 import threading
 import time
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -358,7 +359,7 @@ class Supervisor:
 
     def update(self, service: Service) -> None:
         slot = self.slot(service.id)
-        slot.service = service
+        slot.service = service = service.model_copy(update={"made_by": slot.service.made_by})
         slot.log.close()
         slot.log.mask = self._new_log(service).mask
         self._services_changed()
@@ -366,7 +367,7 @@ class Supervisor:
             self.note(slot, "Saved. Restart it to use the new settings.")
         self._plan_schedule(slot)
 
-    def remove(self, sid: str) -> None:
+    def remove(self, sid: str, *, then: Callable[[], None] | None = None) -> None:
         slot = self.slot(sid)
         if slot.shell:
             slot.shell.kill()
@@ -377,12 +378,46 @@ class Supervisor:
             self._services_changed()
             with contextlib.suppress(OSError):
                 isolation.forget(slot.service, self.dirs)
+            if then is not None:
+                then()
 
         if slot.runner or slot.task:
             slot.stop_then = gone
             self.stop(sid)
         else:
             gone()
+
+    def project_folder(self, sid: str) -> Path:
+        """The folder of a project the Project builder made, if it may be deleted: still the folder it was made
+        in, a real folder (not a link), and nothing Pythonator protects. Raises ValueError."""
+        service = self.slot(sid).service
+        made = service.made_by
+        if made is None:
+            raise ValueError(f"{service.name} wasn't made by the Project builder: remove it, its folder stays")
+        folder = Path(service.folder)
+        if folder.is_symlink() or folder.is_junction() or not folder.is_dir():
+            raise ValueError(f"{folder} isn't a plain folder any more")
+        if folder.resolve() != Path(made.folder).resolve():
+            raise ValueError(f"{service.name} was moved to another folder since it was made: its folder stays")
+        if why := isolation.base.forbidden_write(folder, self.dirs):
+            raise ValueError(f"{folder} is {why}")
+        return folder
+
+    def delete_project(self, sid: str) -> None:
+        """Remove a project the Project builder made, and delete its folder (stopped first). Raises ValueError."""
+        folder = self.project_folder(sid)
+        name = self.slot(sid).service.name
+
+        def delete() -> None:
+            def work() -> None:
+                error = _delete_tree(folder)
+                self.post(lambda: self.emit({"ev": "notice", "level": "error" if error else "ok",
+                                             "text": f"{name}: couldn't delete {folder}: {error}" if error
+                                             else f"{name}: deleted, with {folder}"}))
+
+            threading.Thread(target=work, name=f"delete-{sid}", daemon=True).start()
+
+        self.remove(sid, then=delete)
 
     def start(self, sid: str, *, confirmed: bool = False, auto: bool = False) -> None:
         slot = self.slot(sid)
@@ -727,7 +762,7 @@ class Supervisor:
             raise ValueError(f"A project can't go in {why}")
         taken = {port for s in self.slots.values() for port in s.service.network.ports}
         plan = templates.plan(key, name, parent, taken)
-        service = Service.model_validate(plan.service)
+        service = Service.model_validate({**plan.service, "made_by": {"template": key, "folder": str(folder)}})
         parent.mkdir(parents=True, exist_ok=True)
         templates.write_files(folder, plan.files)
         self.add(service)
@@ -868,6 +903,8 @@ class Supervisor:
             if n % 30 == 0:  # forget processes that ended (cpu_percent needs the same object each time)
                 procs = {k: v for k, v in procs.items() if v.is_running()}
             system = _system_stats()
+            if system:
+                system["pythonator"] = _own_stats(procs, set(pids.values()), out.values())
             self.post(lambda out=out, system=system: self._on_stats(out, system))  # type: ignore[misc]
 
     def _on_stats(self, stats: dict[str, Stats], system: dict[str, Any] | None = None) -> None:
@@ -958,6 +995,26 @@ def _system_stats() -> dict[str, Any]:
                 "memory_total": mem.total, "cores": limits.cores()}
     except (psutil.Error, OSError):
         return {}
+
+
+def _own_stats(cache: dict[int, psutil.Process], services: set[int], measured: Iterable[Stats]) -> dict[str, float]:
+    """What Pythonator uses: this background service, its plugins (and anything else it started) and every
+    service's process tree, already measured in ``measured``. CPU in percent of one core, memory in bytes."""
+    cpu = sum(st.cpu for st in measured)
+    memory = sum(st.memory for st in measured)
+    try:
+        me = cache.get(os.getpid()) or cache.setdefault(os.getpid(), psutil.Process())
+        with me.oneshot():
+            cpu += me.cpu_percent(None)
+            memory += me.memory_info().rss
+        children = me.children()
+    except psutil.Error:
+        children = []
+    for child in children:
+        if child.pid not in services:
+            st = _tree_stats(child.pid, cache, ports=False)
+            cpu, memory = cpu + st.cpu, memory + st.memory
+    return {"cpu": round(cpu, 1), "memory": memory}
 
 
 def _tree_stats(pid: int, cache: dict[int, psutil.Process], *, ports: bool) -> Stats:
@@ -1053,6 +1110,16 @@ def _remove_env(path: Path, allowed: list[Path]) -> None:
         func(p)
 
     shutil.rmtree(real, onexc=retry)
+
+
+def _delete_tree(folder: Path) -> str:
+    """Delete a project folder the Project builder made: "" when done, else why not. Links inside are removed as
+    links (shutil.rmtree never follows them), so nothing outside the folder is touched."""
+    try:
+        _remove_env(folder, [folder.parent.resolve()])
+    except OSError as exc:
+        return exc.strerror or str(exc)
+    return ""
 
 
 def _shown(argv: list[str]) -> str:

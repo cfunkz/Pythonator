@@ -1,11 +1,11 @@
-# A 1-click project builder: new React, Vue, Nuxt, FastAPI, Flask or Django projects as services.
+# A 1-click project builder: web apps, APIs, bots and workers as services.
 [plugin]
 id = "builder"
 name = "Project builder"
-version = "1.0.0"
+version = "1.1.0"
 api = 4
 entry = "plugin.py"
-description = "New React, Vue, Nuxt, FastAPI, Flask or Django projects in one click, each made by the framework's official tool in a sandbox and added as a service that runs on this computer only."
+description = "New React, Vue, Nuxt, Express, FastAPI, Flask or Django apps, Discord, Telegram or WhatsApp bots and workers in one click, made by official tools in a sandbox and added as services. Deleting one asks you first."
 permissions = ["create_services", "ui"]
 author = "cfunkz <hello@routezero.tech>"
 homepage = "https://github.com/cfunkz/Pythonator/tree/main/plugins/builder"

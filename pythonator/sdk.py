@@ -260,6 +260,15 @@ class Plugin:
         return dict(_request({"op": "create", "template": template, "name": name, "folder": folder,
                               "start": start}, timeout))
 
+    def list_projects(self, timeout: float = 15.0) -> list[dict[str, Any]]:
+        """The services made from templates: ``[{"id", "name", "template", "folder", "state", "port"}]``."""
+        return list(dict(_request({"op": "projects"}, timeout)).get("projects", []))
+
+    def delete_project(self, sid: str, timeout: float = 15.0) -> None:
+        """Ask the user, in Pythonator's window, to delete a project made from a template and its folder. Nothing
+        is deleted unless the user says so there."""
+        _request({"op": "delete", "id": sid}, timeout)
+
 
 _out_lock = threading.Lock()
 _out: Any = None  # the protocol stream; set by the worker (print() goes to the plugin's log instead)

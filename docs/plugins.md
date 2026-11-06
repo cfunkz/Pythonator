@@ -30,10 +30,10 @@ before anything runs.
 | `inspect` | See ports, connections, memory and CPU of your services |
 | `control` | Start, stop and restart services |
 | `policy` | Refuse a service's start, with a reason shown to you |
-| `ui` | Show a panel of its own in the window (**Plugins ▾**): a tab, or a window of its own |
+| `ui` | Show a panel, as a tab in the window's Plugins dock |
 | `read_files` | Read a service's files through Pythonator, read-only: never `.env` files, keys, certificates or other secrets |
 | `propose_changes` | Suggest a change to a service's file. It opens a review window; only your **Apply** writes it |
-| `create_services` | Make a new project from one of Pythonator's built-in templates and add it as a service. The plugin picks the template and the name; Pythonator decides the command, the folder and the isolation (at most 10 an hour) |
+| `create_services` | Make a new project from one of Pythonator's built-in templates and add it as a service, and ask you to delete one made so. The plugin picks the template and the name; Pythonator decides the command, the folder and the isolation (at most 10 an hour) |
 
 Every plugin, whatever it is granted, can see the list of services (name, language, mode, state, ports) and write to
 its own activity log. None can read your own files, Pythonator's data, or other plugins' data, and without
@@ -78,13 +78,11 @@ fixed set of elements (text, numbers, tables, buttons, rows), at most 500, shown
 HTML, links or scripts into the window. A chat message may ask for Markdown formatting (headings, lists, code, links),
 which is shown with HTML turned off and nothing loaded: links open in your browser only when you click them.
 
-## Panels, tabs and windows
+## Plugin panels
 
-Each plugin's panel is a dock of its own. By default they share one area on the right, as tabs. Drag a tab to put
-panels side by side, or press **⧉** in a panel's title to give it a real window of its own (with minimise and
-maximise, on any screen); **⇲** brings it back. **Plugins ▾** lists every panel (tick to show or hide it), **Show
-all panels, as tabs** gathers them again, and **Lock panel layout** keeps them where they are: panels can then only
-be closed, not dragged or popped out. Pythonator remembers the layout.
+Plugins with a panel show it as a tab in the **Plugins** dock (**Plugins ▾ → Show plugin panels**), on the right of
+the window. Drag the dock's title to another side if you like. A panel is laid out for the dock's width: a row of
+cards or buttons wraps onto the next line instead of being cut off, and a wide table scrolls sideways.
 
 ## Installing a third-party plugin
 
@@ -138,29 +136,41 @@ and what it did.
 
 ### Project builder
 
-A new React, Vue, Nuxt, FastAPI, Flask or Django project in one click, added as a service that is ready to start.
-Off until you enable it.
+A new web app, API, bot or worker in one click, added as a service that is ready to start. Off until you enable it.
 
 | Template | Made by | Runs |
 | --- | --- | --- |
 | React | `npm create vite@9 <name> -- --template react` | Vite's dev server |
 | Vue | `npm create vue@3 <name> -- --default` | Vite's dev server |
 | Nuxt | `npm create nuxt@4 <name> -- --template minimal` | `nuxt dev` |
+| Express API (Node.js) | Express 5 and its hello-world app | `node index.js` |
 | FastAPI | a `.venv`, `pip install fastapi[standard]` and FastAPI's first-steps app | `python main.py` (Uvicorn) |
 | Flask | a `.venv`, `pip install Flask` and Flask's quickstart app | `python app.py` |
-| Django | a `.venv`, `pip install Django`, then `django-admin startproject` | `manage.py runserver` |
+| Django | a `.venv`, `pip install Django` (5.2 LTS), then `django-admin startproject` | `manage.py runserver` |
+| Discord bot (Python or Node.js) | discord.py or discord.js, and a bot that answers `/ping` | the bot |
+| Telegram bot (Python or Node.js) | python-telegram-bot or grammY, and an echo bot (long polling: no public address) | the bot |
+| WhatsApp bot (Python or Node.js) | Flask or Express, and a webhook for Meta's official WhatsApp Cloud API that checks each call's signature | the webhook, on this computer |
+| Python worker | a `.venv` and a script that does a job every minute and stops cleanly | `python worker.py` |
 
-Only each framework's own tool is used, pinned to a major version. The plugin can only pick a template and a name:
-Pythonator builds the command, makes a new folder (it never writes into one that exists), and runs the tool in the
-new service's own sandbox, with the network on and write access to that folder only. The service is in Sandbox
-mode, on a free port, for this computer only. Its packages are installed by the first start, in the same sandbox.
+Only each framework's own tool or the library's documented example is used, pinned to a major version. The
+plugin can only pick a template and a name: Pythonator builds the command, makes a new folder (it never writes
+into one that exists), and runs the tool in the new service's own sandbox, with the network on and write access
+to that folder only. The service is in Sandbox mode, on a free port, for this computer only. Its packages are
+installed by the first start, in the same sandbox. A bot's token variables (`DISCORD_TOKEN`, `TELEGRAM_TOKEN`,
+`WHATSAPP_TOKEN`...) are put in its Environment table, empty: fill them in under **Configure**, then Start. Until
+then the bot says what it needs and stops. A WhatsApp webhook is called by Meta over the internet: point a tunnel
+(such as cloudflared) at it.
+
+The panel lists the projects made with it. **↻ Refresh** updates the lists, and **Delete…** asks Pythonator, which
+asks you in its own window: delete the project and its folder, only remove the service, or cancel. The plugin
+itself can't delete anything, and a project whose folder was changed since it was made keeps its folder.
 
 | Setting | Meaning |
 | --- | --- |
 | Projects folder | Where new projects go; empty means `Pythonator Projects` in your home folder |
 | Start a new project once it is made | Start it straight away |
 
-Permissions: `create_services`, `ui`. React, Vue and Nuxt need Node.js (npm); the others need Python 3.
+Permissions: `create_services`, `ui`. Node.js templates need Node.js (npm); the others need Python 3.
 
 ## Writing your own
 

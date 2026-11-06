@@ -362,7 +362,7 @@ def test_plugin_chat_updates_in_place_and_follows_the_end(qtbot: Any) -> None:
     chat = dock.findChild(panels.ChatView)
     assert chat is not None and len(chat.rows) == 2  # the answer's text and code share one bubble
     first = chat.rows[1][1].widgets[0]
-    assert isinstance(first, panels.Prose) and isinstance(chat.rows[1][1].widgets[1], QPlainTextEdit)
+    assert isinstance(first, panels.ChatText) and isinstance(chat.rows[1][1].widgets[1], QPlainTextEdit)
     dock.show_panel(panel("Because the port is taken"))  # a streamed piece
     assert dock.findChild(panels.ChatView) is chat and chat.rows[1][1].widgets[0] is first
     assert first.text() == "Because the port is taken"

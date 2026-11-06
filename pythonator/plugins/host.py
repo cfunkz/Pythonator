@@ -464,7 +464,7 @@ class PluginHost:
         if len(p.requests) >= REQUESTS_PER_MINUTE:
             raise files.FileRefused(f"Too many requests: at most {REQUESTS_PER_MINUTE} a minute")
         p.requests.append(now)
-        if op in ("templates", "create"):
+        if op in ("templates", "create", "projects", "delete"):
             return self._create(p, msg, granted)
         if op not in ("list", "read", "propose"):
             raise files.FileRefused("Unknown request")
@@ -495,6 +495,13 @@ class PluginHost:
             raise files.FileRefused("Needs the create_services permission")
         if msg.get("op") == "templates":
             return {"templates": templates.catalog(), "folder": str(templates.default_parent())}
+        if msg.get("op") == "projects":
+            return {"projects": [{"id": s.service.id, "name": s.service.name, "template": s.service.made_by.template,
+                                  "folder": s.service.folder, "state": s.state.value,
+                                  "port": (s.service.network.ports or [0])[0]}
+                                 for s in self.sup.slots.values() if s.service.made_by is not None]}
+        if msg.get("op") == "delete":
+            return self._ask_delete(p, str(msg.get("id", "")))
         key, name = str(msg.get("template", "")), str(msg.get("name", ""))
         raw = str(msg.get("folder", "") or "").strip()
         try:
@@ -517,6 +524,22 @@ class PluginHost:
         p.creations.append(now)
         self._activity(p, f"Created {service.name} ({key}) in {service.folder}")
         return {"id": service.id, "folder": service.folder, "port": service.network.ports[0]}
+
+    def _ask_delete(self, p: Plugin, sid: str) -> dict[str, Any]:
+        """A plugin never deletes anything itself: Pythonator asks the user, in its own window, whether to delete
+        the project and its folder. Only projects the Project builder made, still in the folder it made."""
+        try:
+            folder = self.sup.project_folder(sid)
+        except ValueError as exc:
+            raise files.FileRefused(str(exc)) from None
+        service = self.sup.slots[sid].service
+        if self.test_mode(p):
+            self._activity(p, f"Test mode: would ask to delete {service.name} and {folder}")
+            raise files.FileRefused("Test mode: the request was only recorded in the plugin's Activity")
+        self._activity(p, f"Asks you to delete {service.name} and its folder {folder}")
+        self.sup.emit({"ev": "confirm_delete", "id": sid, "name": service.name, "folder": str(folder),
+                       "plugin": p.manifest.name})
+        return {"asked": True}
 
     def _files(self, service: Service) -> files.ServiceFiles:
         values = dict(service.env)
