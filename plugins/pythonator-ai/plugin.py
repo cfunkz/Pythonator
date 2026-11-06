@@ -53,6 +53,8 @@ class Turn:
     proposals: dict[str, str] = field(default_factory=dict)  # path -> status text
     proposal_ids: dict[str, str] = field(default_factory=dict)  # proposal id -> path
     sent: str = ""  # what was sent, in short
+    known: list[str] = field(default_factory=list)  # the service's files, as listed to the model
+    shown: dict[str, str] = field(default_factory=dict)  # path -> the text the model saw
 
 
 class Assistant(Plugin):
@@ -237,7 +239,8 @@ class Assistant(Plugin):
             turn.notes += result.notes
             if result.output_tokens:
                 turn.notes.append(f"{result.input_tokens:,} tokens in, {result.output_tokens:,} out")
-            turn.edits = context.parse_edits(turn.answer)
+            turn.edits, moved = context.resolve_paths(context.parse_edits(turn.answer), turn.known, turn.shown)
+            turn.notes += moved
             turn.status = "done"
         except providers.Cancelled:
             turn.status = "stopped"
@@ -279,6 +282,7 @@ class Assistant(Plugin):
             sent.append(f"{bundle.redacted} secret{'s' if bundle.redacted != 1 else ''} removed")
         turn.sent = " · ".join(sent)
         turn.notes += notes
+        turn.known, turn.shown = file_list, {path: text for path, text in files if path in bundle.files}
         history: list[dict[str, str]] = []
         for old in self.chats.get(sid, [])[:-1][-HISTORY_TURNS:]:
             if old.status == "done" and old.answer:
@@ -491,7 +495,8 @@ class Assistant(Plugin):
         head: list[dict[str, Any]] = [
             ui.row(ui.select("service", list(self.labels), current, "Service")),
             ui.row(ui.select("model", options, model, "Model"),
-                   ui.button("Fetching…" if self.fetching else "↻ Refresh", "models")),
+                   ui.button("Fetching the models…" if self.fetching else "Refresh the model list", "models",
+                             icon="refresh")),
             ui.text(f"{provider.label} · {self.rate.used()} of {limits.per_hour} questions this hour", "muted"),
         ]
         if why := self._blocked():
@@ -546,17 +551,20 @@ class Assistant(Plugin):
             paths = self.file_lists.get(self.selected, (0, [], ""))[1]
             tools.append(ui.select("attach", [NO_FILE, *paths[:299]], NO_FILE) if paths
                          else ui.button("Add files…", "files"))
+        tools += [*([ui.button("Stop the answer", "stop", icon="stop")] if self.call else []),
+                  ui.button("New chat", "new", icon="add"),
+                  ui.button("Unlock", "unlock") if self.locked else
+                  ui.button("Kill switch: lock the assistant, nothing is sent until you unlock it", "kill",
+                            icon="lock"),
+                  ui.button("It only answers: no commands, no writing. A suggested change opens a review window "
+                            "and only your Apply writes it. Secrets are removed before anything is sent.", "about",
+                            icon="info")]
         foot.append(ui.row(*tools))
         if attached:
-            foot.append(ui.row(ui.text("Also sent: " + ", ".join(attached), "muted"), ui.button("Clear", "detach")))
+            foot.append(ui.row(ui.text("Also sent: " + ", ".join(attached), "muted"),
+                               ui.button("Don't send these files", "detach", icon="close")))
         elif self.selected and "read_files" not in self.permissions:
             foot.append(ui.text("Only the logs are sent. Grant read_files to include the service's files.", "muted"))
-        foot += [
-            ui.row(*([ui.button("■ Stop", "stop")] if self.call else []), ui.button("New chat", "new"),
-                   ui.button("Unlock", "unlock") if self.locked else ui.button("⛔ Kill switch", "kill")),
-            ui.text("It only answers: no commands, no writing. A suggested change opens a review window and only "
-                    "your Apply writes it. Secrets are removed before anything is sent.", "muted"),
-        ]
         return foot
 
     def _turn(self, turn: Turn) -> list[dict[str, Any]]:

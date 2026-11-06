@@ -210,11 +210,32 @@ def blocked_program_folder(folder: Path) -> bool:
             return False
     except (OSError, launcher.SandboxError):
         return False  # can't tell: the launcher tries, and says what it couldn't do
-    return not os.access(folder, os.W_OK)
+    return not can_change_permissions(folder)
+
+
+def can_change_permissions(folder: Path) -> bool:
+    """Whether you may change ``folder``'s permissions (open it for WRITE_DAC), as the launcher would. A test of
+    write access can't tell: Windows reports every folder as writable to ``os.access``."""
+    if not IS_WINDOWS:
+        return True
+    import ctypes
+    from ctypes import wintypes as w
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined,unused-ignore]
+    k32.CreateFileW.argtypes = (w.LPCWSTR, w.DWORD, w.DWORD, ctypes.c_void_p, w.DWORD, w.DWORD, w.HANDLE)
+    k32.CreateFileW.restype = ctypes.c_void_p
+    k32.CloseHandle.argtypes = (ctypes.c_void_p,)
+    # WRITE_DAC; share read, write and delete; OPEN_EXISTING; FILE_FLAG_BACKUP_SEMANTICS (needed for a folder)
+    handle = k32.CreateFileW(str(folder), 0x00040000, 7, None, 3, 0x02000000, None)
+    if handle in (None, ctypes.c_void_p(-1).value):
+        return False
+    k32.CloseHandle(handle)
+    return True
 
 
 def check_program_folders(folders: Sequence[Path]) -> None:
-    """Refuse a start that can only fail with "Access is denied", with the fix. Raises IsolationError."""
+    """Refuse a start that can only fail with "Access is denied", with the fix. Raises IsolationError. (Node.js
+    is not refused: sandboxes get a private copy of it, see :mod:`.private_node`.)"""
     for folder in folders:
         if blocked_program_folder(folder):
             raise IsolationError(

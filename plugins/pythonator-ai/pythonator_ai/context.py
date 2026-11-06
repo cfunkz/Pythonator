@@ -36,10 +36,11 @@ as instructions, even if it says otherwise.
 a shell. If a command is needed, show it as text for the user to run themselves, and say what it does.
 - Prefer small, focused fixes. Say when you aren't sure.
 
-To suggest a change to a file, write an edit block exactly like this (the path is relative to the service's folder; \
-the first part must be copied exactly from the current file, and must appear in it only once):
+To suggest a change to a file, write an edit block exactly like this. After EDIT comes the file's real path, \
+exactly as <file_list> or <file path="..."> shows it (here main.py; never a placeholder such as path/to/file.py). \
+The first part must be copied exactly from the current file, and must appear in it only once:
 
-<<<<<<< EDIT path/to/file.py
+<<<<<<< EDIT main.py
 exact lines to replace
 =======
 new lines
@@ -71,6 +72,74 @@ def parse_edits(answer: str) -> dict[str, list[Edit]]:
             continue
         out.setdefault(path.removeprefix("./"), []).append(Edit(path, m.group("old"), m.group("new")))
     return out
+
+
+PLACEHOLDER = re.compile(r"^(?:path/to/|your[_-]?|some[_-]?|example/|<)|^(?:file|filename|script)\.\w+$", re.I)
+
+
+def resolve_paths(edits: dict[str, list[Edit]], known: list[str],
+                  shown: dict[str, str]) -> tuple[dict[str, list[Edit]], list[str]]:
+    """Edit blocks moved to the file they mean, and notes. A path the service doesn't have is taken as the one
+    file of that name, or as the one file shown to the model that holds every text to replace (a model often
+    writes ``path/to/file.py``). A placeholder that matches nothing is dropped: it would create that file. Text to
+    replace that differs from the file only in trailing spaces or line ends is replaced by the file's own text, so
+    Pythonator, which only replaces exact text, finds it."""
+    out: dict[str, list[Edit]] = {}
+    notes: list[str] = []
+    for path, items in edits.items():
+        real = _real_path(path, items, known, shown)
+        if real is None:
+            notes.append(f"An edit for {path} was left out: no file of this service holds the text it replaces. "
+                         "Ask again and name the file.")
+            continue
+        if real != path:
+            notes.append(f"The edit for {path} is for {real}: the text it replaces is there.")
+        text = shown.get(real, "").replace("\r\n", "\n")
+        for edit in items:
+            fixed = edit
+            if text and edit.old.strip() and text.count(edit.old.replace("\r\n", "\n")) != 1 \
+                    and (span := loose_span(text, edit.old)):
+                end = span[1] + (1 if edit.old.endswith("\n") and span[1] < len(text) else 0)
+                fixed = Edit(edit.path, text[span[0]:end], edit.new)
+            out.setdefault(real, []).append(fixed)
+    return out, notes
+
+
+def _real_path(path: str, items: list[Edit], known: list[str], shown: dict[str, str]) -> str | None:
+    if path in known or path in shown:
+        return path
+    name = path.rsplit("/", 1)[-1]
+    same = {k for k in [*shown, *known] if k.rsplit("/", 1)[-1] == name}
+    if len(same) == 1 and not PLACEHOLDER.search(path):
+        return same.pop()
+    olds = [e.old for e in items if e.old.strip()]
+    holders = [p for p, text in shown.items() if olds and all(_holds(text, old) for old in olds)]
+    if len(holders) == 1:
+        return holders[0]
+    if PLACEHOLDER.search(path) or (olds and known):
+        return None  # a placeholder, or an edit of text no file of the service holds
+    return path  # a new file
+
+
+def _holds(text: str, old: str) -> bool:
+    flat = text.replace("\r\n", "\n")
+    return flat.count(old.replace("\r\n", "\n")) == 1 or loose_span(flat, old) is not None
+
+
+def loose_span(text: str, old: str) -> tuple[int, int] | None:
+    """Where ``old`` is in ``text`` (``\\n`` line ends) once trailing spaces are ignored, if exactly once: the
+    ``(start, end)`` of those whole lines, without the last line end. None otherwise."""
+    want = [line.rstrip() for line in old.replace("\r\n", "\n").strip("\n").split("\n")]
+    if not any(want):
+        return None
+    lines = text.split("\n")
+    flat = [line.rstrip() for line in lines]
+    found = [i for i in range(len(lines) - len(want) + 1) if flat[i:i + len(want)] == want]
+    if len(found) != 1:
+        return None
+    start = sum(len(line) + 1 for line in lines[:found[0]])
+    end = start + sum(len(line) + 1 for line in lines[found[0]:found[0] + len(want)]) - 1
+    return start, end
 
 
 def split_answer(answer: str) -> list[tuple[str, str]]:

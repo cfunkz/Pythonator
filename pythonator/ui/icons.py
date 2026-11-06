@@ -22,7 +22,9 @@ from PyQt6.QtWidgets import QFileIconProvider
 
 # The file tree's buttons and icons.
 TINT = {"new": "#4f9cf9", "file": "#8b93a3", "folder": "#d29922", "collapse": "#8b93a3", "open": "#39c5cf",
-        "close": "#8b93a3"}  # the rest (the find bar's) are grey: "#8b93a3"
+        "close": "#8b93a3", "play": "#3fb950", "stop": "#f85149", "delete": "#f85149", "add": "#4f9cf9",
+        "info": "#4f9cf9", "check": "#3fb950", "lock": "#d29922", "send": "#9aa5ff", "refresh": "#39c5cf"}
+# the rest (the find bar's) are grey: "#8b93a3"
 
 # Language colours for the file tree, as most editors use them.
 LANG = {
@@ -157,12 +159,118 @@ def _replace(every: bool) -> Draw:
     return draw
 
 
+def _refresh(p: QPainter, c: QColor) -> None:
+    p.setPen(_pen(c, 1.7))
+    p.drawArc(QRectF(3, 3, 10, 10), 30 * 16, 290 * 16)
+    p.drawPolyline(QPolygonF([QPointF(13.2, 2.8), QPointF(13, 6.4), QPointF(9.6, 6)]))
+
+
+def _trash(p: QPainter, c: QColor) -> None:
+    p.setPen(_pen(c, 1.5))
+    p.drawLine(QPointF(2.5, 4.5), QPointF(13.5, 4.5))
+    p.drawPolyline(QPolygonF([QPointF(6, 4.5), QPointF(6.5, 2.5), QPointF(9.5, 2.5), QPointF(10, 4.5)]))
+    p.drawPolyline(QPolygonF([QPointF(4, 4.5), QPointF(4.8, 13.5), QPointF(11.2, 13.5), QPointF(12, 4.5)]))
+    p.drawLine(QPointF(6.8, 7), QPointF(7, 11))
+    p.drawLine(QPointF(9.2, 7), QPointF(9, 11))
+
+
+def _play(p: QPainter, c: QColor) -> None:
+    p.setPen(_pen(c, 1.4))
+    p.setBrush(c)
+    p.drawPolygon(QPolygonF([QPointF(5, 3), QPointF(13, 8), QPointF(5, 13)]))
+
+
+def _stop(p: QPainter, c: QColor) -> None:
+    p.setPen(_pen(c, 1.4))
+    p.setBrush(c)
+    p.drawRoundedRect(QRectF(4, 4, 8, 8), 1.5, 1.5)
+
+
+def _info(p: QPainter, c: QColor) -> None:
+    p.setPen(_pen(c, 1.4))
+    p.drawEllipse(QRectF(2, 2, 12, 12))
+    p.setPen(_pen(c, 1.8))
+    p.drawLine(QPointF(8, 7.3), QPointF(8, 11))
+    p.drawPoint(QPointF(8, 4.9))
+
+
+def _dots(p: QPainter, c: QColor) -> None:
+    p.setPen(_pen(c, 2.4))
+    for x in (3.5, 8, 12.5):
+        p.drawPoint(QPointF(x, 8))
+
+
+def _send(p: QPainter, c: QColor) -> None:
+    p.setPen(_pen(c, 1.5))
+    p.drawPolygon(QPolygonF([QPointF(2.5, 3), QPointF(13.5, 8), QPointF(2.5, 13), QPointF(4.5, 8)]))
+    p.drawLine(QPointF(4.5, 8), QPointF(9, 8))
+
+
+def _check(p: QPainter, c: QColor) -> None:
+    p.setPen(_pen(c, 1.9))
+    p.drawPolyline(QPolygonF([QPointF(3, 8.5), QPointF(6.5, 12), QPointF(13, 4.5)]))
+
+
+def _lock(p: QPainter, c: QColor) -> None:
+    p.setPen(_pen(c, 1.5))
+    p.drawRoundedRect(QRectF(3.5, 7, 9, 6.5), 1.2, 1.2)
+    p.drawArc(QRectF(5.5, 2.5, 5, 8), 0, 180 * 16)
+
+
+def _wrap(p: QPainter, c: QColor) -> None:
+    p.setPen(_pen(c, 1.5))
+    p.drawLine(QPointF(2.5, 4), QPointF(13.5, 4))
+    p.drawPolyline(QPolygonF([QPointF(2.5, 8), QPointF(12, 8), QPointF(12, 12), QPointF(8, 12)]))
+    p.drawPolyline(QPolygonF([QPointF(9.8, 10.2), QPointF(8, 12), QPointF(9.8, 13.8)]))
+
+
+def _follow(p: QPainter, c: QColor) -> None:
+    p.setPen(_pen(c, 1.6))
+    p.drawLine(QPointF(8, 2.5), QPointF(8, 10))
+    p.drawPolyline(QPolygonF([QPointF(4.5, 7), QPointF(8, 10.5), QPointF(11.5, 7)]))
+    p.drawLine(QPointF(3.5, 13.5), QPointF(12.5, 13.5))
+
+
+def _log(p: QPainter, c: QColor) -> None:
+    _page(p, c)
+    p.setPen(_pen(c, 1.1))
+    for y in (7.5, 9.5, 11.5):
+        p.drawLine(QPointF(5.5, y), QPointF(10.5, y))
+
+
+def _sliders(p: QPainter, c: QColor) -> None:
+    p.setPen(_pen(c, 1.4))
+    for y, x in ((4, 10), (8, 5.5), (12, 9)):
+        p.drawLine(QPointF(2.5, y), QPointF(13.5, y))
+        p.setBrush(QColor("#00000000"))
+        p.drawEllipse(QPointF(x, y), 1.7, 1.7)
+
+
+def _package(p: QPainter, c: QColor) -> None:
+    p.setPen(_pen(c, 1.4))
+    p.drawPolygon(QPolygonF([QPointF(8, 2), QPointF(13.5, 4.8), QPointF(13.5, 11.2), QPointF(8, 14),
+                             QPointF(2.5, 11.2), QPointF(2.5, 4.8)]))
+    p.drawPolyline(QPolygonF([QPointF(2.5, 4.8), QPointF(8, 7.6), QPointF(13.5, 4.8)]))
+    p.drawLine(QPointF(8, 7.6), QPointF(8, 14))
+
+
+def _save(p: QPainter, c: QColor) -> None:
+    p.setPen(_pen(c, 1.4))
+    p.drawRoundedRect(QRectF(2.5, 2.5, 11, 11), 1.5, 1.5)
+    p.drawRect(QRectF(5, 2.5, 6, 3.5))
+    p.drawRect(QRectF(4.8, 9, 6.4, 4.5))
+
+
 SHAPES: dict[str, Draw] = {
     "new": _plus, "file": _page, "folder": _folder, "collapse": _collapse, "open": _open, "close": _close,
     "case": _glyph("Aa"), "word": _glyph("ab", underline=True), "regex": _glyph(".*", size=10),
     "up": _arrow(True), "down": _arrow(False), "more": _chevron(False), "less": _chevron(True),
     "replace": _replace(False), "replace_all": _replace(True),
+    "refresh": _refresh, "delete": _trash, "play": _play, "stop": _stop, "info": _info, "dots": _dots,
+    "send": _send, "check": _check, "lock": _lock, "wrap": _wrap, "follow": _follow, "log": _log,
+    "settings": _sliders, "package": _package, "save": _save, "add": _plus,
 }
+
 
 
 def _render(shape: Draw, color: str, size: int = 16, alpha: int = 255) -> QPixmap:

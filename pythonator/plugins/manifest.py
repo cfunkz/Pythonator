@@ -10,7 +10,8 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationErr
 
 from ..core import validate
 
-API = 4  # 2: chat input, select, code; read_files, propose_changes. 3: the chat view. 4: Markdown, create_services
+API = 5  # 2: chat input, select, code; read_files, propose_changes. 3: the chat view. 4: Markdown, create_services.
+# 5: tabs (a panel's views), icon buttons, and the sizing contract (see pythonator.sdk.ui)
 MANIFEST = "plugin.toml"
 Permission = Literal["network", "read_logs", "inspect", "control", "policy", "ui", "read_files", "propose_changes",
                      "create_services"]

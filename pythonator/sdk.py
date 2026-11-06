@@ -88,10 +88,21 @@ class ServiceEvent:
     note: str = ""
 
 
+# The icons a button may show instead of its label (API 5): Pythonator draws them, a plugin sends only the name.
+ICONS = ("add", "refresh", "delete", "play", "stop", "send", "check", "info", "lock", "settings", "save", "open",
+         "close", "up", "down", "more", "dots", "log", "package")
+
+
 class ui:
     """The design system for plugin panels: plain data the window renders with native widgets.
 
     No HTML, no scripts. Text is shown as text. A panel holds at most 500 items.
+
+    Sizing is Pythonator's, never the plugin's (API 5): a panel has no sizes, fonts or colours to set, and every
+    element fits the narrowest dock (240 px). Text wraps, long words and paths included; buttons are as wide as
+    their label and end in "…" when there's no room; drop-downs take the rest of their row; a row wraps onto
+    more lines; a table scrolls sideways inside itself. So a panel looks right at any width without trying.
+    For more than one screenful, give the panel views with :meth:`tabs`, not one long page.
     """
 
     @staticmethod
@@ -112,9 +123,20 @@ class ui:
         return {"type": "table", "columns": columns, "rows": rows, "tones": tones or []}
 
     @staticmethod
-    def button(label: str, action: str, value: str = "") -> dict[str, Any]:
-        """Pressing it calls ``Plugin.on_action(action, value)``."""
-        return {"type": "button", "label": label, "action": action, "value": value}
+    def button(label: str, action: str, value: str = "", icon: str = "") -> dict[str, Any]:
+        """Pressing it calls ``Plugin.on_action(action, value)``. ``icon`` (one of :data:`ICONS`, API 5) shows a
+        small icon instead, with ``label`` as its tooltip: use it for common actions (refresh, delete, stop…) so
+        the panel keeps its room for what matters."""
+        out = {"type": "button", "label": label, "action": action, "value": value}
+        if icon:
+            out["icon"] = icon
+        return out
+
+    @staticmethod
+    def tabs(action: str, options: list[str], value: str) -> dict[str, Any]:
+        """A switch between the panel's views (2 to 6 short names, API 5): choosing one calls
+        ``on_action(action, option)``; ``value`` is the one shown. Put it first and show only that view's items."""
+        return {"type": "tabs", "action": action, "options": list(options), "value": value}
 
     @staticmethod
     def row(*items: dict[str, Any]) -> dict[str, Any]:

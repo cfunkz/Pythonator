@@ -69,11 +69,13 @@ def _in_windows(path: Path) -> bool:
     return bool(root) and path.resolve().is_relative_to(Path(root).resolve())
 
 
-def program_folders(service: Service, argv: list[str], dirs: DataDirs) -> list[Path]:
-    """The folders the program (and for Node, node itself: npm and npx are node scripts) is installed in."""
+def program_folders(service: Service, argv: list[str], dirs: DataDirs, *, with_node: bool = True) -> list[Path]:
+    """The folders the program (and for Node, node itself: npm and npx are node scripts) is installed in.
+    ``with_node`` False: the sandbox uses a private copy of Node instead of the installed one."""
     programs = [argv[0]]
-    node_script = service.runtime in ("node", "bun") or Path(argv[0]).stem.lower() in ("npm", "npx")
-    if node_script and (node := runtimes.which("node")):
+    stem = Path(argv[0]).stem.lower()
+    node_script = stem in ("npm", "npx") or (service.runtime in ("node", "bun") and stem != "node")
+    if with_node and node_script and (node := runtimes.which("node")):
         programs.append(node)
     out: list[Path] = []
     for prog in programs:
@@ -83,17 +85,21 @@ def program_folders(service: Service, argv: list[str], dirs: DataDirs) -> list[P
     return out
 
 
-def policy_for(service: Service, argv: list[str], dirs: DataDirs, *, task: bool) -> Policy:
+def policy_for(service: Service, argv: list[str], dirs: DataDirs, *, task: bool,
+               runtime: Path | None = None) -> Policy:
+    """``runtime``: a private copy of the runtime (Windows, Node.js) the sandbox reads and runs, never writes."""
     folder = Path(service.folder).resolve()
     write = task or service.sandbox.write_project
     why = forbidden_write(folder, dirs) if write else forbidden_read(folder, dirs)
     if why:
         raise IsolationError(f"A sandboxed service can't use {why} as its folder. Pick its project folder.")
     grants = [Grant(folder, write)]
-    for p in program_folders(service, argv, dirs):
+    for p in program_folders(service, argv, dirs, with_node=runtime is None):
         if write and p.resolve().is_relative_to(folder):
             continue  # the project's own .venv: setup steps write it, so it mustn't be bound read-only on top
         grants.append(Grant(p, False))
+    if runtime is not None:
+        grants.append(Grant(runtime, False))
     if own_env_vars(service, dirs):
         grants.append(Grant(env_cache(dirs, service), True))
     for extra in service.sandbox.folders:
@@ -132,27 +138,35 @@ def prepare(service: Service, dirs: DataDirs, *, task: list[str] | None = None, 
         run, env = runtimes.direct_python(argv, env)
         return Command(run, folder, env, describe="Full access: runs as you, no sandbox", shown=argv,
                        cmdline=cmdline if run is argv else None)
-    policy = policy_for(service, argv, dirs, task=task is not None)
+    shown = argv
     name = f"svc-{service.id}"
     if IS_WINDOWS:
-        from . import windows
+        from . import private_node, windows
 
-        windows.check_program_folders(program_folders(service, argv, dirs))
+        argv, env, runtime = private_node.for_sandbox(argv, env, dirs,
+                                                      node_service=service.runtime in ("node", "bun"))
+        policy = policy_for(service, argv, dirs, task=task is not None, runtime=runtime)
+        windows.check_program_folders(program_folders(service, argv, dirs, with_node=runtime is None))
         cmd = windows.wrap(argv, folder, env, policy, service.id, dirs, cmdline)
+        if runtime is not None:
+            cmd.describe = f"AppContainer, Node.js from Pythonator's private copy in {runtime}"
+        cmd.describe = f"Sandbox ({cmd.describe}): {_summary(service, policy, task is not None)}"
+        cmd.shown = shown
+        return cmd
+    policy = policy_for(service, argv, dirs, task=task is not None)
+    home, tmp = private_dirs(dirs, name)
+    if IS_MAC:
+        from . import macos
+
+        cmd = macos.wrap(argv, folder, env, policy, home, tmp)
+    elif IS_LINUX:
+        from . import linux
+
+        cmd = linux.wrap(argv, folder, env, policy, home, tmp)
     else:
-        home, tmp = private_dirs(dirs, name)
-        if IS_MAC:
-            from . import macos
-
-            cmd = macos.wrap(argv, folder, env, policy, home, tmp)
-        elif IS_LINUX:
-            from . import linux
-
-            cmd = linux.wrap(argv, folder, env, policy, home, tmp)
-        else:
-            raise IsolationError("No sandbox for this operating system; use Container mode")
+        raise IsolationError("No sandbox for this operating system; use Container mode")
     cmd.describe = f"Sandbox ({cmd.describe}): {_summary(service, policy, task is not None)}"
-    cmd.shown = argv
+    cmd.shown = shown
     return cmd
 
 

@@ -2,8 +2,8 @@
 [plugin]
 id = "builder"
 name = "Project builder"
-version = "1.1.0"
-api = 4
+version = "1.2.0"
+api = 5
 entry = "plugin.py"
 description = "New React, Vue, Nuxt, Express, FastAPI, Flask or Django apps, Discord, Telegram or WhatsApp bots and workers in one click, made by official tools in a sandbox and added as services. Deleting one asks you first."
 permissions = ["create_services", "ui"]

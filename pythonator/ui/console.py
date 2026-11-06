@@ -39,7 +39,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..core.ansi import Parser
-from . import theme
+from . import icons, theme
 
 FRAME_MS = 16  # how often waiting output is drawn: every screen frame, so it scrolls smoothly
 FLOOD_FRAME_MS = 33  # under a flood: half as often (it scrolls by too fast to tell), half the CPU
@@ -86,9 +86,15 @@ def _watch_input() -> _Input:
     return _input
 
 
-def tool(text: str, tip: str, *, checkable: bool = False) -> QToolButton:
+def tool(text: str, tip: str, *, checkable: bool = False, shape: str = "") -> QToolButton:
+    """A bar button: ``shape`` makes it a small icon, ``text`` then only its accessible name."""
     b = QToolButton()
-    b.setText(text)
+    if shape:
+        b.setIcon(icons.icon(shape))
+        b.setAccessibleName(text)
+        b.setFixedSize(28, 26)
+    else:
+        b.setText(text)
     b.setToolTip(tip)
     b.setCheckable(checkable)
     b.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -157,7 +163,7 @@ class Console(QWidget):
         bar = QWidget()
         bar.setObjectName("PanelBar")
         bl = QHBoxLayout(bar)
-        bl.setContentsMargins(12, 4, 6, 4)
+        bl.setContentsMargins(12, 2, 6, 2)
         bl.setSpacing(3)
         self.title = QLabel("Console")
         self.title.setProperty("muted", True)
@@ -171,12 +177,13 @@ class Console(QWidget):
         self.search.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.count = QLabel("")
         self.count.setProperty("muted", True)
-        prev, nxt = tool("↑", "Previous match (Shift+Enter)"), tool("↓", "Next match (Enter)")
-        self.wrap = tool("Wrap", "Wrap long lines", checkable=True)
-        self.follow = tool("Follow", "Keep scrolled to the newest output", checkable=True)
+        prev = tool("Previous", "Previous match (Shift+Enter)", shape="up")
+        nxt = tool("Next", "Next match (Enter)", shape="down")
+        self.wrap = tool("Wrap", "Wrap long lines", checkable=True, shape="wrap")
+        self.follow = tool("Follow", "Follow: keep scrolled to the newest output", checkable=True, shape="follow")
         self.follow.setChecked(True)
-        open_log = tool("Open log", "Open the full log file")
-        clear = tool("Clear", "Clear the console and the log")
+        open_log = tool("Open log", "Open the full log file", shape="log")
+        clear = tool("Clear", "Clear the console and the log", shape="delete")
         for w in (self.search, self.count, prev, nxt, self.wrap, self.follow, open_log, clear):
             bl.addWidget(w)
 

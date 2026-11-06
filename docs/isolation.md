@@ -59,14 +59,19 @@ running it without the sandbox. Use Container mode, or Full access if you trust 
 
 A sandboxed service runs its language's program (Python, Node.js, npm...) from where it is installed, so the
 sandbox must be able to read that folder. Windows lets every sandbox read `C:\Program Files`, but some
-installers set up their folder without that entry, and only an administrator can add it. Pythonator then refuses
-the start and says so, instead of failing with *Access is denied*. **System check** marks such a runtime and
-offers **Let sandboxes use it…**: one administrator prompt that lets every sandbox read and run (never change) the
-programs in that folder, as Windows already allows for `C:\Program Files`. The same, by hand, in an administrator
-terminal:
+installers, Node.js's among them, set up their folder without that entry, and only an administrator can add it.
+
+- **Node.js** needs nothing from you: Pythonator copies that folder (node.exe and npm, about 100 MB) once per
+  Node version into its own data folder, `runtimes\node-…`, and the sandbox reads and runs the copy, never writes
+  it. npm and npx run as `node.exe npm-cli.js`, without a batch file in between. **System check** says when a
+  sandbox uses the copy. A new Node version gets a new copy and the old one is removed.
+- **Anything else** (Python, Go, Java… installed for all users without that entry) is refused before the start,
+  with the fix, instead of failing with *Access is denied*. **System check** marks it and offers **Let sandboxes
+  use it…**: one administrator prompt that lets every sandbox read and run (never change) the programs in that
+  folder, as Windows already allows for `C:\Program Files`. The same, by hand, in an administrator terminal:
 
 ```
-icacls "C:\Program Files\nodejs" /grant "*S-1-15-2-1:(OI)(CI)(RX)"
+icacls "C:\Program Files\Python313" /grant "*S-1-15-2-1:(OI)(CI)(RX)"
 ```
 
 A runtime installed for your user only (for example Node.js with nvm-windows or fnm, or Python from python.org

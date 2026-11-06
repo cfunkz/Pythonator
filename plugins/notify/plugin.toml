@@ -2,8 +2,8 @@
 [plugin]
 id = "notify"
 name = "Notify"
-version = "1.0.0"
-api = 4
+version = "1.1.0"
+api = 5
 entry = "plugin.py"
 description = "One timeline and alerts for your services: crashes, blocked starts, recoveries, failing health checks and anomalies, for all services or the ones you pick. Shown in Pythonator and sent to Discord, Slack, Telegram, Teams, ntfy or any JSON endpoint."
 permissions = ["network", "read_logs", "inspect", "ui"]

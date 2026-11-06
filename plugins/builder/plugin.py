@@ -17,6 +17,7 @@ from pythonator.sdk import Plugin, PluginError, ServiceEvent, ui
 NAME = re.compile(r"^[a-z][a-z0-9-]{0,39}$")
 PICK = "Choose a template…"
 ORDER = {"web": 0, "bot": 1, "worker": 2}  # web apps and APIs first, then bots, then workers
+NEW, MADE = "New project", "Projects"  # the panel's two views
 
 
 def suggest(base: str, taken: set[str]) -> str:
@@ -38,6 +39,7 @@ class Builder(Plugin):
         self.status = ("", "")
         self.busy = False
         self.loading = False
+        self.page = NEW
         self.refresh()
 
     # -- what Pythonator has -----------------------------------------------------------------------------
@@ -66,7 +68,9 @@ class Builder(Plugin):
     # -- the panel's buttons -----------------------------------------------------------------------------
 
     def on_action(self, action: str, value: str) -> None:
-        if action == "template":
+        if action == "page":
+            self.page = MADE if value.startswith(MADE) else NEW
+        elif action == "template":
             self.chosen = value if value in self.labels() else ""
             self.status = ("", "")
         elif action == "create":
@@ -139,13 +143,21 @@ class Builder(Plugin):
     def render(self) -> None:
         if "ui" not in self.permissions:
             return
+        made = f"{MADE} ({len(self.projects)})" if self.projects else MADE
+        items: list[dict[str, object]] = [ui.tabs("page", [NEW, made], made if self.page == MADE else NEW)]
+        items += self._new() if self.page == NEW else self._made()
+        if self.status[0]:
+            items.append(ui.text(self.status[0], self.status[1]))
+        self.show(ui.panel("Project builder", *items))
+
+    def _new(self) -> list[dict[str, object]]:
         ordered = sorted(self.templates, key=lambda t: ORDER.get(str(t.get("kind")), 9))
         options = [PICK, *(str(t["label"]) for t in ordered)]
         items: list[dict[str, object]] = [
             ui.text("A new project, made by the framework's own tool and added as a service. It runs sandboxed, "
                     "on this computer only.", "muted"),
             ui.row(ui.select("template", options, self.chosen or PICK, "Template"),
-                   ui.button("↻ Refresh", "refresh")),
+                   ui.button("Refresh: look for templates and installed tools again", "refresh", icon="refresh")),
         ]
         template = self.labels().get(self.chosen)
         if template is not None:
@@ -160,23 +172,27 @@ class Builder(Plugin):
                 suggested = suggest(f"my-{template.get('key')}", {s.name for s in self.services.values()})
                 items.append(ui.input("create", f"Project name (Enter creates it in {folder})"[:200], "Create"))
                 items.append(ui.row(ui.button(f"Create {suggested}", "create", suggested)))
-        if self.status[0]:
-            items.append(ui.text(self.status[0], self.status[1]))
-        if self.projects:
-            names = [str(p.get("name", "")) for p in self.projects]
-            picked = self.picked if self.picked in names else names[0]
-            items.append(ui.table(["Project", "Template", "State", "Folder"],
-                                  [[str(p.get("name")), str(p.get("template")), str(p.get("state")),
-                                    str(p.get("folder"))] for p in self.projects[:100]],
-                                  ["ok" if p.get("state") == "running" else
-                                   "error" if p.get("state") == "failed" else "" for p in self.projects[:100]]))
-            items.append(ui.row(ui.select("project", names, picked, "Project"),
-                                ui.button("Delete…", "delete", picked)))
-        elif not self.loading:
-            items.append(ui.text("No projects made here yet.", "muted"))
         if self.templates:
             ready = sum(1 for t in self.templates if t.get("ready"))
             missing = sorted({str(t.get("needs")) for t in self.templates if not t.get("ready")})
             items.append(ui.text(f"{ready} of {len(self.templates)} templates ready on this computer"
                                  + (f"; the others need {', '.join(missing)}." if missing else "."), "muted"))
-        self.show(ui.panel("Project builder", *items))
+        return items
+
+    def _made(self) -> list[dict[str, object]]:
+        if not self.projects:
+            return [ui.text("Loading…" if self.loading else "No projects made here yet.", "muted"),
+                    ui.row(ui.button("Refresh the list", "refresh", icon="refresh"))]
+        names = [str(p.get("name", "")) for p in self.projects]
+        picked = self.picked if self.picked in names else names[0]
+        shown = self.projects[:100]
+        return [
+            ui.row(ui.select("project", names, picked, "Project"),
+                   ui.button(f"Delete {picked}… (Pythonator asks you first)", "delete", picked, icon="delete"),
+                   ui.button("Refresh the list", "refresh", icon="refresh")),
+            ui.table(["Project", "Template", "State", "Folder"],
+                     [[str(p.get("name")), str(p.get("template")), str(p.get("state")), str(p.get("folder"))]
+                      for p in shown],
+                     ["ok" if p.get("state") == "running" else "error" if p.get("state") == "failed" else ""
+                      for p in shown]),
+        ]

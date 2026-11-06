@@ -2,6 +2,29 @@
 
 Pythonator follows [semantic versioning](https://semver.org/). Each release lists what changed for users.
 
+## 0.0.13
+
+- Windows: sandboxed Node.js projects (React, Vue, Nuxt, Express, the bots…) work with Node.js installed for all
+  users in C:\Program Files\nodejs, with no administrator step. That folder doesn't let sandboxes in, and 0.0.12's
+  check for it never fired (Windows reports every folder as writable to the test it used), so the start failed
+  with "Access is denied". Sandboxes now run a private copy of Node.js that Pythonator makes once per version in
+  its own data folder, and npm runs without a batch file in between.
+- The AI assistant's changes land: when a model writes the prompt's example path (path/to/file.py) or the wrong
+  folder, the edit goes to the one file that holds the text it replaces, and a line that differs only in trailing
+  spaces still matches. An edit that matches no file is left out with a note, never created as a new file. The
+  prompt asks for the file's real path.
+- Plugin panels can't reach past the dock any more, whatever a plugin sends (plugin API 5): text and paths wrap,
+  buttons end in "…" when there's no room, drop-downs take the rest of the row, and the page is exactly as wide as
+  the dock, which is never narrower than 240 px. Plugins get views (`ui.tabs`) and icon buttons
+  (`ui.button(..., icon="refresh")`). See "Sizing" in the plugin API.
+- Notify 1.1 has two views, **Services** (figures and each service's state) and **Events** (the timeline, filters and
+  alerts). The Project builder (1.2) has **New project** and **Projects**; the AI assistant is 1.3.
+- The header is one line: the service's name, state and mode, with Start, Stop, Restart, Packages, Configure,
+  **Details (i)** and More as icons (their words in the tooltips). Details lists the process, CPU, memory, ports,
+  isolation, restart policy and folder; choosing a line copies it. It is also in the list's right-click menu.
+- More room for code and output: the editor has no bar of its own (New, Open and Save sit beside its tabs), its
+  tabs are lower, and the console's buttons are icons.
+
 ## 0.0.12
 
 - Plugin panels are tabs in one Plugins dock again, as in 0.0.10: no separate windows, no lock. The console redraws

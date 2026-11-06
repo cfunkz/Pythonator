@@ -29,7 +29,7 @@ Your code never sees Pythonator's objects, only copies of the data your permissi
 id = "my-plugin"            # required: a-z, 0-9 and -, 2 to 41 characters, starting with a letter
 name = "My plugin"          # required: shown everywhere, up to 64 characters
 version = "1.2.0"           # required: 1 to 4 numbers, optional suffix (1.2.0-beta1)
-api = 4                     # the plugin API it was written for; a newer one than Pythonator's is refused
+api = 5                     # the plugin API it was written for; a newer one than Pythonator's is refused
 entry = "plugin.py"         # the Python file, inside the plugin folder
 description = "..."         # up to 300 characters
 permissions = ["network"]   # see below
@@ -197,13 +197,30 @@ text, never as HTML.
 | `ui.text(text, tone="")` | A paragraph, up to 4000 characters |
 | `ui.stat(label, value, tone="")` | A small card with a label and a big value |
 | `ui.table(columns, rows, tones=None)` | Up to 12 columns and 500 rows; `tones` colours each row |
-| `ui.button(label, action, value="")` | A button that calls `on_action(action, value)`; `action` is letters, digits and `_.:-` |
+| `ui.button(label, action, value="", icon="")` | A button that calls `on_action(action, value)`; `action` is letters, digits and `_.:-`. With `icon` (API 5) it is a small icon with `label` as its tooltip: `add`, `refresh`, `delete`, `play`, `stop`, `send`, `check`, `info`, `lock`, `settings`, `save`, `open`, `close`, `up`, `down`, `more`, `dots`, `log` or `package` |
+| `ui.tabs(action, options, value)` | A switch between the panel's views, 2 to 6 names of up to 30 characters; choosing one calls `on_action(action, option)`. Put it first and send only that view's items (API 5) |
 | `ui.row(*items)` | Items side by side, up to 20 |
 | `ui.code(text)` | Monospaced, selectable text, up to 4000 characters (API 2) |
 | `ui.input(action, placeholder="", button="Send")` | A text box: Enter or the button calls `on_action(action, text)`, Shift+Enter is a new line; up to 16,000 characters; what the user typed survives panel updates (API 2) |
 | `ui.select(action, options, value="", label="")` | A drop-down of up to 300 options; choosing one calls `on_action(action, option)` (API 2) |
 | `ui.chat(*messages)` | A chat view that fills the panel's height and scrolls on its own, following new messages while scrolled to the end; up to 200 messages (API 3) |
 | `ui.message(role, text, code=False, markdown=False)` | One chat message: `role` is `you`, `ai`, `note` or `error`; up to 20,000 characters; messages of one role in a row share a bubble, `code=True` shows a monospaced block (API 3), and `markdown=True` formats an `ai` message as Markdown, with HTML off and nothing loaded (API 4) |
+
+### Sizing (API 5)
+
+Sizes are Pythonator's, never the plugin's: a panel can't set a width, height, font or colour, and every element is
+made to fit the narrowest Plugins dock, 240 pixels.
+
+- Text wraps to the panel's width, long words, paths and URLs included.
+- A button is as wide as its label and never wider; when there's no room its label ends in "…", with the whole
+  label in its tooltip. An icon button is always 30 × 28.
+- A drop-down takes the rest of its row; its label goes above it when the row is narrow; long options end in "…".
+- A row puts its items side by side and wraps onto more lines when they don't fit.
+- A table scrolls sideways inside itself; a long cell ends in "…" with the whole text in its tooltip.
+- The page is exactly as wide as the dock, so nothing can reach past its edge.
+
+So a panel looks right at any width without trying. Keep a panel to one screenful: more than that is a second view
+(`ui.tabs`), not a longer page. Prefer icon buttons for common actions (refresh, delete, stop) and short labels.
 
 A tone is `""`, `ok`, `warn`, `error` or `muted`. A select shows the `value` the plugin sends: after a pick it shows
 that value until the next panel, so a placeholder option makes a one-shot menu. A panel holds at most 500 items in

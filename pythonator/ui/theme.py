@@ -426,4 +426,11 @@ QLabel[muted="true"] {{ color: {c.muted}; }}
 QLabel[heading="true"] {{ font-size: {13 * POINT_SCALE:g}pt; font-weight: 700; }}
 QLabel[badge="true"] {{ border-radius: {R_SM}px; padding: 1px 7px; font-weight: 600; }}
 QFrame[card="true"] {{ background: {c.panel}; border: 1px solid {c.border}; border-radius: {R_MD}px; }}
+#EditorTabs QTabBar::tab {{ padding: 3px 8px 3px 10px; min-height: 18px; }}
+#EditorTabs QTabBar QToolButton {{ padding: 0; }}
+QToolButton[iconButton="true"] {{ padding: 2px; }}
+QPushButton[segment="true"] {{ padding: 4px 12px; border-radius: {R_SM}px; background: transparent;
+    border-color: {c.border}; color: {c.muted}; }}
+QPushButton[segment="true"]:checked {{ background: {indigo}; border-color: {rgba(c.accent, 0.55)};
+    color: {c.accent_hi}; font-weight: 600; }}
 """

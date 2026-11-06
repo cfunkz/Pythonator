@@ -28,7 +28,7 @@ from PyQt6.Qsci import (
     QsciLexerYAML,
     QsciScintilla,
 )
-from PyQt6.QtCore import QDir, QModelIndex, Qt, QUrl, pyqtSignal
+from PyQt6.QtCore import QDir, QModelIndex, QSize, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QColor, QDesktopServices, QFileSystemModel, QKeySequence, QShortcut, QWheelEvent
 from PyQt6.QtWidgets import (
     QFileDialog,
@@ -357,22 +357,17 @@ class EditorPanel(QWidget):
         self.tabs.setDocumentMode(True)
         self.tabs.tabCloseRequested.connect(self.close_tab)
         self.tabs.currentChanged.connect(lambda _i: self._cursor())
-        bar = QWidget()  # the same bar as the console's: a title and the file buttons
+        # No bar of its own: New, Open and Save sit beside the tabs, so the code gets the height. With no file
+        # open, the same buttons sit in a slim bar over the hint.
+        self.tabs.setObjectName("EditorTabs")
+        self.tabs.setCornerWidget(self._file_buttons(), Qt.Corner.TopRightCorner)
+        bar = QWidget()
         bar.setObjectName("PanelBar")
         row = QHBoxLayout(bar)
-        row.setContentsMargins(12, 4, 6, 4)
-        row.setSpacing(3)
-        self.title = label("Editor", wrap=False, muted=True)
-        row.addWidget(self.title, 1)
-        self.save_button = QToolButton()
-        for text, tip, slot in (("New", "New file in the service's folder", self.files.new_file),
-                                ("Open…", "Open a file", self.open_dialog), ("Save", "Save (Ctrl+S)", self.save)):
-            b = self.save_button if text == "Save" else QToolButton()
-            b.setText(text)
-            b.setToolTip(tip)
-            b.setCursor(Qt.CursorShape.PointingHandCursor)
-            b.clicked.connect(lambda _c=False, f=slot: f())
-            row.addWidget(b)
+        row.setContentsMargins(12, 2, 6, 2)
+        row.addWidget(label("Editor", wrap=False, muted=True), 1)
+        row.addWidget(self._file_buttons(save=False))
+        self.bar = bar
         self.empty = label("Open a file from the tree under the services.\n"
                            "Ctrl+S saves · Ctrl+F finds · Ctrl+H replaces · Ctrl+click adds a caret · Ctrl+ +/− zooms\n"
                            "Shift+wheel scrolls a page · Ctrl+End jumps to the end")
@@ -513,9 +508,30 @@ class EditorPanel(QWidget):
             self.findbar.open()
         self.findbar.step(forward=forward)
 
+    def _file_buttons(self, *, save: bool = True) -> QWidget:
+        box = QWidget()
+        row = QHBoxLayout(box)
+        row.setContentsMargins(0, 0, 4, 0)
+        row.setSpacing(2)
+        actions = [("add", "New file in the service's folder", self.files.new_file),
+                   ("open", "Open a file…", self.open_dialog)]
+        if save:
+            actions.append(("save", "Save (Ctrl+S)", self.save))
+        for name, tip, slot in actions:
+            b = QToolButton()
+            b.setIcon(icon(name))
+            b.setToolTip(tip)
+            b.setAutoRaise(True)
+            b.setIconSize(QSize(15, 15))
+            b.setFixedSize(28, 24)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.clicked.connect(lambda _c=False, f=slot: f())
+            row.addWidget(b)
+        return box
+
     def _sync_empty(self) -> None:
         has = self.tabs.count() > 0
         self.tabs.setVisible(has)
+        self.bar.setVisible(not has)
         self.empty.setVisible(not has)
-        self.save_button.setEnabled(has)
         self._cursor()

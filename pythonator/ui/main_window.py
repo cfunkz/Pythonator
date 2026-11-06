@@ -7,7 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from PyQt6.QtCore import QByteArray, QEvent, QObject, Qt, QTimer, QUrl
+from PyQt6.QtCore import QByteArray, QSize, Qt, QTimer, QUrl
 from PyQt6.QtGui import QAction, QCloseEvent, QDesktopServices, QDragEnterEvent, QDropEvent, QKeySequence, QResizeEvent
 from PyQt6.QtWidgets import (
     QApplication,
@@ -31,7 +31,7 @@ from ..core import runtimes
 from ..core.models import Mode, Service, Settings
 from ..daemon.client import DaemonClient
 from ..paths import IS_WINDOWS, DataDirs
-from . import theme
+from . import icons, theme
 from .about import SITE, AboutDialog, LicensingDialog, SupportDialog, SystemCheckDialog
 from .console import Console
 from .editor import EditorPanel
@@ -43,7 +43,6 @@ from .service_dialog import ServiceDialog
 from .service_list import MODE_LABEL, ServiceList, entry_text, human_bytes, status_text
 from .system_meter import SystemMeter
 
-HEADER_TITLE_ROOM = 380  # px the name and info line keep before the header buttons shrink to symbols
 MODE_TIPS = {
     "sandbox": "Sandbox: it can change only its own folder; your other files, keys and Pythonator's data are out "
                "of reach.",
@@ -75,6 +74,10 @@ class Elided(QLabel):
     def _elide(self) -> None:
         self.setText(self.fontMetrics().elidedText(self.full, Qt.TextElideMode.ElideRight, max(0, self.width() - 2)))
 
+    def sizeHint(self) -> QSize:
+        """As wide as the whole text: a layout gives it that room when there is some, and less when not."""
+        return QSize(self.fontMetrics().horizontalAdvance(self.full) + 6, super().sizeHint().height())
+
 
 def button(text: str, tip: str, *, prop: str = "") -> QToolButton:
     b = QToolButton()
@@ -87,12 +90,20 @@ def button(text: str, tip: str, *, prop: str = "") -> QToolButton:
     return b
 
 
-def short(text: str) -> str:
-    """ "▶ Start" -> "▶" for a narrow window; the tooltip keeps the words."""
-    head, _, rest = text.partition(" ")
-    if rest and len(head) == 1 and not head.isalnum():
-        return head
-    return {"Packages ▾": "Pkgs ▾", "Compose ▾": "Comp ▾"}.get(text, text)
+def icon_tool(name: str, tip: str, *, prop: str = "") -> QToolButton:
+    """A header button: an icon, with what it does in its tooltip, so the editor and console keep the room."""
+    b = QToolButton()
+    b.setIcon(icons.icon(name))
+    b.setIconSize(QSize(16, 16))
+    b.setToolTip(tip)
+    b.setAccessibleName(tip.split(" (", maxsplit=1)[0])
+    b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+    b.setCursor(Qt.CursorShape.PointingHandCursor)
+    b.setAutoRaise(True)
+    b.setFixedSize(32, 30)
+    if prop:
+        b.setProperty(prop, True)
+    return b
 
 
 class MainWindow(QMainWindow):
@@ -223,55 +234,46 @@ class MainWindow(QMainWindow):
         header = QWidget()
         header.setObjectName("Header")
         hl = QHBoxLayout(header)
-        hl.setContentsMargins(16, 8, 12, 8)
-        hl.setSpacing(6)
-        titles = QVBoxLayout()
-        titles.setSpacing(3)
-        name_row = QHBoxLayout()
-        name_row.setSpacing(8)
+        hl.setContentsMargins(16, 6, 10, 6)
+        hl.setSpacing(8)
         self.h_name = Elided("HeaderTitle")
         self.h_name.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        self.h_name.setMaximumWidth(360)
         self.h_state = QLabel()
         self.h_state.setFixedSize(20, 20)
         self.h_mode = QLabel()
         self.h_mode.setFixedSize(22, 20)
         self.h_mode.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        name_row.addWidget(self.h_name, 1)
-        name_row.addWidget(self.h_state)
-        name_row.addWidget(self.h_mode)
-        titles.addLayout(name_row)
-        self.h_info = Elided("HeaderInfo")
-        titles.addWidget(self.h_info)
-        hl.addLayout(titles, 1)
-        hl.addSpacing(12)
-        self.b_open = button("↗ Open", "Open this server in your browser")
-        self.b_start = button("▶ Start", "Start (F5)", prop="accent")
-        self.b_stop = button("■ Stop", "Stop gracefully; press again to kill (Shift+F5)")
-        self.b_restart = button("↻ Restart", "Restart (Ctrl+R)")
-        self.b_packages = button("Packages ▾", "Install packages, recreate the environment, or pull from Git")
-        self.b_configure = button("⚙ Configure", "Edit this service (Ctrl+E)")
-        self.b_more = button("⋯", "More actions")
-        self.b_packages.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        packages = QMenu(self)
-        packages.aboutToShow.connect(lambda: self._packages_menu(packages))
-        self.b_packages.setMenu(packages)
-        self.b_more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        more = QMenu(self)
-        more.aboutToShow.connect(lambda: self._service_menu(more))
-        self.b_more.setMenu(more)
+        self.h_info = Elided("HeaderInfo")  # one short line; the rest is in Details (i)
+        hl.addWidget(self.h_state)
+        hl.addWidget(self.h_name)
+        hl.addWidget(self.h_mode)
+        hl.addWidget(self.h_info, 1)
+        self.b_open = icon_tool("open", "Open this server in your browser")
+        self.b_start = icon_tool("play", "Start (F5)", prop="accent")
+        self.b_stop = icon_tool("stop", "Stop gracefully; press again to kill (Shift+F5)")
+        self.b_restart = icon_tool("refresh", "Restart (Ctrl+R)")
+        self.b_packages = icon_tool("package", "Packages: install them, recreate the environment, or pull from Git")
+        self.b_configure = icon_tool("settings", "Configure this service (Ctrl+E)")
+        self.b_info = icon_tool("info", "Details: process, resources, ports, folder, isolation (also on right-click "
+                                        "in the list)")
+        self.b_more = icon_tool("dots", "More actions")
+        for b, fill in ((self.b_packages, self._packages_menu), (self.b_info, self._details_menu),
+                        (self.b_more, self._service_menu)):
+            b.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+            menu = QMenu(self)
+            menu.aboutToShow.connect(lambda m=menu, f=fill: f(m))
+            b.setMenu(menu)
         self.b_open.clicked.connect(self.open_in_browser)
         self.b_start.clicked.connect(lambda: self._op("start"))
         self.b_stop.clicked.connect(lambda: self._op("stop"))
         self.b_restart.clicked.connect(lambda: self._op("restart"))
         self.b_configure.clicked.connect(self.edit_service)
         self.buttons = (self.b_open, self.b_start, self.b_stop, self.b_restart, self.b_packages, self.b_configure,
-                        self.b_more)
-        self.labels = {b: b.text() for b in self.buttons}
-        self.compact = False
+                        self.b_info, self.b_more)
         for b in self.buttons:
             hl.addWidget(b)
         self.header = header
-        header.installEventFilter(self)
 
         self.console = Console(self.settings.console_lines)
         self.console.submitted.connect(self._send_input)
@@ -492,40 +494,70 @@ class MainWindow(QMainWindow):
             self.h_state.hide()
             self.h_mode.hide()
             self.h_info.set("" if self.services else "Create a service to run a script, web server or bot.")
-            self._fit_header()
             return
-        st = self.states.get(service.id, {})
         state = self._state()
         self.h_name.set(service.name)
         self._header_icons(service, state)
         rt = runtimes.RUNTIMES.get(service.runtime)
         row = self.list.row(service.id)
-        parts = [status_text(row) if row else state.capitalize(),
-                 f"{rt.label if rt else 'Command'} · {entry_text(service)}"]
         live = self.stats.get(service.id, {})
-        if state in ("running", "stopping"):
-            if st.get("pid"):
-                parts.append(f"pid {st['pid']}")
-            if live:
-                parts.append(f"CPU {float(live.get('cpu', 0)):.1f}%"
-                             + (f" / {service.cpu_percent}%" if service.cpu_percent else ""))
-                parts.append(f"RAM {human_bytes(float(live.get('memory', 0)))}"
-                             + (f" / {service.memory_mb} MB" if service.memory_mb else ""))
-                if int(live.get("processes", 0)) > 1:
-                    parts.append(f"{live['processes']} processes")
-                if live.get("ports"):
-                    parts.append("listening on " + ", ".join(map(str, live["ports"])))
-        if st.get("restarts"):
-            parts.append(f"{st['restarts']} restarts")
-        if st.get("note"):
-            parts.append(str(st["note"]))
-        parts.append(f"restart: {service.restart.value}")
-        self.h_info.set("  ·  ".join(parts))
+        short = [status_text(row) if row else state.capitalize(), rt.label if rt else "Command"]
+        if state in ("running", "stopping") and live:
+            short.append(f"{float(live.get('cpu', 0)):.0f}% · {human_bytes(float(live.get('memory', 0)))}")
+        self.h_info.set("  ·  ".join(short))
+        self.h_info.setToolTip("\n".join(f"{k}: {v}" for k, v in self.details(service)))
         self.b_start.setEnabled(state not in theme.LIVE)
         self.b_stop.setEnabled(state in (*theme.LIVE, "waiting"))
-        self._label(self.b_stop, "✖ Kill" if state == "stopping" else "■ Stop")
-        self._label(self.b_packages, "Compose ▾" if service.runtime == runtimes.COMPOSE else "Packages ▾")
-        self._fit_header()
+        theme.set_tooltip(self.b_stop, "Kill it now (it is still stopping)" if state == "stopping" else
+                          "Stop gracefully; press again to kill (Shift+F5)")
+        theme.set_tooltip(self.b_packages, "Compose: pull, build, recreate" if service.runtime == runtimes.COMPOSE
+                          else "Packages: install them, recreate the environment, or pull from Git")
+
+    def details(self, service: Service) -> list[tuple[str, str]]:
+        """Everything about a service at a glance, for Details (i) and its tooltip."""
+        st = self.states.get(service.id, {})
+        live = self.stats.get(service.id, {})
+        state = str(st.get("state") or "stopped")
+        rt = runtimes.RUNTIMES.get(service.runtime)
+        row = self.list.row(service.id)
+        out = [("State", status_text(row) if row else state.capitalize()),
+               ("Runs", f"{rt.label if rt else 'Command'} · {entry_text(service)}"),
+               ("Isolation", MODE_LABEL.get(service.mode.value, service.mode.value)),
+               ("Network", "off" if service.mode.value != "full" and not service.network.enabled else
+                "on" + (f", serves {', '.join(map(str, service.network.ports))}" if service.network.ports else ""))]
+        if state in ("running", "stopping"):
+            if st.get("pid"):
+                out.append(("Process", f"pid {st['pid']}" + (f", {live['processes']} processes"
+                                                             if int(live.get("processes", 0) or 0) > 1 else "")))
+            if live:
+                out.append(("CPU", f"{float(live.get('cpu', 0)):.1f}%"
+                            + (f" (limit {service.cpu_percent}%)" if service.cpu_percent else "")))
+                out.append(("Memory", human_bytes(float(live.get("memory", 0)))
+                            + (f" (limit {service.memory_mb} MB)" if service.memory_mb else "")))
+                if live.get("ports"):
+                    out.append(("Listening on", ", ".join(map(str, live["ports"]))))
+        out.append(("Restart", service.restart.value + (f", {st['restarts']} restarts" if st.get("restarts") else "")))
+        if st.get("note"):
+            out.append(("Note", str(st["note"])))
+        out.append(("Folder", service.folder))
+        return out
+
+    def _details_menu(self, menu: QMenu) -> QMenu:
+        """Details (i), and the list's right-click Details: one line each; choosing one copies its value."""
+        menu.clear()
+        service = self.services.get(self.current)
+        if service is None:
+            return menu
+        rows = self.details(service)
+        for key, value in rows:
+            shown = value if len(value) <= 70 else value[:67] + "…"
+            item = menu.addAction(f"{key}\t{shown}", lambda v=value: self._copy(v))
+            if item is not None:
+                item.setToolTip(f"Copy: {value}")
+        menu.addSeparator()
+        menu.addAction("Copy all details", lambda: self._copy("\n".join(f"{k}: {v}" for k, v in rows)))
+        menu.setToolTipsVisible(True)
+        return menu
 
     def _header_icons(self, service: Service, state: str) -> None:
         """Re-set the pixmaps and tooltips only when something changed: doing it every second makes tooltips
@@ -556,30 +588,10 @@ class MainWindow(QMainWindow):
         self.act_stop_all.setEnabled(running > 0 or any(
             st.get("state") == "waiting" for st in self.states.values()))
 
-    # -- header fitting: full labels when they fit, symbols when the window is narrow ---------------------
-
-    def _label(self, b: QToolButton, text: str) -> None:
-        self.labels[b] = text
-        b.setText(short(text) if self.compact else text)
-
-    def _fit_header(self) -> None:
-        fm = self.b_start.fontMetrics()
-        full = sum(fm.horizontalAdvance(t) + 30 for b, t in self.labels.items() if b.isVisibleTo(self.header))
-        compact = self.header.width() - HEADER_TITLE_ROOM < full
-        if compact != self.compact:
-            self.compact = compact
-            for b, text in self.labels.items():
-                b.setText(short(text) if compact else text)
-
     def resizeEvent(self, event: QResizeEvent | None) -> None:
         super().resizeEvent(event)
         if self.meter is not None:
             self.meter.setVisible(self.width() >= 1100)  # a narrow window keeps the buttons, not the meter
-
-    def eventFilter(self, obj: QObject | None, event: QEvent | None) -> bool:
-        if obj is self.header and event is not None and event.type() == QEvent.Type.Resize:
-            self._fit_header()  # also when the plugin panels open or a splitter moves
-        return super().eventFilter(obj, event)
 
     # -- actions ------------------------------------------------------------------------------------------
 
@@ -833,6 +845,10 @@ class MainWindow(QMainWindow):
             menu.addAction(f"Start {n} services", lambda: self.client.request({"op": "start_all", "ids": chosen}))
             menu.addAction(f"Stop {n} services", lambda: self._op_each("stop", chosen))
         else:
+            details = menu.addMenu("Details")
+            if details is not None:
+                self._details_menu(details)
+            menu.addSeparator()
             menu.addAction("Configure…", self.edit_service)
             menu.addAction("Open folder", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(service.folder)))
             if url := self.web_url():

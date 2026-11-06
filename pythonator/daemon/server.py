@@ -26,6 +26,7 @@ from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 from .. import __version__, isolation
 from ..core.envcheck import app_report
 from ..core.store import Store, write_atomic
+from ..isolation import private_node
 from ..paths import IS_WINDOWS, DataDirs
 from ..plugins.host import PluginHost
 from . import protocol as p
@@ -94,6 +95,7 @@ class Daemon:
         write_atomic(dirs.token_file, self.token)
         self.store = Store(dirs)
         self.sup = Supervisor(dirs, self.store)
+        private_node.prepare_ahead(dirs)  # Windows: Node.js for sandboxes, before the first start
         self.plugins = PluginHost(dirs, self.sup)
         self.sup.listeners.append(self.broadcast)
         self.server = QLocalServer()

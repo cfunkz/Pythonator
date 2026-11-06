@@ -35,6 +35,7 @@ WINDOW = 600.0  # seconds of stats kept per service for anomalies: ten minutes
 CPU_SPAN = 300.0  # a CPU anomaly: over the threshold for this long
 ERROR_LINE = re.compile(r"\b(error|exception|traceback|fatal|panic|critical)\b", re.IGNORECASE)
 ALL, PROBLEMS = "All services", "Problems only"
+SERVICES, EVENTS = "Services", "Events"  # the panel's two views
 EVERYTHING = "All events"
 LEVEL = {"crashed": "error", "gave_up": "error", "install_failed": "error", "blocked": "warn", "unhealthy": "warn",
          "anomaly": "warn", "recovered": "ok", "healthy": "ok", "started": "", "stopped": "", "exited": ""}
@@ -178,6 +179,7 @@ class Notify(Plugin):
         self.sent = 0
         self.view = ALL
         self.filter = EVERYTHING
+        self.page = SERVICES
         self.labels: dict[str, str] = {}
         self.next_check = 0.0
         self.busy = threading.Lock()
@@ -290,7 +292,9 @@ class Notify(Plugin):
         self.render(force=True)
 
     def on_action(self, action: str, value: str) -> None:
-        if action == "view":
+        if action == "page":
+            self.page = EVENTS if value.startswith(EVENTS) else SERVICES
+        elif action == "view":
             self.view = value if value == ALL or value in self.labels else ALL
         elif action == "filter":
             self.filter = value if value in (EVERYTHING, PROBLEMS) else EVERYTHING
@@ -452,35 +456,40 @@ class Notify(Plugin):
                     "ok" if answering == len(self.health) else "warn"),
             ui.stat("Alerts sent", str(self.sent)),
         )
-        controls = [ui.select("view", [ALL, *self.labels], self.view, "Show"),
-                    ui.select("filter", [EVERYTHING, PROBLEMS], self.filter)]
-        if picked:
-            controls.append(ui.button("Unmute" if picked in self.muted else "Mute", "unmute" if picked in self.muted
-                                      else "mute"))
-        items: list[dict[str, object]] = [stats, ui.row(*controls)]
-        if not picked:
-            items.append(self._overview(services, events))
+        page = self.page
+        events_tab = f"{EVENTS} ({len(problems)} problems)" if problems else EVENTS
+        items: list[dict[str, object]] = [ui.tabs("page", [SERVICES, events_tab], events_tab if page == EVENTS
+                                                  else SERVICES)]
+        if page == SERVICES:
+            items += [stats, ui.row(ui.select("view", [ALL, *self.labels], self.view, "Show"),
+                                    ui.button("Check health now", "check", icon="refresh"))]
+            if picked:
+                items.append(self._service(self.services[picked], events))
+                items.append(ui.row(ui.button("Unmute its alerts" if picked in self.muted else "Mute its alerts",
+                                              "unmute" if picked in self.muted else "mute")))
+            else:
+                items.append(self._overview(services, events))
         else:
-            items.append(self._service(self.services[picked], events))
-        shown = [e for e in reversed(events) if (not picked or e.sid == picked)
-                 and (self.filter == EVERYTHING or e.problem)][:SHOWN]
-        if shown:
-            items.append(ui.table(["When", "Service", "Event", "Detail"],
-                                  [[_when(e.at), e.name, TITLES.get(e.kind, e.kind), e.detail[:200]] for e in shown],
-                                  [e.level or "muted" for e in shown]))
-        else:
-            items.append(ui.text("Nothing has happened yet." if not events else "No events match.", "muted"))
+            shown = [e for e in reversed(events) if (not picked or e.sid == picked)
+                     and (self.filter == EVERYTHING or e.problem)][:SHOWN]
+            items.append(ui.row(ui.select("view", [ALL, *self.labels], self.view, "Show"),
+                                ui.select("filter", [EVERYTHING, PROBLEMS], self.filter),
+                                ui.button("Send a test alert", "test", icon="send"),
+                                ui.button("Clear the history", "clear", icon="delete")))
+            if shown:
+                items.append(ui.table(["When", "Service", "Event", "Detail"],
+                                      [[_when(e.at), e.name, TITLES.get(e.kind, e.kind), e.detail[:200]]
+                                       for e in shown], [e.level or "muted" for e in shown]))
+            else:
+                items.append(ui.text("Nothing has happened yet." if not events else "No events match.", "muted"))
         urls = self.urls()
         hosts = sorted({urllib.parse.urlsplit(u).hostname or "?" for u in urls})
         where = "this window" + (f" and {len(urls)} webhook{'s' if len(urls) != 1 else ''} "
                                  f"({', '.join(hosts)})" if urls else "")
         scope = str(self.settings.get("services", "")).strip()
-        items += [
-            ui.row(ui.button("Check health now", "check"), ui.button("Send a test alert", "test"),
-                   ui.button("Clear history", "clear")),
-            ui.text(f"Alerts go to {where}. Watching {'the services in the settings' if scope else 'every service'}"
-                    f"{f', {len(self.muted)} muted' if self.muted else ''}.", "muted"),
-        ]
+        items.append(ui.text(f"Alerts go to {where}. Watching {'the services in the settings' if scope else
+                                                               'every service'}"
+                             f"{f', {len(self.muted)} muted' if self.muted else ''}.", "muted"))
         return ui.panel("Notify", *items)
 
     def _overview(self, services: list[ServiceInfo], events: list[Event]) -> dict[str, object]:

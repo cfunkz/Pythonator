@@ -31,15 +31,24 @@ from PyQt6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
-from . import theme
+from ..sdk import ICONS
+from . import icons, theme
 from .widgets import label
 
 Action = Callable[[str, str, str], None]  # plugin, action, value
 MAX_INPUT = 16_000
+# The sizing contract every panel follows, whatever the plugin sends: the dock is never narrower than this, every
+# element fits in it (labels wrap, buttons and options end in "…", rows wrap, tables scroll inside themselves),
+# and the page is exactly as wide as the dock, so nothing can reach past its edge.
+PANEL_MIN_WIDTH = 240
+BUTTON_MIN = 56
+_LONG_WORD = 28
+_SEPARATORS = "/\\_-.,:;=&?"
 
 
 class Drafts:
@@ -71,8 +80,72 @@ def _tone(tone: str) -> str:
             "muted": theme.color("muted")}.get(tone, theme.color("text"))
 
 
+def breakable(text: str) -> str:
+    """``text`` with break opportunities (zero-width spaces) in very long words, such as paths and URLs: after
+    their separators, or every few letters if they have none, so a label wraps them instead of growing past the
+    panel."""
+    words = text.split(" ")
+    if not any(len(w) > _LONG_WORD for w in words):
+        return text
+    out = []
+    for word in words:
+        if len(word) <= _LONG_WORD:
+            out.append(word)
+        elif any(ch in _SEPARATORS for ch in word):
+            out.append("".join(ch + "\u200b" if ch in _SEPARATORS else ch for ch in word))
+        else:
+            out.append("\u200b".join(word[i:i + _LONG_WORD] for i in range(0, len(word), _LONG_WORD)))
+    return " ".join(out)
+
+
 def _plain(text: str) -> QLabel:
-    return label(text, plain=True)
+    out = label(breakable(text), plain=True)
+    out.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)  # wraps to the panel's width
+    out.setMinimumWidth(1)
+    return out
+
+
+class FitButton(QPushButton):
+    """A panel button: as wide as its label, never wider, and narrower when the panel is, its label then ending
+    in "…" (the whole label is its tooltip). It never widens the panel."""
+
+    def __init__(self, text: str, parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self.full = text
+        self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+
+    def set_label(self, text: str) -> None:
+        self.full = text
+        self._elide()
+        self.updateGeometry()
+
+    def sizeHint(self) -> QSize:
+        return QSize(self.fontMetrics().horizontalAdvance(self.full) + 40, super().sizeHint().height())
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(min(BUTTON_MIN, self.sizeHint().width()), super().minimumSizeHint().height())
+
+    def resizeEvent(self, event: Any) -> None:
+        super().resizeEvent(event)
+        self._elide()
+
+    def _elide(self) -> None:
+        shown = self.fontMetrics().elidedText(self.full, Qt.TextElideMode.ElideRight, max(12, self.width() - 38))
+        if shown != self.text():
+            super().setText(shown)
+        self.setToolTip(self.full if shown != self.full else "")
+
+
+def icon_button(name: str, tip: str) -> QToolButton:
+    """A small icon-only button; ``tip`` says what it does (its tooltip and accessible name)."""
+    button = QToolButton()
+    button.setIcon(icons.icon(name))
+    button.setToolTip(tip)
+    button.setAccessibleName(tip)
+    button.setAutoRaise(True)
+    button.setFixedSize(30, 28)
+    button.setProperty("iconButton", True)
+    return button
 
 
 def _code_box(text: str) -> QPlainTextEdit:
@@ -337,8 +410,14 @@ class FlowRow(QLayout):
         y = rect.y()
         for line in lines:
             hints = [min(width, i.sizeHint().width()) for i in line]
-            extra = max(0, width - sum(hints) - gap * (len(line) - 1)) // len(line)
-            widths = [h + extra for h in hints]
+            spare = max(0, width - sum(hints) - gap * (len(line) - 1))
+            # The spare width goes to what expands (a drop-down), else to what may grow (stat cards); buttons
+            # and icons keep their own width and stay on the left.
+            grow = [bool(i.expandingDirections() & Qt.Orientation.Horizontal) for i in line]
+            if not any(grow):
+                grow = [i.maximumSize().width() > h for i, h in zip(line, hints, strict=True)]
+            share = spare // max(1, sum(grow))
+            widths = [min(width, h + share) if g else h for h, g in zip(hints, grow, strict=True)]
             height = max(i.heightForWidth(w) if i.hasHeightForWidth() else i.sizeHint().height()
                          for i, w in zip(line, widths, strict=True))
             x = rect.x()
@@ -365,15 +444,20 @@ def render(plugin: str, node: dict[str, Any], on_action: Action, drafts: Drafts 
         return chat
     if kind == "input":
         return _input(plugin, node, on_action, drafts or Drafts())
+    if kind == "tabs":
+        return _tabs(plugin, node, on_action)
     if kind == "select":
         box = QWidget()
-        layout = QHBoxLayout(box)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout = FlowRow(box)  # the label goes above the list when the panel is narrow
         if node.get("label"):
-            layout.addWidget(_plain(str(node["label"])))
+            name = label(str(node["label"]), wrap=False, plain=True)
+            name.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
+            name.setMinimumHeight(26)
+            layout.addWidget(name)
         combo = QComboBox()
         combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        combo.setMinimumContentsLength(12)  # long options don't widen the panel
+        combo.setMinimumContentsLength(8)  # long options don't widen the panel: they end in "…"
+        combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         options = [str(o) for o in node.get("options", [])]
         combo.addItems(options)
         if str(node.get("value", "")) in options:
@@ -387,12 +471,15 @@ def render(plugin: str, node: dict[str, Any], on_action: Action, drafts: Drafts 
                 combo.setCurrentText(shown)
 
         combo.activated.connect(chosen)
-        layout.addWidget(combo, 1)
+        layout.addWidget(combo)
         return box
     if kind == "stat":
         card = QFrame()
         card.setProperty("card", True)
+        card.setMinimumWidth(96)
+        card.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         stack = QVBoxLayout(card)
+        stack.setContentsMargins(10, 8, 10, 8)
         name = _plain(str(node.get("label", "")))
         name.setProperty("muted", True)
         value = _plain(str(node.get("value", "")))
@@ -417,11 +504,16 @@ def render(plugin: str, node: dict[str, Any], on_action: Action, drafts: Drafts 
             hh.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
             hh.setResizeContentsPrecision(60)
             hh.setStretchLastSection(True)
+        table.setMinimumWidth(120)  # it scrolls sideways inside itself, never past the panel
+        table.setHorizontalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
         fill_table(table, node)
         return table
     if kind == "button":
-        button = QPushButton(str(node.get("label", "")))
         action, arg = str(node.get("action", "")), str(node.get("value", ""))
+        caption = str(node.get("label", ""))
+        shape = str(node.get("icon", ""))
+        button: QPushButton | QToolButton = icon_button(shape, caption) if shape in ICONS \
+            else FitButton(caption)
         button.clicked.connect(lambda: on_action(plugin, action, arg))
         return button
     if kind == "row":
@@ -431,6 +523,23 @@ def render(plugin: str, node: dict[str, Any], on_action: Action, drafts: Drafts 
             flow.addWidget(render(plugin, child, on_action, drafts))
         return box
     return _plain("")
+
+
+def _tabs(plugin: str, node: dict[str, Any], on_action: Action) -> QWidget:
+    """A switch between a panel's views (API 5): one button each, the current one checked."""
+    box = QWidget()
+    box.setProperty("segments", True)
+    flow = FlowRow(box)
+    flow.setSpacing(2)
+    action, current = str(node.get("action", "")), str(node.get("value", ""))
+    for option in [str(o) for o in node.get("options", [])]:
+        button = FitButton(option)
+        button.setCheckable(True)
+        button.setChecked(option == current)
+        button.setProperty("segment", True)
+        button.clicked.connect(lambda _c=False, o=option: on_action(plugin, action, o))
+        flow.addWidget(button)
+    return box
 
 
 def fill_table(table: QTableWidget, node: dict[str, Any]) -> None:
@@ -467,7 +576,7 @@ def fill_table(table: QTableWidget, node: dict[str, Any]) -> None:
             for c in range(max(0, len(cols) - 1)):
                 if hh is not None and hh.sectionSize(c) > 220:  # a long cell elides; its tooltip has it all
                     hh.resizeSection(c, 220)
-        table.setFixedHeight(min(420, 32 + 26 * max(1, len(rows))))
+        table.setFixedHeight(min(420, 44 + 26 * max(1, len(rows))))  # room for its sideways scroll bar
     finally:
         table.setUpdatesEnabled(True)
 
@@ -483,7 +592,7 @@ def _input(plugin: str, node: dict[str, Any], on_action: Action, drafts: Drafts)
     edit.setFixedHeight(edit.fontMetrics().lineSpacing() * 3 + 16)
     edit.setPlainText(drafts.text.get(key, ""))
     edit.moveCursor(edit.textCursor().MoveOperation.End)
-    button = QPushButton(str(node.get("label") or "Send"))
+    button = FitButton(str(node.get("label") or "Send"))
     button.setProperty("primary", True)
 
     def changed() -> None:
@@ -547,11 +656,11 @@ def _slot(node: dict[str, Any]) -> str:
 
 def _update_input(widget: QWidget, node: dict[str, Any]) -> None:
     """Same text box (same action), maybe a new placeholder or button label: change those, keep the widget."""
-    edit, button = widget.findChild(QPlainTextEdit), widget.findChild(QPushButton)
+    edit, button = widget.findChild(QPlainTextEdit), widget.findChild(FitButton)
     if edit is not None:
         edit.setPlaceholderText(str(node.get("placeholder", "")))
     if button is not None:
-        button.setText(str(node.get("label") or "Send"))
+        button.set_label(str(node.get("label") or "Send"))
 
 
 def reconcile(plugin: str, layout: QLayout, old: list[_Item], nodes: list[Any], on_action: Action,
@@ -617,10 +726,21 @@ class PanelPage(QScrollArea):
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)  # a panel fits its dock's width
+        self.setMinimumWidth(PANEL_MIN_WIDTH)
         body = QWidget()
         body.setObjectName("PanelBody")
-        QVBoxLayout(body).setContentsMargins(10, 8, 10, 10)
+        column = QVBoxLayout(body)
+        column.setContentsMargins(12, 10, 12, 12)
+        column.setSpacing(10)
         self.setWidget(body)
+
+    def resizeEvent(self, event: Any) -> None:
+        """The page is exactly as wide as the dock: whatever a panel holds is laid out in that width, so it
+        can't reach past the edge (the contract above)."""
+        super().resizeEvent(event)
+        body, port = self.widget(), self.viewport()
+        if body is not None and port is not None and body.minimumWidth() != port.width():
+            body.setFixedWidth(port.width())
 
     def show_panel(self, panel: dict[str, Any], name: str = "") -> bool:
         """Draw ``panel``; False when nothing changed (plugins redraw on a timer)."""
@@ -659,6 +779,9 @@ class PanelDock(QTabWidget):
         self.pages: dict[str, PanelPage] = {}
         self.drafts = Drafts()
         self.setDocumentMode(True)
+        self.setMinimumWidth(PANEL_MIN_WIDTH)
+        self.setUsesScrollButtons(True)
+        self.setElideMode(Qt.TextElideMode.ElideRight)
 
     def update_panel(self, plugin: str, name: str, panel: dict[str, Any] | None) -> None:
         page = self.pages.get(plugin)

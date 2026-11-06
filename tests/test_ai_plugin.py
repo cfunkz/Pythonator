@@ -214,8 +214,10 @@ class FakeAI(BaseHTTPRequestHandler):
                 self._chunk(f"event: {name}\ndata: {json.dumps(data)}\n\n")
                 if FakeAI.mode == "slow":
                     time.sleep(1)
-        elif FakeAI.mode == "edit":
-            answer = ("The port is taken.\n\n<<<<<<< EDIT app.py\nPORT = 80\n=======\nPORT = 8080\n>>>>>>> END\n")
+        elif FakeAI.mode in ("edit", "placeholder"):
+            # "placeholder": as models do, the example's path and the line with a trailing space
+            path, old = ("app.py", "PORT = 80") if FakeAI.mode == "edit" else ("path/to/file.py", "PORT = 80 ")
+            answer = f"The port is taken.\n\n<<<<<<< EDIT {path}\n{old}\n=======\nPORT = 8080\n>>>>>>> END\n"
             self._chunk(f"data: {json.dumps({'choices': [{'delta': {'content': answer}}]})}\n\n")
             self._chunk("data: [DONE]\n\n")
         else:
@@ -388,10 +390,14 @@ def test_metadata_address_is_refused_before_connecting() -> None:
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Windows keeps the plugin's AppContainer off this PC's own "
                     "servers, so it can't reach the fake AI server on 127.0.0.1 (real AI services are remote)")
-def test_bundled_plugin_answers_and_its_fix_is_applied_after_review(harness: Any, project: Path, fake: str) -> None:
+@pytest.mark.parametrize("mode", ["edit", "placeholder"])
+def test_bundled_plugin_answers_and_its_fix_is_applied_after_review(harness: Any, project: Path, fake: str,
+                                                                    mode: str) -> None:
+    """0.0.13: also when the model writes the prompt's example path (path/to/file.py) and not quite the file's
+    text: the edit is for the one file that holds it."""
     from tests.test_plugin_files import _activity
 
-    FakeAI.mode = "edit"
+    FakeAI.mode = mode
     harness.daemon.plugins.vault.use_keychain = False
     (project / "app.py").write_text("import time\nPORT = 80\nprint('serving', PORT, 'token=abcdefghij123456')\n"
                                     "time.sleep(60)\n", encoding="utf-8")

@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from .. import isolation
 from ..core import git, validate
@@ -35,6 +35,7 @@ from ..core.keychain import IN_FILE, IN_KEYCHAIN, Vault
 from ..core.models import Mode, Service
 from ..isolation.base import Grant, Policy, launcher_files, runtime_folders
 from ..paths import IS_LINUX, IS_MAC, IS_WINDOWS, DataDirs, official_plugins_dir, quiet_start, self_command
+from ..sdk import ICONS
 from . import files, trust
 from .manifest import PERMISSIONS, Manifest, load
 
@@ -66,7 +67,8 @@ class Message(BaseModel):
 
 class Node(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    type: Literal["text", "stat", "table", "button", "row", "code", "input", "select", "chat"]
+    type: Literal["text", "stat", "table", "button", "row", "code", "input", "select", "chat", "tabs"]
+    icon: str = Field(default="", max_length=20)  # a button's icon instead of its label (API 5)
     text: str = Field(default="", max_length=4000)
     placeholder: str = Field(default="", max_length=200)
     options: list[Annotated[str, Field(max_length=200)]] = Field(default_factory=list, max_length=300)
@@ -79,6 +81,19 @@ class Node(BaseModel):
     tones: list[Tone] = Field(default_factory=list, max_length=500)
     items: list[Node] = Field(default_factory=list, max_length=20)
     messages: list[Message] = Field(default_factory=list, max_length=200)
+
+    @field_validator("icon")
+    @classmethod
+    def _known_icon(cls, value: str) -> str:
+        if value and value not in ICONS:
+            raise ValueError(f"not one of Pythonator's icons: {', '.join(ICONS)}")
+        return value
+
+    @model_validator(mode="after")
+    def _tabs_are_short(self) -> Node:
+        if self.type == "tabs" and (not 2 <= len(self.options) <= 6 or any(len(o) > 30 for o in self.options)):
+            raise ValueError("tabs have 2 to 6 options of at most 30 characters")
+        return self
 
 
 class Panel(BaseModel):

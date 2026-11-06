@@ -160,12 +160,27 @@ def _first_line(argv: list[str], timeout: float = 4.0) -> str:
 
 
 def _blocked(prog: str) -> str:
+    """Windows: the install folder sandboxes can't use, if any. Node.js never counts: sandboxes get a private
+    copy of it (:mod:`..isolation.private_node`)."""
     if not IS_WINDOWS:
         return ""
-    from ..isolation import windows
+    from ..isolation import private_node, windows
     from ..isolation.base import runtime_folders
 
+    if private_node.node_folder(prog) is not None:
+        return ""
     return next((str(f) for f in runtime_folders(prog) if windows.blocked_program_folder(f)), "")
+
+
+def _private_note(prog: str) -> str:
+    if not IS_WINDOWS:
+        return ""
+    from ..isolation import private_node, windows
+
+    folder = private_node.node_folder(prog)
+    if folder is None or not windows.blocked_program_folder(folder):
+        return ""
+    return "sandboxes run Pythonator's own copy of it (installed for all users, so they can't use it there)"
 
 
 def tools() -> tuple[list[Tool], list[Tool]]:
@@ -179,7 +194,7 @@ def tools() -> tuple[list[Tool], list[Tool]]:
             found.append(Tool(rt.label, ""))
             continue
         args = VERSION_ARGS.get(rt.key, ["--version"])
-        found.append(Tool(rt.label, prog, _first_line([prog, *args]), blocked=_blocked(prog)))
+        found.append(Tool(rt.label, prog, _first_line([prog, *args]), _private_note(prog), _blocked(prog)))
     engines: list[Tool] = []
     for name in ("docker", "podman"):
         prog = runtimes.which(name)
