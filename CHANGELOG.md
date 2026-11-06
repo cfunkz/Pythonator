@@ -2,6 +2,23 @@
 
 Pythonator follows [semantic versioning](https://semver.org/). Each release lists what changed for users.
 
+## 0.0.14
+
+- Windows: sandboxed npm and Node.js get past *EPERM: operation not permitted, lstat 'C:\'* (npm create vue,
+  create-vite and the other Node templates). A sandbox may not look at the folders above its own, and Node.js
+  looks at each of them on the way to a file; Node now starts in the sandbox without that walk, and a small preload
+  answers for those folders. Full access was never affected. See "Windows: Node.js and the folders above the
+  sandbox's own" in the isolation docs.
+- Removing or deleting a project no longer holds anything up. Taking a sandbox's permissions back (file by file
+  over a big node_modules on Windows, which took minutes) runs in the background, and a folder that is about to be
+  deleted is skipped. The window and the other services keep running meanwhile.
+- Deleting a project really deletes its folder on Windows: the window closes that project's open files and stops
+  watching the folder first, paths deeper than 260 characters are reached, and a file a virus scanner holds for a
+  moment is tried again.
+- A first sandboxed Node start copies Node.js for sandboxes in the background too, with a note in the console.
+- Project builder 1.2.1: one Create button. An empty name takes the suggested one, shown in the box.
+- Windows CI: the check behind "Let sandboxes use it" is tested the way it works since 0.0.13.
+
 ## 0.0.13
 
 - Windows: sandboxed Node.js projects (React, Vue, Nuxt, Express, the bots…) work with Node.js installed for all

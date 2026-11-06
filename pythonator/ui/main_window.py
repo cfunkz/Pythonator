@@ -735,6 +735,8 @@ class MainWindow(QMainWindow):
         box.addButton(QMessageBox.StandardButton.Cancel)
         box.exec()
         if box.clickedButton() in (delete, only):
+            if box.clickedButton() is delete and folder:
+                self.editor.release(Path(folder))  # an open file or the watched tree would keep it on Windows
             self.client.request({"op": "remove", "id": sid, "files": box.clickedButton() is delete},
                                 lambda ok, _d, err: None if ok else self._notice("error", err))
 

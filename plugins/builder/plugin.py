@@ -170,8 +170,8 @@ class Builder(Plugin):
             elif not self.busy:
                 folder = str(self.settings.get("folder", "") or "") or self.default_folder
                 suggested = suggest(f"my-{template.get('key')}", {s.name for s in self.services.values()})
-                items.append(ui.input("create", f"Project name (Enter creates it in {folder})"[:200], "Create"))
-                items.append(ui.row(ui.button(f"Create {suggested}", "create", suggested)))
+                # One Create: an empty name takes the suggested one, shown in the box.
+                items.append(ui.input("create", f"Name: {suggested} if empty. It goes in {folder}"[:200], "Create"))
         if self.templates:
             ready = sum(1 for t in self.templates if t.get("ready"))
             missing = sorted({str(t.get("needs")) for t in self.templates if not t.get("ready")})

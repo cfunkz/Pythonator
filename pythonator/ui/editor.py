@@ -238,13 +238,9 @@ class FileTree(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.root = ""
-        self.model = QFileSystemModel(self)
-        self.model.setIconProvider(FileIcons())
-        self.model.setFilter(QDir.Filter.AllEntries | QDir.Filter.NoDotAndDotDot | QDir.Filter.Hidden)
         self.view = QTreeView()
-        self.view.setModel(self.model)
-        for col in (1, 2, 3):
-            self.view.hideColumn(col)
+        self.icons = FileIcons()  # kept here: a model only points at it
+        self.model = self._new_model()
         self.view.setHeaderHidden(True)
         self.view.setAnimated(True)
         self.view.setIndentation(14)
@@ -272,6 +268,24 @@ class FileTree(QWidget):
         layout.setSpacing(0)
         layout.addLayout(head)
         layout.addWidget(self.view, 1)
+        self.set_root("")
+
+    def _new_model(self) -> QFileSystemModel:
+        model = QFileSystemModel(self)
+        model.setIconProvider(self.icons)
+        model.setFilter(QDir.Filter.AllEntries | QDir.Filter.NoDotAndDotDot | QDir.Filter.Hidden)
+        self.view.setModel(model)
+        for col in (1, 2, 3):
+            self.view.hideColumn(col)
+        return model
+
+    def release(self) -> None:
+        """Show nothing, and drop the model with every folder it watches: Windows can't delete a watched one."""
+        old, selection = self.model, self.view.selectionModel()
+        self.model = self._new_model()
+        if selection is not None:
+            selection.deleteLater()  # it points at the old model
+        old.deleteLater()
         self.set_root("")
 
     def set_root(self, folder: str, name: str = "") -> None:
@@ -476,6 +490,22 @@ class EditorPanel(QWidget):
         self.tabs.removeTab(index)
         if ed is not None:
             ed.deleteLater()
+        self._sync_empty()
+
+    def release(self, folder: Path) -> None:
+        """Let go of ``folder`` before it is deleted: close its files without asking and stop watching it (on
+        Windows a watched or open folder can't be deleted)."""
+        try:
+            inside = folder.resolve()
+        except OSError:
+            return
+        for i in reversed(range(self.tabs.count())):
+            ed = self.tabs.widget(i)
+            if isinstance(ed, CodeEditor) and ed.path.resolve().is_relative_to(inside):
+                self.tabs.removeTab(i)
+                ed.deleteLater()
+        if self.files.root and Path(self.files.root).resolve().is_relative_to(inside):
+            self.files.release()
         self._sync_empty()
 
     def unsaved(self) -> list[CodeEditor]:

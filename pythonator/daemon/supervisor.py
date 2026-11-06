@@ -367,19 +367,24 @@ class Supervisor:
             self.note(slot, "Saved. Restart it to use the new settings.")
         self._plan_schedule(slot)
 
-    def remove(self, sid: str, *, then: Callable[[], None] | None = None) -> None:
+    def remove(self, sid: str, *, then: Callable[[], None] | None = None, deleted: Path | None = None) -> None:
+        """Remove a service (stopped first). Its clean-up (on Windows, taking its sandbox's permissions back file
+        by file) runs in the background, then ``then``: the window and the other services never wait for it."""
         slot = self.slot(sid)
         if slot.shell:
             slot.shell.kill()
+
+        def clean() -> None:
+            with contextlib.suppress(OSError):
+                isolation.forget(slot.service, self.dirs, deleted=deleted)
+            if then is not None:
+                then()
 
         def gone() -> None:
             slot.log.close()
             self.slots.pop(sid, None)
             self._services_changed()
-            with contextlib.suppress(OSError):
-                isolation.forget(slot.service, self.dirs)
-            if then is not None:
-                then()
+            threading.Thread(target=clean, name=f"remove-{sid}", daemon=True).start()
 
         if slot.runner or slot.task:
             slot.stop_then = gone
@@ -408,16 +413,14 @@ class Supervisor:
         folder = self.project_folder(sid)
         name = self.slot(sid).service.name
 
-        def delete() -> None:
-            def work() -> None:
-                error = _delete_tree(folder)
-                self.post(lambda: self.emit({"ev": "notice", "level": "error" if error else "ok",
-                                             "text": f"{name}: couldn't delete {folder}: {error}" if error
-                                             else f"{name}: deleted, with {folder}"}))
+        def delete() -> None:  # in remove's background thread
+            error = _delete_tree(folder)
+            self.post(lambda: self.emit({"ev": "notice", "level": "error" if error else "ok",
+                                         "text": f"{name}: couldn't delete {folder}: {error}" if error
+                                         else f"{name}: deleted, with {folder}"}))
 
-            threading.Thread(target=work, name=f"delete-{sid}", daemon=True).start()
-
-        self.remove(sid, then=delete)
+        self.emit({"ev": "notice", "level": "info", "text": f"{name}: deleting {folder} in the background…"})
+        self.remove(sid, then=delete, deleted=folder)
 
     def start(self, sid: str, *, confirmed: bool = False, auto: bool = False) -> None:
         slot = self.slot(sid)
@@ -483,8 +486,30 @@ class Supervisor:
         return next((o for o in self.slots.values() if o is not slot and o.state is State.TASK
                      and o.task_name == MAKING_ENV and Path(o.service.folder) == folder), None)
 
-    def _launch(self, slot: Slot) -> None:
+    def _set_up_first(self, slot: Slot, task: list[str] | None, again: Callable[[], None]) -> bool:
+        """True when slow set-up (Windows: Node.js copied for sandboxes the first time) runs first, in the
+        background; ``again`` then runs on this thread, and the caller returns. The window and the other services
+        never wait for it."""
+        try:
+            work = isolation.slow_setup(slot.service, self.dirs, task=task)
+        except Exception:  # prepare() says what is wrong
+            work = None
+        if work is None:
+            return False
+        self.note(slot, "Copying Node.js for sandboxes (once per Node version, in the background)…")
+
+        def run() -> None:
+            with contextlib.suppress(Exception):  # prepare() tries again and says why
+                work()
+            self.post(again)
+
+        threading.Thread(target=run, name=f"set-up-{slot.service.id}", daemon=True).start()
+        return True
+
+    def _launch(self, slot: Slot, *, set_up: bool = False) -> None:
         service = slot.service
+        if not set_up and self._set_up_first(slot, None, lambda: self._launch_after_set_up(slot)):
+            return
         for level, text in envcheck.service_report(service):
             if level != "ok":
                 self.note(slot, f"{'Problem' if level == 'error' else 'Note'}: {text}")
@@ -512,6 +537,10 @@ class Supervisor:
             self.note(slot, _limits_note(service, runner))
         self._set(slot, State.RUNNING, "started", "")
 
+    def _launch_after_set_up(self, slot: Slot) -> None:
+        if self.slots.get(slot.service.id) is slot and slot.state is State.STARTING and slot.runner is None:
+            self._launch(slot, set_up=True)  # not when stopped or removed meanwhile
+
     def stop(self, sid: str) -> None:
         slot = self.slot(sid)
         slot.restart_at = 0.0
@@ -520,6 +549,10 @@ class Supervisor:
         if slot.task:
             slot.steps.clear()
             slot.task.stop(5)
+            return
+        if slot.state is State.TASK and slot.steps:  # between two steps: set-up runs in the background
+            slot.steps.clear()
+            self._task_failed(slot, "stopped")
             return
         if slot.runner and slot.state is State.STOPPING:  # Stop pressed again: don't wait out the grace period
             self.note(slot, "Killed")
@@ -788,7 +821,11 @@ class Supervisor:
         self._run_steps(slot, plan.steps, CREATING, then=made)
         return service
 
-    def _next_step(self, slot: Slot) -> None:
+    def _steps_after_set_up(self, slot: Slot) -> None:
+        if self.slots.get(slot.service.id) is slot and slot.state is State.TASK and slot.task is None and slot.steps:
+            self._next_step(slot, set_up=True)  # not when stopped or removed meanwhile
+
+    def _next_step(self, slot: Slot, *, set_up: bool = False) -> None:
         if not slot.steps:
             name, slot.task, slot.task_name = slot.task_name, None, ""
             if (then := slot.after_steps) is not None:
@@ -803,6 +840,8 @@ class Supervisor:
             if name != "Listing containers":
                 self.emit({"ev": "notice", "level": "ok", "id": slot.service.id,
                            "text": f"{slot.service.name}: {done.lower()}"})
+            return
+        if not set_up and self._set_up_first(slot, slot.steps[0], lambda: self._steps_after_set_up(slot)):
             return
         step = slot.steps.pop(0)
         try:
@@ -1109,7 +1148,18 @@ def _remove_env(path: Path, allowed: list[Path]) -> None:
         q.chmod(stat.S_IWRITE | stat.S_IREAD | (stat.S_IEXEC if q.is_dir() else 0))
         func(p)
 
-    shutil.rmtree(real, onexc=retry)
+    # Windows: node_modules goes deeper than 260 characters, which only the \\?\ form of a path reaches.
+    target = Path("\\\\?\\" + str(real)) if sys.platform == "win32" and not str(real).startswith("\\\\") else real
+    for attempt in range(4):  # a virus scanner or the indexer may hold a file for a moment
+        try:
+            shutil.rmtree(target, onexc=retry)
+            return
+        except FileNotFoundError:
+            return
+        except OSError:
+            if attempt == 3:
+                raise
+            time.sleep(0.5 * (attempt + 1))
 
 
 def _delete_tree(folder: Path) -> str:

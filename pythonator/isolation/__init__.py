@@ -7,6 +7,7 @@ for can't be set up exactly, :func:`prepare` raises :class:`IsolationError` and 
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 from ..core import runtimes
@@ -115,6 +116,20 @@ def policy_for(service: Service, argv: list[str], dirs: DataDirs, *, task: bool,
                   lan=net.expose == "lan", grants=grants)
 
 
+def slow_setup(service: Service, dirs: DataDirs, *, task: list[str] | None = None) -> Callable[[], object] | None:
+    """Work :func:`prepare` would do first that takes seconds (Windows: copying Node.js for sandboxes, once per
+    Node version), for the caller to run in the background before it; None when there's none."""
+    if not IS_WINDOWS or service.mode is not Mode.SANDBOX:
+        return None
+    from . import private_node
+
+    try:
+        argv = service_argv(service, task)
+    except (IsolationError, ValueError, OSError):
+        return None  # prepare() says why
+    return private_node.pending_copy(argv, dirs, node_service=service.runtime in ("node", "bun"))
+
+
 def prepare(service: Service, dirs: DataDirs, *, task: list[str] | None = None, cmdline: str | None = None) -> Command:
     """The command that runs ``service`` (or one of its ``task`` steps, such as an install) in its mode.
     ``cmdline``: Windows, the exact command line of ``task`` (a shell command for cmd.exe)."""
@@ -195,12 +210,14 @@ def capabilities() -> list[tuple[str, str]]:
     return linux.support().capabilities()
 
 
-def forget(service: Service, dirs: DataDirs) -> None:
-    """Clean up after a removed service: its private folders and, on Windows, the permissions it was given."""
+def forget(service: Service, dirs: DataDirs, *, deleted: Path | None = None) -> None:
+    """Clean up after a removed service: its private folders and, on Windows, the permissions it was given.
+    ``deleted``: a folder about to be deleted, whose permissions aren't worth changing first. Slow on Windows
+    (permissions change file by file): call it off the event loop."""
     import shutil
 
     if IS_WINDOWS:
         from . import windows
 
-        windows.forget(dirs, service.id)
+        windows.forget(dirs, service.id, deleted=deleted)
     shutil.rmtree(dirs.sandboxes / f"svc-{service.id}", ignore_errors=True)

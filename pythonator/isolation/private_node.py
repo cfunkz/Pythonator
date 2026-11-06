@@ -16,6 +16,7 @@ import hashlib
 import os
 import shutil
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
 from ..paths import IS_WINDOWS, DataDirs
@@ -68,11 +69,25 @@ def _size(folder: Path) -> int:
     return total
 
 
+_COPYING = threading.Lock()  # the start-up copy and a first start never copy at the same time
+
+
+def _target(folder: Path, dirs: DataDirs) -> Path:
+    return dirs.root / "runtimes" / f"node-{version_key(folder)}"
+
+
 def private_copy(folder: Path, dirs: DataDirs) -> Path:
     """The copy of ``folder`` for sandboxes, made the first time. Raises OSError (or ValueError: too big)."""
-    base = dirs.root / "runtimes"
-    target = base / f"node-{version_key(folder)}"
+    target = _target(folder, dirs)
     if (target / DONE).is_file():
+        return target
+    with _COPYING:
+        return _copy(folder, target)
+
+
+def _copy(folder: Path, target: Path) -> Path:
+    base = target.parent
+    if (target / DONE).is_file():  # made while this one waited
         return target
     if _size(folder) > MAX_BYTES:
         raise ValueError(f"{folder} is over 1 GB: not copying it for sandboxes")
@@ -111,6 +126,30 @@ def prepare_ahead(dirs: DataDirs) -> None:
     threading.Thread(target=make, daemon=True, name="private-node").start()
 
 
+def _install(argv: list[str], node_service: bool) -> Path | None:
+    folder = node_folder(argv[0])
+    if folder is None and node_service:
+        from ..core import runtimes
+
+        folder = node_folder(found) if (found := runtimes.which("node")) else None
+    return folder
+
+
+def pending_copy(argv: list[str], dirs: DataDirs, *, node_service: bool = False) -> Callable[[], object] | None:
+    """Windows: the copy :func:`for_sandbox` would make first (seconds: ~100 MB), so a caller can make it in the
+    background; None when there's none to make."""
+    if not IS_WINDOWS:
+        return None
+    folder = _install(argv, node_service)
+    if folder is None or (_target(folder, dirs) / DONE).is_file():
+        return None
+    from . import windows
+
+    if not windows.blocked_program_folder(folder):
+        return None
+    return lambda: private_copy(folder, dirs)
+
+
 def for_sandbox(argv: list[str], env: dict[str, str], dirs: DataDirs, *, node_service: bool = False,
                 ) -> tuple[list[str], dict[str, str], Path | None]:
     """On Windows: ``argv`` and ``env`` switched to the private copy when the sandbox can't use the installed
@@ -118,11 +157,7 @@ def for_sandbox(argv: list[str], env: dict[str, str], dirs: DataDirs, *, node_se
     Node service's other programs (its console's shell) find the copy first on PATH too."""
     if not IS_WINDOWS:
         return argv, env, None
-    folder = node_folder(argv[0])
-    if folder is None and node_service:
-        from ..core import runtimes
-
-        folder = node_folder(found) if (found := runtimes.which("node")) else None
+    folder = _install(argv, node_service)
     from . import windows
 
     if folder is None or not windows.blocked_program_folder(folder):

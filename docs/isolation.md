@@ -77,6 +77,21 @@ icacls "C:\Program Files\Python313" /grant "*S-1-15-2-1:(OI)(CI)(RX)"
 A runtime installed for your user only (for example Node.js with nvm-windows or fnm, or Python from python.org
 "for me only") needs nothing: Pythonator shares it with the sandbox itself.
 
+### Windows: Node.js and the folders above the sandbox's own
+
+A sandbox may use its own folders, but it may not even look at the folders above them (`C:\`, `C:\Users`, your
+profile folder). Node.js and npm look at every one of them on the way down to a file (Node's `realpath`), and
+stopped with *EPERM: operation not permitted, lstat 'C:\'*. Every Node.js in a sandbox (and every one npm starts
+there) therefore starts with:
+
+- `--preserve-symlinks --preserve-symlinks-main`: modules are loaded by the path they were found at, without that
+  walk. A package linked from elsewhere (`npm link`, pnpm's layout) is then loaded from where the link is.
+- a small preload, `pythonator-node.cjs` in the sandbox's own folder: when a look at a folder *above* the
+  sandbox's own folders is refused, it answers "a folder" (no name, size or date of anything), and a refused
+  `realpath` uses Windows' own, which needs access to the file only. It grants nothing.
+
+Both come through `NODE_OPTIONS`; a service's own `NODE_OPTIONS` are kept, after them.
+
 ## Container
 
 Container mode runs the service with **Docker** or **Podman** (Podman first on Linux, as it needs no root daemon).

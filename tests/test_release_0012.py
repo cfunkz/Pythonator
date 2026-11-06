@@ -152,11 +152,11 @@ def test_the_share_script_only_takes_a_real_folder(tmp_path: Path) -> None:
 def test_the_start_says_how_to_fix_a_program_folder_sandboxes_cant_use(monkeypatch: pytest.MonkeyPatch,
                                                                        tmp_path: Path) -> None:
     monkeypatch.setattr(launcher, "windows_shared_with_sandboxes", lambda path: False)
-    import os
-
     from pythonator.isolation import IsolationError
 
-    monkeypatch.setattr(os, "access", lambda path, mode: False)
+    assert windows.can_change_permissions(tmp_path)  # your own folder: the launcher shares it itself
+    assert not windows.blocked_program_folder(tmp_path)
+    monkeypatch.setattr(windows, "can_change_permissions", lambda folder: False)  # as C:\Program Files\...
     with pytest.raises(IsolationError, match="Let sandboxes use it"):
         windows.check_program_folders([tmp_path])
 

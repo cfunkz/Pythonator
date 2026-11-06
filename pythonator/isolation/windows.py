@@ -20,6 +20,7 @@ import json
 import os
 import re
 import subprocess
+import threading
 from collections.abc import Sequence
 from functools import cache
 from pathlib import Path
@@ -72,6 +73,27 @@ _next_sitecustomize()
 '''
 
 
+NODE_SHIM = "pythonator-node.cjs"
+
+
+@cache
+def node_shim() -> bytes:
+    """``resources/node_sandbox.cjs``: lets Node.js and npm work although the sandbox can't look at the folders
+    above its own (see the file)."""
+    return (Path(__file__).resolve().parent.parent / "resources" / "node_sandbox.cjs").read_bytes()
+
+
+def node_env(env: dict[str, str], shim: Path, roots: Sequence[Path]) -> dict[str, str]:
+    """What every Node.js in the sandbox starts with (``NODE_OPTIONS`` reaches the ones npm starts too): no
+    realpath of module paths (``--preserve-symlinks``: it would stat C:\\ and every folder down, which an
+    AppContainer may not), and the shim for npm's own stats. The service's own NODE_OPTIONS come after."""
+    # Forward slashes: inside NODE_OPTIONS' quotes a backslash escapes the next character.
+    ours = f'--preserve-symlinks --preserve-symlinks-main --require "{shim.as_posix()}"'
+    mine = env.get("NODE_OPTIONS", "")
+    return {"NODE_OPTIONS": f"{ours} {mine}".strip() if ours not in mine else mine,
+            "PYTHONATOR_NODE_ROOTS": os.pathsep.join(dict.fromkeys(str(r) for r in roots))}
+
+
 def container_name(ident: str) -> str:
     return launcher.container_name(ident)
 
@@ -121,9 +143,14 @@ def wrap(argv: list[str], cwd: Path, env: dict[str, str], policy: Policy, ident:
     record_grants(dirs, name, sid, [str(g.path) for g in grants])
     with contextlib.suppress(OSError):
         (site / "sitecustomize.py").write_text(SITECUSTOMIZE, encoding="utf-8")
+    shim = site / NODE_SHIM
+    with contextlib.suppress(OSError):
+        if not shim.is_file() or shim.read_bytes() != node_shim():
+            shim.write_bytes(node_shim())
     env = {**env, "USERPROFILE": str(home), "HOME": str(home), "APPDATA": str(roaming), "LOCALAPPDATA": str(local),
            "TEMP": str(temp), "TMP": str(temp), "PYTHONATOR_TEMP": str(temp), "PYTHONATOR_SANDBOX": "1"}
     env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(site), env.get("PYTHONPATH", "")]))
+    env.update(node_env(env, shim, [g.path for g in grants] + [base]))
     plan = {"appcontainer": {"name": name, "network": policy.network,
                              "grants": [[str(g.path), g.write] for g in grants],
                              "cmdline": cmdline or subprocess.list2cmdline(argv)}}
@@ -159,18 +186,23 @@ def _write_grants(dirs: DataDirs, ledger: dict[str, tuple[str, list[str]]]) -> N
         write_atomic(_ledger(dirs), json.dumps(data, indent=1))
 
 
+_LEDGER = threading.Lock()  # a removal cleans up in the background while other services start
+
+
 def record_grants(dirs: DataDirs, name: str, sid: str, folders: list[str]) -> None:
-    ledger = read_grants(dirs)
-    known = ledger.get(name, (sid, []))[1]
-    ledger[name] = (sid, sorted({*known, *folders}))
-    _write_grants(dirs, ledger)
+    with _LEDGER:
+        ledger = read_grants(dirs)
+        known = ledger.get(name, (sid, []))[1]
+        ledger[name] = (sid, sorted({*known, *folders}))
+        _write_grants(dirs, ledger)
 
 
-def forget(dirs: DataDirs, ident: str) -> None:
-    """Take a removed service's AppContainer off every folder it was given, and delete its profile."""
+def forget(dirs: DataDirs, ident: str, *, deleted: Path | None = None) -> None:
+    """Take a removed service's AppContainer off every folder it was given (except ``deleted``, which is about
+    to go), and delete its profile."""
     if not IS_WINDOWS:
         return
-    _forget(dirs, container_name(ident))
+    _forget(dirs, container_name(ident), deleted)
 
 
 def forget_all(dirs: DataDirs) -> None:
@@ -180,17 +212,20 @@ def forget_all(dirs: DataDirs) -> None:
             _forget(dirs, name)
 
 
-def _forget(dirs: DataDirs, name: str) -> None:
-    ledger = read_grants(dirs)
-    entry = ledger.pop(name, None)
+def _forget(dirs: DataDirs, name: str, deleted: Path | None = None) -> None:
+    with _LEDGER:
+        ledger = read_grants(dirs)
+        entry = ledger.pop(name, None)
+        _write_grants(dirs, ledger)  # even when the profile was already gone
     if entry is not None:
         sid, folders = entry
         for folder in folders:
+            if deleted is not None and Path(folder).resolve().is_relative_to(deleted.resolve()):
+                continue
             with contextlib.suppress(OSError, launcher.SandboxError):
                 launcher.windows_revoke(folder, [sid])
     with contextlib.suppress(OSError, launcher.SandboxError):
         launcher.windows_delete_profile(name)
-    _write_grants(dirs, ledger)  # even when the profile was already gone
 
 
 # -- programs installed for all users ----------------------------------------------------------------------
