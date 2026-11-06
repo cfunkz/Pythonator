@@ -117,8 +117,8 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           VERSION="${TAG#v}"
-          # This version's section of CHANGELOG.md ("## 1.2.3" up to the next "## "), without its heading.
-          awk -v v="## $VERSION" '$0 == v {on=1; next} on && /^## / {exit} on {print}' CHANGELOG.md > notes.md || true
+          # This version's section of CHANGELOG.md ("## [1.2.3] - date" up to the next "## "), without its heading.
+          awk -v v="## [$VERSION]" 'index($0, v) == 1 {on=1; next} on && /^## / {exit} on {print}' CHANGELOG.md > notes.md || true
           cat >> notes.md << EOF
 
           ## Downloads

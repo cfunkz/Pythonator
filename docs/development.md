@@ -111,7 +111,9 @@ through it, and stops it with `shutdown`, the command the Windows installer runs
 ## Releasing
 
 1. Set `__version__` in [`pythonator/__init__.py`](../pythonator/__init__.py) and add the version to
-   [CHANGELOG.md](../CHANGELOG.md).
+   [CHANGELOG.md](../CHANGELOG.md) as `## [0.0.17] - YYYY-MM-DD`, with `Security`, `Added`, `Changed`, `Fixed` and
+   `Removed` sections as needed ([Keep a Changelog](https://keepachangelog.com/en/1.1.0/)), and its compare link
+   at the bottom. The release notes are that section.
 2. Commit, then tag and push: `git tag v0.0.1 && git push origin v0.0.1`.
 
 `release.yml` checks the tag matches the version, builds the installers and portable files on Windows, Linux
