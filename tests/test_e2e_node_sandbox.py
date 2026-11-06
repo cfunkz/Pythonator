@@ -2,15 +2,25 @@
 answers on its port. Off by default (it downloads packages and takes minutes); CI's node-sandbox job runs it with
 PYTHONATOR_E2E=1, on Windows, where Node.js is installed for all users in C:\\Program Files as on most PCs.
 
-When the server doesn't answer, it says where it is stuck: a watchdog preloaded into Node.js pauses the main
-thread from a worker (the inspector, no network) and prints its JavaScript stack, and the console's shell runs a
-few checks next to it (which Node.js the sandbox finds, whether it may start it, the folders' permissions)."""
+When the server doesn't answer, it says where it is stuck, from several sides:
+
+* a watchdog preloaded into Node.js pauses the main thread from a worker (the inspector, no network) and prints
+  its JavaScript stack, or says the main thread is in native code;
+* a trace of each module, import and native addon (``process.dlopen``) Node.js loads, with the time;
+* the native stacks of each thread, from the Windows debugger (cdb, non-invasive) when the runner has it;
+* the same app with variations: only loading Vite's bundler (rolldown), Vite's other config loader, and Node.js
+  without each part of Pythonator's sandbox options;
+* the console's shell: which Node.js the sandbox finds, whether it may start it, the folders' permissions."""
 
 from __future__ import annotations
 
+import contextlib
 import os
+import subprocess
+import sys
 import time
 import urllib.request
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +64,53 @@ if (isMainThread && !globalThis.__pythonatorWatchdog) {
 """
 
 
+TRACE = r"""
+const fs = require('fs'); const Module = require('module');
+if (!globalThis.__pythonatorTrace) {
+  globalThis.__pythonatorTrace = true;
+  const t0 = Date.now();
+  const log = (t) => fs.writeSync(2, 'TRACE +' + (Date.now() - t0) + 'ms ' + t + '\n');
+  const dlopen = process.dlopen;
+  process.dlopen = function (mod, file, ...rest) {
+    log('dlopen ' + file);
+    const out = dlopen.call(this, mod, file, ...rest);
+    log('dlopen done ' + file);
+    return out;
+  };
+  const load = Module._load;
+  Module._load = function (request, parent, isMain) {
+    if (!Module.isBuiltin(request)) log('require ' + request);
+    return load.apply(this, arguments);
+  };
+  if (typeof Module.registerHooks === 'function') {
+    Module.registerHooks({ resolve(spec, ctx, next) {
+      const r = next(spec, ctx);
+      if (!r.url.startsWith('node:')) log('import ' + r.url);
+      return r;
+    } });
+  }
+  log('trace on: node ' + process.version + ', NODE_OPTIONS=' + process.env.NODE_OPTIONS);
+}
+"""
+
+PROBE = """
+console.log('PROBE start');
+const t = Date.now();
+const r = await import('rolldown');
+console.log('PROBE rolldown loaded in', Date.now() - t, 'ms');
+const bundle = await r.rolldown({ input: './probe-in.js' });
+await bundle.generate({ format: 'esm' });
+console.log('PROBE build ok in', Date.now() - t, 'ms');
+process.exit(0);
+"""
+
+
+def say(text: str) -> None:
+    """Print whatever the programs wrote (box drawing, emoji) on a Windows console that can't show it."""
+    sys.stdout.buffer.write(text.encode("utf-8", "replace") + b"\n")
+    sys.stdout.flush()
+
+
 def _get(port: int) -> str:
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=10) as r:
@@ -62,38 +119,116 @@ def _get(port: int) -> str:
         return str(exc)
 
 
-def test_a_vite_app_answers_in_the_sandbox(dirs: Any, qtbot: Any, tmp_path: Path) -> None:
+def _free_port() -> int:
+    import socket
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+
+
+def native_stacks(root_pid: int) -> str:
+    """Each node.exe under ``root_pid``: its busiest threads, and every thread's native stack (cdb, when the
+    computer has the Windows debugger)."""
+    import psutil
+
+    out = []
+    cdbs = [str(p) for p in (Path(r"C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe"),
+                             Path(r"C:\Program Files\Windows Kits\10\Debuggers\x64\cdb.exe")) if p.is_file()]
+    try:
+        nodes = [p for p in psutil.Process(root_pid).children(recursive=True) if p.name().lower().startswith("node")]
+    except psutil.Error as exc:
+        return f"no process tree: {exc}"
+    for proc in nodes:
+        with contextlib.suppress(psutil.Error):
+            busy = sorted(proc.threads(), key=lambda t: -(t.user_time + t.system_time))[:6]
+            out.append(f"{proc.name()} pid {proc.pid}, {len(proc.threads())} threads; busiest: "
+                       + ", ".join(f"tid {t.id} {t.user_time + t.system_time:.1f}s" for t in busy))
+        if not cdbs:
+            out.append("(no cdb.exe on this computer: no native stacks)")
+            continue
+        env = {**os.environ, "_NT_SYMBOL_PATH": r"srv*C:\symcache*https://msdl.microsoft.com/download/symbols"}
+        try:
+            done = subprocess.run([cdbs[0], "-pv", "-p", str(proc.pid), "-c", "!runaway 7; ~*kc 50; lm; q"],
+                                  capture_output=True, text=True, errors="replace", timeout=400, env=env,
+                                  check=False)
+            out.append(done.stdout[-60000:] + done.stderr[-2000:])
+        except (OSError, subprocess.SubprocessError) as exc:
+            out.append(f"cdb failed: {exc}")
+    return "\n".join(out)
+
+
+def test_a_vite_app_answers_in_the_sandbox(dirs: Any, qtbot: Any, tmp_path: Path,
+                                           monkeypatch: pytest.MonkeyPatch) -> None:
     from pythonator.core import runtimes
+    from pythonator.isolation import windows
     from tests.conftest import DaemonHarness
 
-    print("node on PATH:", runtimes.which("node"))
+    say(f"node on PATH: {runtimes.which('node')}")
     h = DaemonHarness(dirs, qtbot)
     sup = h.daemon.sup
+    answers: dict[str, str] = {}
     try:
         parent = tmp_path / "projects"
         made = sup.create_project("react", "e2e-react", parent, start=False)
         h.wait(lambda: sup.slots[made.id].state.value in ("stopped", "failed"), timeout=900_000)
         assert sup.slots[made.id].state.value == "stopped", sup.tail(made.id)[-6000:]
         folder = parent / "e2e-react"
-        (folder / "watchdog.cjs").write_text(WATCHDOG, encoding="utf-8")
-        service = sup.slots[made.id].service
-        sup.update(service.model_copy(update={"env": {
-            **service.env, "NODE_OPTIONS": f'--require "{(folder / "watchdog.cjs").as_posix()}"'}}))
-        sup.start(made.id, confirmed=True)
-        port = sup.slots[made.id].service.network.ports[0]
-        answer = ""
-        deadline = time.monotonic() + 120
-        while time.monotonic() < deadline:
-            h.qtbot.wait(2000)
-            answer = _get(port)
-            if answer.startswith("HTTP 200") or sup.slots[made.id].state.value in ("failed", "stopped"):
-                break
-        h.qtbot.wait(25_000 if not answer.startswith("HTTP 200") else 0)  # the watchdog's later samples
-        print(f"\n===== the service: {answer} =====\n{sup.tail(made.id)}")
-        if (folder / "watchdog.txt").is_file():
-            print("===== watchdog.txt =====\n" + (folder / "watchdog.txt").read_text(encoding="utf-8"))
-        sup.stop(made.id)
-        h.wait(lambda: sup.slots[made.id].runner is None, timeout=30_000)
+        for name, text in (("watchdog.cjs", WATCHDOG), ("trace.cjs", TRACE), ("probe.mjs", PROBE),
+                           ("probe-in.js", "export default 1;\n")):
+            (folder / name).write_text(text, encoding="utf-8")
+        diag = f'--require "{(folder / "trace.cjs").as_posix()}" --require "{(folder / "watchdog.cjs").as_posix()}"'
+        real_node_env = windows.node_env
+
+        def flags_only(env: dict[str, str], shim: Path, roots: Any) -> dict[str, str]:
+            return {"NODE_OPTIONS": f"--preserve-symlinks --preserve-symlinks-main {env.get('NODE_OPTIONS', '')}"}
+
+        def nothing(env: dict[str, str], shim: Path, roots: Any) -> dict[str, str]:
+            return {}
+
+        vite = "node_modules/vite/bin/vite.js"
+        variants = [  # name, entry, extra args, what the sandbox adds to Node.js
+            ("rolldown only", "probe.mjs", [], real_node_env),
+            ("vite", vite, [], real_node_env),
+            ("vite, config loader runner", vite, ["--configLoader", "runner"], real_node_env),
+            ("vite, no shim (flags only)", vite, [], flags_only),
+            ("vite, no Pythonator options", vite, [], nothing),
+            ("rolldown only, no Pythonator options", "probe.mjs", [], nothing),
+        ]
+        for name, entry, extra, node_env in variants:
+            monkeypatch.setattr(windows, "node_env", node_env)
+            port = _free_port()
+            web = entry == vite
+            args = ["--host", "127.0.0.1", "--port", str(port), "--strictPort", *extra] if web else []
+            sid = h.add(name=f"v{len(answers)}", folder=str(folder), runtime="node", entry=entry, args=args,
+                        mode="sandbox", own_env=True, restart="never",
+                        env={"NODE_OPTIONS": diag, "DEBUG": "vite:*" if web else ""},
+                        network={"ports": [port] if web else []})
+            sup.start(sid, confirmed=True)
+            started = time.monotonic()
+            answer = ""
+            stacks = ""
+            while time.monotonic() - started < 50:
+                h.qtbot.wait(2000)
+                slot = sup.slots[sid]
+                if web:
+                    answer = _get(port)
+                    if answer.startswith("HTTP 200"):
+                        break
+                if slot.state.value in ("failed", "stopped"):
+                    answer = answer or f"exited: {slot.state.value} {slot.exit_code}"
+                    break
+                if not stacks and time.monotonic() - started > 42 and slot.runner is not None and slot.runner.pid:
+                    stacks = native_stacks(slot.runner.pid)
+            answers[name] = answer or "still running, no answer"
+            say(f"\n===== {name}: {answers[name]} =====\n{sup.tail(sid)}")
+            if stacks:
+                say(f"===== {name}: native stacks =====\n{stacks}")
+            sup.stop(sid)
+            h.wait(partial(lambda s: sup.slots[s].runner is None, sid), timeout=30_000)
+            sup.remove(sid)
+            h.qtbot.wait(1000)
+        monkeypatch.setattr(windows, "node_env", real_node_env)
 
         private = sorted((dirs.root / "runtimes").glob("node-*"))
         node = str(private[-1] / "node.exe") if private else "node"
@@ -106,8 +241,9 @@ def test_a_vite_app_answers_in_the_sandbox(dirs: Any, qtbot: Any, tmp_path: Path
             sup.clear(made.id)
             sup.shell(made.id, line)
             h.wait(lambda: sup.slots[made.id].shell is None, timeout=60_000)
-            print(f"===== shell: {line} =====\n{sup.tail(made.id)}")
-        assert answer.startswith("HTTP 200"), "the Vite app didn't answer in the sandbox: see the output above"
+            say(f"===== shell: {line} =====\n{sup.tail(made.id)}")
+        say("===== summary =====\n" + "\n".join(f"{k}: {v}" for k, v in answers.items()))
+        assert answers["vite"].startswith("HTTP 200"), "the Vite app didn't answer in the sandbox: see above"
     finally:
         for sid in list(sup.slots):
             sup.stop(sid)
