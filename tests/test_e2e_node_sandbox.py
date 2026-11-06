@@ -1,16 +1,15 @@
 """End to end, on a real computer: a React (Vite) project made by the Project builder starts in the sandbox and
-answers on its port. Off by default (it downloads packages and takes minutes); CI's node-sandbox job runs it with
-PYTHONATOR_E2E=1, on Windows, where Node.js is installed for all users in C:\\Program Files as on most PCs.
+answers on its port, and a Node.js app there may start another program. Off by default (it downloads packages and
+takes minutes); CI's node-sandbox job runs it with PYTHONATOR_E2E=1, on Windows, where Node.js is installed for all
+users in C:\\Program Files as on most PCs.
 
-When the server doesn't answer, it says where it is stuck, from several sides:
+Both hung in the Windows sandbox until 0.0.15: Node's pipe names (see ``private_node.PIPE_NAME``). When something
+doesn't answer, it says where it is stuck:
 
 * a watchdog preloaded into Node.js pauses the main thread from a worker (the inspector, no network) and prints
   its JavaScript stack, or says the main thread is in native code;
-* a trace of each module, import and native addon (``process.dlopen``) Node.js loads, with the time;
 * the native stacks of each thread, from the Windows debugger (cdb, non-invasive) when the runner has it;
-* the same app with variations: only loading Vite's bundler (rolldown), Vite's other config loader, and Node.js
-  without each part of Pythonator's sandbox options;
-* the console's shell: which Node.js the sandbox finds, whether it may start it, the folders' permissions."""
+* the console's shell: which Node.js the sandbox finds, and whether it may start programs."""
 
 from __future__ import annotations
 
@@ -64,44 +63,9 @@ if (isMainThread && !globalThis.__pythonatorWatchdog) {
 """
 
 
-TRACE = r"""
-const fs = require('fs'); const Module = require('module');
-if (!globalThis.__pythonatorTrace) {
-  globalThis.__pythonatorTrace = true;
-  const t0 = Date.now();
-  const log = (t) => fs.writeSync(2, 'TRACE +' + (Date.now() - t0) + 'ms ' + t + '\n');
-  const dlopen = process.dlopen;
-  process.dlopen = function (mod, file, ...rest) {
-    log('dlopen ' + file);
-    const out = dlopen.call(this, mod, file, ...rest);
-    log('dlopen done ' + file);
-    return out;
-  };
-  const load = Module._load;
-  Module._load = function (request, parent, isMain) {
-    if (!Module.isBuiltin(request)) log('require ' + request);
-    return load.apply(this, arguments);
-  };
-  if (typeof Module.registerHooks === 'function') {
-    Module.registerHooks({ resolve(spec, ctx, next) {
-      const r = next(spec, ctx);
-      if (!r.url.startsWith('node:')) log('import ' + r.url);
-      return r;
-    } });
-  }
-  log('trace on: node ' + process.version + ', NODE_OPTIONS=' + process.env.NODE_OPTIONS);
-}
-"""
-
-PROBE = """
-console.log('PROBE start');
-const t = Date.now();
-const r = await import('rolldown');
-console.log('PROBE rolldown loaded in', Date.now() - t, 'ms');
-const bundle = await r.rolldown({ input: './probe-in.js' });
-await bundle.generate({ format: 'esm' });
-console.log('PROBE build ok in', Date.now() - t, 'ms');
-process.exit(0);
+SPAWN = """
+const { execFileSync } = require('child_process');
+console.log('child says', execFileSync(process.execPath, ['-v']).toString().trim());
 """
 
 
@@ -158,57 +122,37 @@ def native_stacks(root_pid: int) -> str:
     return "\n".join(out)
 
 
-def test_a_vite_app_answers_in_the_sandbox(dirs: Any, qtbot: Any, tmp_path: Path,
-                                           monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_vite_app_answers_in_the_sandbox(dirs: Any, qtbot: Any, tmp_path: Path) -> None:
     from pythonator.core import runtimes
-    from pythonator.isolation import windows
     from tests.conftest import DaemonHarness
 
     say(f"node on PATH: {runtimes.which('node')}")
     h = DaemonHarness(dirs, qtbot)
     sup = h.daemon.sup
     answers: dict[str, str] = {}
+    logs: dict[str, str] = {}
     try:
         parent = tmp_path / "projects"
         made = sup.create_project("react", "e2e-react", parent, start=False)
         h.wait(lambda: sup.slots[made.id].state.value in ("stopped", "failed"), timeout=900_000)
         assert sup.slots[made.id].state.value == "stopped", sup.tail(made.id)[-6000:]
         folder = parent / "e2e-react"
-        for name, text in (("watchdog.cjs", WATCHDOG), ("trace.cjs", TRACE), ("probe.mjs", PROBE),
-                           ("probe-in.js", "export default 1;\n")):
+        for name, text in (("watchdog.cjs", WATCHDOG), ("spawn.cjs", SPAWN)):
             (folder / name).write_text(text, encoding="utf-8")
-        diag = f'--require "{(folder / "trace.cjs").as_posix()}" --require "{(folder / "watchdog.cjs").as_posix()}"'
-        real_node_env = windows.node_env
-
-        def flags_only(env: dict[str, str], shim: Path, roots: Any) -> dict[str, str]:
-            return {"NODE_OPTIONS": f"--preserve-symlinks --preserve-symlinks-main {env.get('NODE_OPTIONS', '')}"}
-
-        def nothing(env: dict[str, str], shim: Path, roots: Any) -> dict[str, str]:
-            return {}
-
+        diag = f'--require "{(folder / "watchdog.cjs").as_posix()}"'
         vite = "node_modules/vite/bin/vite.js"
-        variants = [  # name, entry, extra args, what the sandbox adds to Node.js
-            ("rolldown only", "probe.mjs", [], real_node_env),
-            ("vite", vite, [], real_node_env),
-            ("vite, config loader runner", vite, ["--configLoader", "runner"], real_node_env),
-            ("vite, no shim (flags only)", vite, [], flags_only),
-            ("vite, no Pythonator options", vite, [], nothing),
-            ("rolldown only, no Pythonator options", "probe.mjs", [], nothing),
-        ]
-        for name, entry, extra, node_env in variants:
-            monkeypatch.setattr(windows, "node_env", node_env)
+        for name, entry in (("starts a program", "spawn.cjs"), ("vite", vite)):
             port = _free_port()
             web = entry == vite
-            args = ["--host", "127.0.0.1", "--port", str(port), "--strictPort", *extra] if web else []
+            args = ["--host", "127.0.0.1", "--port", str(port), "--strictPort"] if web else []
             sid = h.add(name=f"v{len(answers)}", folder=str(folder), runtime="node", entry=entry, args=args,
-                        mode="sandbox", own_env=True, restart="never",
-                        env={"NODE_OPTIONS": diag, "DEBUG": "vite:*" if web else ""},
+                        mode="sandbox", own_env=True, restart="never", env={"NODE_OPTIONS": diag},
                         network={"ports": [port] if web else []})
             sup.start(sid, confirmed=True)
             started = time.monotonic()
             answer = ""
             stacks = ""
-            while time.monotonic() - started < 50:
+            while time.monotonic() - started < 240:  # the first start copies Node.js for sandboxes
                 h.qtbot.wait(2000)
                 slot = sup.slots[sid]
                 if web:
@@ -216,34 +160,34 @@ def test_a_vite_app_answers_in_the_sandbox(dirs: Any, qtbot: Any, tmp_path: Path
                     if answer.startswith("HTTP 200"):
                         break
                 if slot.state.value in ("failed", "stopped"):
-                    answer = answer or f"exited: {slot.state.value} {slot.exit_code}"
+                    answer = f"exited: {slot.state.value} {slot.exit_code}"
                     break
-                if not stacks and time.monotonic() - started > 42 and slot.runner is not None and slot.runner.pid:
+                if (not stacks and "Started" in sup.tail(sid) and time.monotonic() - started > 60
+                        and slot.runner is not None and slot.runner.pid):
                     stacks = native_stacks(slot.runner.pid)
+                    break
             answers[name] = answer or "still running, no answer"
-            say(f"\n===== {name}: {answers[name]} =====\n{sup.tail(sid)}")
+            logs[name] = sup.tail(sid)
+            say(f"\n===== {name}: {answers[name]} =====\n{logs[name]}")
             if stacks:
                 say(f"===== {name}: native stacks =====\n{stacks}")
             sup.stop(sid)
             h.wait(partial(lambda s: sup.slots[s].runner is None, sid), timeout=30_000)
             sup.remove(sid)
             h.qtbot.wait(1000)
-        monkeypatch.setattr(windows, "node_env", real_node_env)
 
-        private = sorted((dirs.root / "runtimes").glob("node-*"))
-        node = str(private[-1] / "node.exe") if private else "node"
-        checks = ["where node", "node -v", f'"{node}" -v', f'"{node}" -e "console.log(process.execPath)"',
-                  f'icacls "{node}"', f'icacls "{folder}"',
-                  "echo PATH=%PATH% NODE_OPTIONS=%NODE_OPTIONS% TEMP=%TEMP% USERPROFILE=%USERPROFILE%"]
-        if os.name == "nt":
-            checks.insert(0, f'"{os.environ.get("SYSTEMROOT", "C:/Windows")}\\System32\\whoami.exe" /groups')
+        checks = ["where node", "node -v", f'node "{folder / "spawn.cjs"}"']
         for line in checks:
             sup.clear(made.id)
             sup.shell(made.id, line)
             h.wait(lambda: sup.slots[made.id].shell is None, timeout=60_000)
             say(f"===== shell: {line} =====\n{sup.tail(made.id)}")
         say("===== summary =====\n" + "\n".join(f"{k}: {v}" for k, v in answers.items()))
+        assert answers["starts a program"] == "exited: stopped 0", "Node.js couldn't start a program: see above"
+        assert "child says v" in logs["starts a program"]
         assert answers["vite"].startswith("HTTP 200"), "the Vite app didn't answer in the sandbox: see above"
+        if os.name == "nt":  # the fixed copy of Node.js ran, not the one in C:\\Program Files
+            assert "runtimes" in logs["vite"].split("Started", 1)[1].splitlines()[0]
     finally:
         for sid in list(sup.slots):
             sup.stop(sid)

@@ -342,3 +342,59 @@ def test_a_label_remembers_its_height_per_width(qtbot: Any) -> None:
         label.heightForWidth(w)
     assert len(label._heights) <= 33
     assert label.textFormat().name == "PlainText"  # a plugin's text is never HTML
+
+
+# -- Node.js that starts programs in the Windows sandbox -------------------------------------------------------
+
+
+def fake_pe(body: bytes, certificate: bytes = b"") -> bytes:
+    """A PE32+ program: header, ``body``, and an Authenticode certificate table at the end when given."""
+    head = bytearray(0x200)
+    head[:2] = b"MZ"
+    head[0x3C:0x40] = (0x80).to_bytes(4, "little")
+    head[0x80:0x84] = b"PE\0\0"
+    head[0x98:0x9A] = (0x20B).to_bytes(2, "little")  # optional header magic: PE32+
+    start = len(head) + len(body)
+    if certificate:
+        entry = 0x98 + 112 + 4 * 8
+        head[entry:entry + 8] = start.to_bytes(4, "little") + len(certificate).to_bytes(4, "little")
+    return bytes(head) + body + certificate
+
+
+def test_the_sandbox_copy_of_node_names_its_pipes_under_local(tmp_path: Path) -> None:
+    from pythonator.isolation import private_node
+
+    assert len(private_node.PIPE_NAME) == len(private_node.LOCAL_PIPE_NAME)  # nothing after it moves
+    exe = tmp_path / "node.exe"
+    body = b"code" + private_node.PIPE_NAME + b"more code"
+    exe.write_bytes(fake_pe(body, certificate=b"\x08\x00\x00\x00signed!!"))
+    assert private_node.pipes_hang(exe)
+    assert private_node.fix_pipe_names(exe)
+    fixed = exe.read_bytes()
+    assert fixed == fake_pe(b"code" + private_node.LOCAL_PIPE_NAME + b"more code")  # and no signature
+    assert not private_node.pipes_hang(exe) and not private_node.fix_pipe_names(exe)
+    other = tmp_path / "other.exe"  # a Node.js with libuv 1.53's names already: left as it is
+    other.write_bytes(fake_pe(b"\\\\?\\pipe\\%suv\\%llu-%lu\x00", certificate=b"sig"))
+    assert not private_node.pipes_hang(other) and not private_node.fix_pipe_names(other)
+
+
+def test_a_node_whose_pipes_hang_runs_from_the_fixed_copy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A Node.js the sandbox could read where it is installed (an nvm-windows one, or a shared folder) still runs
+    from the copy when its pipes would hang; one with fixed pipe names runs where it is."""
+    from pythonator.isolation import private_node, windows
+    from pythonator.paths import DataDirs
+
+    node = tmp_path / "nodejs"
+    (node / "node_modules" / "npm" / "bin").mkdir(parents=True)
+    (node / private_node.EXE).write_bytes(fake_pe(private_node.PIPE_NAME))
+    monkeypatch.setattr(private_node, "IS_WINDOWS", True)
+    monkeypatch.setattr(windows, "blocked_program_folder", lambda folder: False)
+    dirs = DataDirs(tmp_path / "d")
+    argv, _env, private = private_node.for_sandbox([str(node / private_node.EXE), "vite.js"], {"PATH": ""}, dirs)
+    assert private is not None and argv == [str(private / private_node.EXE), "vite.js"]
+    assert private.name.startswith("node-") and private.parent == dirs.root / "runtimes"
+    assert private_node.LOCAL_PIPE_NAME in (private / private_node.EXE).read_bytes()
+    assert private_node.PIPE_NAME in (node / private_node.EXE).read_bytes()  # the installed one is never changed
+    (node / private_node.EXE).write_bytes(fake_pe(b"\\\\?\\pipe\\%suv\\%llu-%lu\x00 and a newer Node.js"))
+    same = [str(node / private_node.EXE), "vite.js"]
+    assert private_node.for_sandbox(same, {"PATH": ""}, dirs) == (same, {"PATH": ""}, None)

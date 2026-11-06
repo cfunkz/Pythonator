@@ -28,6 +28,12 @@ Pythonator follows [semantic versioning](https://semver.org/). Each release list
   `RUSTUP_HOME` points at it).
 - Nuxt runs as one process (`--no-fork`), Astro's dev server stays in the foreground, and Astro's starter is
   written by Pythonator instead of being downloaded from GitHub.
+- Windows sandbox: Vite apps (React, Vue, Svelte and the others) start. Node.js hung, using a whole core and
+  printing nothing, as soon as an app started another program: Node's pipe names are ones Windows refuses in a
+  sandbox, and Node tries the next name forever. Vite starts one at once (`net use`); Next.js, Angular and npm
+  install scripts do too. Sandboxes now run Pythonator's private copy of Node.js, with that one name moved under
+  `LOCAL\`, as Node's next libuv does in a sandbox. See "Windows: Node.js programs that start other programs" in
+  the isolation docs. CI starts a Vite app in the Windows sandbox on every push.
 
 ## 0.0.14
 

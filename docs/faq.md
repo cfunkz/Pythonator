@@ -58,6 +58,9 @@ The operating system refused part of the sandbox. The line above it in the conso
   by Windows itself: Hyper-V, WSL and Docker reserve ranges of ports, which can change at each restart, and
   `netsh interface ipv4 show excludedportrange protocol=tcp` lists them. Choose another port on the Network tab.
   When the service runs but still doesn't listen 30 seconds in, a note says so, with what its processes are doing.
+* On **Windows**, a Node.js app in the sandbox that used a whole core and printed nothing (Vite, React, Vue) was
+  stuck making a pipe for a program it starts. Fixed in 0.0.15: see
+  [Node.js programs that start other programs](isolation.md#windows-nodejs-programs-that-start-other-programs).
 * On **Windows**, press **Make reachable…** once: Windows keeps sandboxed servers unreachable, even from the same
   computer, until an administrator allows it. See [Ports and APIs](networking.md#windows-make-reachable).
 * On **Linux 6.7+** and **macOS**, a sandboxed program may only listen on the listed ports. A framework that picks

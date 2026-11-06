@@ -67,10 +67,11 @@ jobs:
         run: /usr/bin/log show --last 15m --style compact --predicate 'sender == "Sandbox"' | tail -n 200
 
   node-sandbox:
-    # End to end on Windows, with Node.js installed for all users in C:\Program Files as on most PCs: a React
-    # (Vite) project from the Project builder starts in the sandbox and answers on its port. When it doesn't, the
-    # log says where it is stuck (the JavaScript stack, and checks from the console's shell). It downloads
-    # packages and takes minutes, so it doesn't hold up the rest of CI.
+    # End to end on Windows, with Node.js installed for all users in C:\Program Files as on most PCs: a Node.js
+    # app in the sandbox starts another program, and a React (Vite) project from the Project builder starts there
+    # and answers on its port. When one doesn't, the log says where it is stuck (the JavaScript stack, each
+    # thread's native stack, checks from the console's shell). It downloads packages and takes minutes, so it
+    # doesn't hold up the rest of CI.
     runs-on: windows-latest
     continue-on-error: true
     timeout-minutes: 30

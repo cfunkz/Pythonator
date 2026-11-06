@@ -63,7 +63,8 @@ installers, Node.js's among them, set up their folder without that entry, and on
 
 - **Node.js** needs nothing from you: Pythonator copies that folder (node.exe and npm, about 100 MB) once per
   Node version into its own data folder, `runtimes\node-…`, and the sandbox reads and runs the copy, never writes
-  it. npm and npx run as `node.exe npm-cli.js`, without a batch file in between. **System check** says when a
+  it. Sandboxes use the copy for another reason too, wherever Node.js is installed: see "Windows: Node.js programs
+  that start other programs" below. npm and npx run as `node.exe npm-cli.js`, without a batch file in between. **System check** says when a
   sandbox uses the copy. A new Node version gets a new copy and the old one is removed.
 - **Anything else** (Python, Go, Java… installed for all users without that entry) is refused before the start,
   with the fix, instead of failing with *Access is denied*. **System check** marks it and offers **Let sandboxes
@@ -91,6 +92,21 @@ there) therefore starts with:
   `realpath` uses Windows' own, which needs access to the file only. It grants nothing.
 
 Both come through `NODE_OPTIONS`; a service's own `NODE_OPTIONS` are kept, after them.
+
+### Windows: Node.js programs that start other programs
+
+When a Node.js app starts another program (Vite at start, Next.js and Angular for their workers, npm for install
+scripts), Node.js makes pipes for that program's input and output. Its library for this, libuv, names them
+`\\?\pipe\uv\…`, but Windows lets a sandbox make pipes only under `\\?\pipe\LOCAL\…`. libuv takes the refusal
+for a name already in use and tries the next one, forever: Node.js uses a whole core and prints nothing.
+libuv 1.53 fixes it, and no Node.js release has it yet (November 2026).
+
+Until one does, sandboxes run Pythonator's private copy of Node.js (see above) for every Node.js with the old
+names, wherever it is installed. In the copy's `node.exe`, Pythonator changes that one name,
+`\\?\pipe\uv\%llu-%lu`, to `\\?\pipe\LOCAL\%llu` (the same length; libuv 1.53 adds `LOCAL\` in a sandbox too),
+and nothing else. Your Node.js stays as it was. A
+changed program no longer matches its signature, so the copy has none, like a program you build yourself. Full
+access and containers use your Node.js as it is installed.
 
 ## Container
 

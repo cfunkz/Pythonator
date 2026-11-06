@@ -178,9 +178,13 @@ def _private_note(prog: str) -> str:
     from ..isolation import private_node, windows
 
     folder = private_node.node_folder(prog)
-    if folder is None or not windows.blocked_program_folder(folder):
+    if folder is None:
         return ""
-    return "sandboxes run Pythonator's own copy of it (installed for all users, so they can't use it there)"
+    if windows.blocked_program_folder(folder):
+        return "sandboxes run Pythonator's own copy of it (installed for all users, so they can't use it there)"
+    if private_node.pipes_hang(folder / private_node.EXE):
+        return "sandboxes run Pythonator's own copy of it, which may start programs there (see the isolation docs)"
+    return ""
 
 
 def tools() -> tuple[list[Tool], list[Tool]]:
