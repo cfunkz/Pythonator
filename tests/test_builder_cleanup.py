@@ -126,6 +126,18 @@ def test_removing_twice_does_nothing_the_second_time(harness: Any, tmp_path: Pat
     assert "Killed" not in "".join(e.get("text", "") for e in harness.events if e.get("ev") == "output")
 
 
+def test_removing_a_service_already_gone_does_nothing(harness: Any, tmp_path: Path) -> None:
+    """The second click may arrive after the first remove finished (a quick stop, as on macOS CI): still no error.
+    An id that never existed is still an error."""
+    sid = harness.add(name="idle", folder=str(tmp_path), runtime="python", entry="app.py")
+    harness.ok({"op": "remove", "id": sid})
+    harness.wait(lambda: sid not in harness.daemon.sup.slots)
+    harness.ok({"op": "remove", "id": sid})
+    harness.ok({"op": "remove", "id": sid, "files": True})
+    ok, _data, err = harness.call({"op": "remove", "id": "0123456789ab"}, 5000)
+    assert not ok and "No such service" in err
+
+
 def test_the_plugin_asks_about_leftovers_in_the_window(harness: Any, tmp_path: Path) -> None:
     from pythonator.plugins import files
 

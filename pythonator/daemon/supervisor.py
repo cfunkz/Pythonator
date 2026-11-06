@@ -124,6 +124,7 @@ class Supervisor:
         self.settings: Settings = store.load_settings()
         self.slots: dict[str, Slot] = {}
         self.deleting: set[str] = set()  # folders being deleted in the background (_key): never leftovers
+        self.removed: list[str] = []  # the last ids removed: asking again (a second click or window) is a no-op
         self.listeners: list[Listener] = []
         self.gate: Callable[[Service, Callable[[str], None]], None] | None = None  # policy plugins
         self.queue: queue.SimpleQueue[Event | Callable[[], None]] = queue.SimpleQueue()
@@ -358,6 +359,8 @@ class Supervisor:
     def add(self, service: Service) -> None:
         if service.id in self.slots:
             raise ValueError("A service with this id exists")
+        if service.id in self.removed:  # back again (an import): a remove of it means this one now
+            self.removed.remove(service.id)
         self.slots[service.id] = Slot(service, self._new_log(service))
         self._services_changed()
         self.emit(self.state_event(self.slots[service.id]))
@@ -376,7 +379,9 @@ class Supervisor:
     def remove(self, sid: str, *, then: Callable[[], None] | None = None, deleted: Path | None = None) -> None:
         """Remove a service (stopped first). Its clean-up (on Windows, taking its sandbox's permissions back file
         by file) runs in the background, then ``then``: the window and the other services never wait for it.
-        A service already being removed is left to that removal: asking twice never kills it or errors."""
+        A service already being removed, or just removed, is left alone: asking twice never kills it or errors."""
+        if sid in self.removed:
+            return
         slot = self.slot(sid)
         if slot.removing:
             return
@@ -395,6 +400,7 @@ class Supervisor:
         def gone() -> None:
             slot.log.close()
             self.slots.pop(sid, None)
+            self.removed = [*self.removed[-99:], sid]
             self._services_changed()
             threading.Thread(target=clean, name=f"remove-{sid}", daemon=True).start()
 
@@ -422,7 +428,7 @@ class Supervisor:
 
     def delete_project(self, sid: str) -> None:
         """Remove a project the Project builder made, and delete its folder (stopped first). Raises ValueError."""
-        if self.slot(sid).removing:  # asked twice (two clicks, two windows): the first one is under way
+        if sid in self.removed or self.slot(sid).removing:  # asked twice (two clicks, two windows): under way or done
             return
         folder = self.project_folder(sid)
         name = self.slot(sid).service.name

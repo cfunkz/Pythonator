@@ -96,7 +96,8 @@ Bundled plugins: Project builder 1.4.0, Notify 1.1.1, AI assistant 1.3.1.
 - A new background service exited while the old one was shutting down, leaving the window on "connecting".
 - Two windows or two background services could run at once, so every question was asked twice and every service
   ran twice.
-- Removing a service that was already being removed force-killed it and could show "No such service".
+- Removing a service a second time (a second click or window, while it stops or after it is gone) force-killed it
+  or showed "No such service".
 - Windows: Project builder Refresh could offer a leftover folder again while it was being deleted.
 - AI assistant: a missing `>>>>>>> END` wrote the next edit block's markers into the file. Pythonator itself now
   refuses any change that adds an edit marker or a hidden-value placeholder.
