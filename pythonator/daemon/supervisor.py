@@ -505,7 +505,9 @@ class Supervisor:
         out: list[dict[str, Any]] = []
         for child in children:
             try:
-                if child.name.startswith(".") or child.is_symlink() or child.is_junction() or not child.is_dir():
+                if child.name.startswith(".") or os.path.normcase(str(child)) in self.deleting:
+                    continue  # checked before resolve(): on Windows a folder mid-delete may resolve to another spelling
+                if child.is_symlink() or child.is_junction() or not child.is_dir():
                     continue
                 real = child.resolve()
             except OSError:
@@ -1431,11 +1433,17 @@ def _remove_env(path: Path, allowed: list[Path]) -> None:
 
 
 def _key(folder: Path) -> str:
-    """A folder as one string, whatever its spelling: resolved, and on Windows without case."""
+    """A folder as one string, whatever its spelling: resolved, and on Windows without case or a ``\\\\?\\`` prefix
+    (resolve() keeps that prefix when the folder is being deleted)."""
     try:
-        return os.path.normcase(str(folder.resolve()))
+        text = str(folder.resolve())
     except (OSError, ValueError):
         return ""
+    if text.startswith("\\\\?\\UNC\\"):
+        text = "\\\\" + text[8:]
+    elif text.startswith("\\\\?\\"):
+        text = text[4:]
+    return os.path.normcase(text)
 
 
 def _delete_tree(folder: Path) -> str:

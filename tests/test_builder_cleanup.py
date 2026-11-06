@@ -68,6 +68,40 @@ def test_leftovers_are_found_and_only_ever_deleted_while_still_leftovers(
     assert sup._made() == set()  # forgotten once gone
 
 
+
+def test_a_folder_being_deleted_is_never_offered_whatever_it_resolves_to(
+        dirs: DataDirs, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows: while a folder is being deleted, resolve() can give its \\\\?\\ form, which didn't match the key it
+    was recorded under, so it was offered again (Windows CI, 0.0.16)."""
+    from pythonator.core import templates
+    from pythonator.daemon import supervisor
+
+    sup = Supervisor(dirs, Store(dirs))
+    parent = tmp_path / "projects"
+    (parent / "made").mkdir(parents=True)
+    monkeypatch.setattr(templates, "default_parent", lambda: parent)  # any unused folder there is a leftover
+    sup._remember_made(parent / "made")
+    sup.deleting.add(supervisor._key(parent / "made"))
+    plain = Path.resolve
+
+    def resolve(self: Path, strict: bool = False) -> Path:
+        real = plain(self, strict)
+        return Path("//?/" + str(real).lstrip("/")) if self.name == "made" else real
+
+    monkeypatch.setattr(Path, "resolve", resolve)
+    assert sup.leftover_projects(parent) == []
+
+
+@pytest.mark.parametrize(("resolved", "key"), [("\\\\?\\C:\\Users\\a", "C:\\Users\\a"),
+                                               ("\\\\?\\UNC\\nas\\share\\p", "\\\\nas\\share\\p")])
+def test_a_key_has_no_long_path_prefix(monkeypatch: pytest.MonkeyPatch, resolved: str, key: str) -> None:
+    import os
+
+    from pythonator.daemon import supervisor
+
+    monkeypatch.setattr(Path, "resolve", lambda self, strict=False: Path(resolved))
+    assert supervisor._key(Path("x")) == os.path.normcase(key)
+
 def test_a_project_removed_with_its_folder_kept_becomes_a_leftover(dirs: DataDirs, tmp_path: Path) -> None:
     sup = Supervisor(dirs, Store(dirs))
     folder = tmp_path / "projects" / "shop"
