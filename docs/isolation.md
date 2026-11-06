@@ -84,6 +84,27 @@ for your computer.
 To let a container reach another one, such as a database, see
 [Connecting to other containers](networking.md#connecting-to-other-containers).
 
+### Docker Compose projects
+
+A folder with a `compose.yaml` (or `compose.yml`, `docker-compose.yml`) can be one service: pick **Docker Compose**
+as the language, in Container mode. **Start** runs `docker compose up` and shows every container's output in the
+console, **Stop** runs `docker compose stop`, and the **Compose ▾** menu builds, pulls, lists (`ps`) and takes the
+project down (`down`, which asks first). The project is named `pythonator-<id>`, so its containers, networks and
+volumes never mix with another project's. The Environment table and env file fill the file's `${VARIABLES}`.
+
+A compose file can ask for far more than Pythonator's own containers get, so before each start and build Pythonator
+reads it as the engine does (`docker compose config`, Compose 2.24 or newer) and refuses it, saying why, when it
+asks for:
+
+* `privileged`, a host or another container's namespace (`network_mode: host`, `pid: host`, ...), devices, powerful
+  capabilities (`SYS_ADMIN`, `NET_ADMIN`, ...) or `security_opt` that turns a protection off;
+* a bind mount, build context, env file, secret or config outside the project folder, or the engine's socket;
+* a port published on every network while the service is for this computer only (write `127.0.0.1:8000:8000`, or
+  allow other computers in Network).
+
+When the check can't run, nothing starts. The console's shell isn't offered for a Compose project: use
+`docker compose exec` in a terminal. A file that really needs more can run as a Custom command in Full access mode.
+
 ## Full access
 
 Full access runs the program as you, like a terminal would. It can read your files and keys, install things, and

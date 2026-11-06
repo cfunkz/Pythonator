@@ -2,8 +2,8 @@
 [plugin]
 id = "pythonator-ai"
 name = "AI assistant"
-version = "1.1.0"
-api = 3
+version = "1.2.0"
+api = 4
 entry = "plugin.py"
 description = "Ask Claude, OpenAI, Gemini, DeepSeek or your own Ollama about one service: its crashes, logs and code. It only suggests changes; you review and apply them."
 permissions = ["network", "ui", "read_logs", "read_files", "propose_changes"]

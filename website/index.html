@@ -10,7 +10,7 @@ description: Run bots, web servers and workers in any language, each in its own 
   <section class="intro">
     <div class="wrap intro-grid">
       <div>
-        <p class="kicker"><img src="{{ '/website/assets/favicon-32.png' | relative_url }}" alt="" width="22" height="22"> Version 0.0.10 · GPL-3.0</p>
+        <p class="kicker"><img src="{{ '/website/assets/favicon-32.png' | relative_url }}" alt="" width="22" height="22"> Version 0.0.11 · GPL-3.0</p>
         <h1>Keep your bots and servers running, <em>each in its own sandbox</em>.</h1>
         <p class="lead">Pythonator starts the programs that should not stop, restarts them when they fail, and keeps
           each one to its own folder and the ports you list. It has a fast code editor built in, and plugins add
@@ -138,10 +138,11 @@ description: Run bots, web servers and workers in any language, each in its own 
           change. Any other plugin starts in <strong>test mode</strong> with nothing granted: what it tries is only
           recorded until you grant permissions.</p>
         <ul>
-          <li><strong>Webhooks</strong>: Discord, Slack, Telegram, Teams, ntfy or any URL when a service crashes,
-            gives up or recovers</li>
+          <li><strong>Notify</strong>: one timeline of crashes, blocked starts, recoveries, failing health checks and
+            anomalies, sent to Discord, Slack, Telegram, Teams, ntfy or any URL</li>
           <li><strong>Guard</strong>: rules for modes and ports before a start, and a watchdog for memory and CPU</li>
-          <li><strong>Health checks</strong>: a live panel of which web servers answer, and how fast</li>
+          <li><strong>Project builder</strong>: React, Vue, Nuxt, FastAPI, Flask or Django in one click, by each
+            framework's own tool, in a sandbox</li>
         </ul>
         <p><a href="{{ docs }}plugins.html">Plugins</a> · <a href="{{ docs }}plugin-development.html">Write one in 20 lines</a> · <a href="{{ docs }}plugin-api.html">Plugin API</a></p>
       </div>

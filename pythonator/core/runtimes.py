@@ -131,8 +131,13 @@ RUNTIMES: dict[str, Runtime] = {r.key: r for r in (
     Runtime("shell", "Shell", ("bash", "sh"), (".sh",), (), "debian:stable-slim"),
     Runtime("powershell", "PowerShell", ("pwsh", "powershell"), (".ps1",), (), "mcr.microsoft.com/powershell",
             run=_powershell_run),
+    # Container mode only: the entry is the compose file, run with the engine's own `compose` (isolation/compose).
+    Runtime("compose", "Docker Compose", ("docker", "podman"), (),
+            ("compose.yaml", "compose.yml", "docker-compose.yml", "docker-compose.yaml"),
+            packages="the images Compose pulls and builds (Packages ▾ → Build and pull images)"),
 )}
 CUSTOM = "custom"  # a full command line instead of an entry file
+COMPOSE = "compose"  # a Docker Compose project
 
 
 def which(program: str) -> str | None:
@@ -162,6 +167,8 @@ def detect(folder: Path) -> tuple[Runtime | None, str]:
             entry = ""
             if runtime.key == "node":
                 entry = _package_main(folder)
+            elif runtime.key == COMPOSE:
+                entry = next(m for m in runtime.markers if (folder / m).is_file())
             return runtime, entry
     return None, ""
 

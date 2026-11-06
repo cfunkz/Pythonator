@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import contextlib
 import platform
+import threading
 from importlib import metadata
+from pathlib import Path
 from typing import Any
 
-from PyQt6.QtCore import PYQT_VERSION_STR, QT_VERSION_STR, Qt, QUrl
+from PyQt6.QtCore import PYQT_VERSION_STR, QT_VERSION_STR, QObject, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QGuiApplication
 from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
+    QFrame,
+    QGridLayout,
     QHeaderView,
     QLabel,
     QPushButton,
@@ -21,8 +26,9 @@ from PyQt6.QtWidgets import (
 )
 
 from .. import __version__
+from ..core import sysinfo
 from . import theme
-from .widgets import label
+from .widgets import label, scroll
 
 REPO = "https://github.com/cfunkz/Pythonator"
 SITE = "https://cfunkz.github.io/Pythonator"
@@ -158,27 +164,165 @@ class SupportDialog(QDialog):
         layout.addWidget(buttons)
 
 
-class SystemCheckDialog(QDialog):
-    """What Pythonator runs on, and what the sandbox enforces on this computer."""
+class _Found(QObject):
+    """Brings the slow part of the system check (each runtime's version) back to the window's thread."""
 
-    def __init__(self, data: dict[str, Any], parent: QWidget | None = None) -> None:
+    done = pyqtSignal(object, object)
+
+
+def _section(title: str) -> QLabel:
+    head = QLabel(title.upper())
+    head.setProperty("section", True)
+    head.setContentsMargins(2, 10, 0, 2)
+    return head
+
+
+def _card() -> tuple[QFrame, QGridLayout]:
+    card = QFrame()
+    card.setObjectName("CheckCard")
+    card.setStyleSheet(f"QFrame#CheckCard {{ background: {theme.color('panel')}; border: 1px solid "
+                       f"{theme.color('border')}; border-radius: {theme.R_MD}px; }} "
+                       "QFrame#CheckCard QLabel { background: transparent; border: none; }")
+    grid = QGridLayout(card)
+    grid.setContentsMargins(12, 8, 12, 8)
+    grid.setHorizontalSpacing(14)
+    grid.setVerticalSpacing(5)
+    grid.setColumnStretch(2, 1)
+    return card, grid
+
+
+def _row(grid: QGridLayout, mark: str, tone: str, name: str, value: str, note: str = "") -> None:
+    r = grid.rowCount()
+    sign = QLabel(mark)
+    sign.setFixedWidth(14)
+    sign.setStyleSheet(f"color: {theme.color(tone)}; font-weight: 600")
+    key = QLabel(name)
+    key.setStyleSheet(f"color: {theme.color('muted')}")
+    text = label(value + (f"  ·  {note}" if note else ""), plain=True)
+    text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+    grid.addWidget(sign, r, 0, Qt.AlignmentFlag.AlignTop)
+    grid.addWidget(key, r, 1, Qt.AlignmentFlag.AlignTop)
+    grid.addWidget(text, r, 2)
+
+
+TONE = {"ok": ("✓", "ok"), "warn": ("!", "warn"), "error": ("✗", "error")}
+
+
+class SystemCheckDialog(QDialog):
+    """What Pythonator runs on: this computer, Pythonator itself, the runtimes and container engines it found,
+    and what the sandbox enforces here. Every line is filled; the slow part (versions) arrives a moment later."""
+
+    def __init__(self, data: dict[str, Any], parent: QWidget | None = None, data_folder: Path | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("System check")
-        self.resize(640, 480)
-        layout = QVBoxLayout(self)
-        icons = {"ok": "✓", "warn": "!", "error": "✗"}
-        rows = [[icons.get(level, "•"), text] for level, text in data.get("app", [])]
-        layout.addWidget(QLabel("Pythonator"))
-        layout.addWidget(_table(["", "Check"], rows))
-        layout.addWidget(QLabel("Sandbox on this computer"))
-        caps = [["✓" if v == "enforced" else "•", k, v] for k, v in data.get("sandbox", [])]
-        layout.addWidget(_table(["", "Protection", "Status"], caps), 1)
-        note = label("“Not enforced” items are explained in the documentation, under Isolation modes, "
-                     "with how to turn them on.")
-        note.setProperty("muted", True)
-        note.setStyleSheet(f"color: {theme.color('muted')}")
-        note.setTextFormat(Qt.TextFormat.PlainText)
-        layout.addWidget(note)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self.resize(760, 640)
+        self.data = data
+        self.report: list[str] = [diagnostics()]
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(14, 12, 14, 12)
+        info = sysinfo.facts(data_folder)
+        computer = dict(info["This computer"])
+        headline = QLabel(computer.get("System", ""))
+        headline.setStyleSheet("font-size: 15pt; font-weight: 600")
+        sub = label(f"{computer.get('Processor', '')}  ·  {computer.get('Cores', '')}  ·  "
+                    f"{computer.get('Memory', '')} memory", plain=True, muted=True)
+        outer.addWidget(headline)
+        outer.addWidget(sub)
+        sandbox = [(k, v) for k, v in data.get("sandbox", [])]
+        enforced = sum(1 for _k, v in sandbox if v == "enforced")
+        problems = [t for level, t in data.get("app", []) if level in ("warn", "error")]
+        summary = (f"Sandbox: {enforced} of {len(sandbox)} protections enforced on this computer"
+                   + (f"  ·  {len(problems)} thing{'s' if len(problems) != 1 else ''} to look at" if problems else
+                      "  ·  nothing to fix"))
+        badge = label(summary, plain=True)
+        tone = "warn" if problems or enforced < len(sandbox) else "ok"
+        badge.setStyleSheet(f"color: {theme.color(tone)}; background: {theme.rgba(tone, 0.10)}; border: 1px solid "
+                            f"{theme.rgba(tone, 0.35)}; border-radius: {theme.R_MD}px; padding: 6px 10px;")
+        outer.addWidget(badge)
+        body = QWidget()
+        self.column = QVBoxLayout(body)
+        self.column.setContentsMargins(0, 0, 6, 0)
+        self.column.setSpacing(4)
+        area = scroll()
+        area.setFrameShape(QFrame.Shape.NoFrame)
+        area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        area.setWidget(body)
+        outer.addWidget(area, 1)
+        for title, rows in info.items():
+            self._facts(title, rows)
+        self._pythonator(data)
+        self._sandbox(sandbox)
+        self.column.addWidget(_section("Runtimes and container engines"))
+        self.tools_card, self.tools_grid = _card()
+        _row(self.tools_grid, "…", "muted", "Looking", "Finding the runtimes on PATH and their versions…")
+        self.column.addWidget(self.tools_card)
+        note = label("“Not enforced” protections are explained in the documentation, under Isolation modes, with how "
+                     "to turn them on. Host and user names are never shown or copied.", plain=True, muted=True)
+        self.column.addWidget(note)
+        self.column.addStretch(1)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        copy = buttons.addButton("Copy report", QDialogButtonBox.ButtonRole.ActionRole)
+        if copy is not None:
+            copy.clicked.connect(self._copy)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        outer.addWidget(buttons)
+        self._found = _Found(self)
+        self._found.done.connect(self._tools)
+        found = self._found
+
+        def look() -> None:
+            result = sysinfo.tools()
+            with contextlib.suppress(RuntimeError):  # the window closed meanwhile
+                found.done.emit(*result)
+
+        threading.Thread(target=look, daemon=True, name="system-check").start()
+
+    def _facts(self, title: str, rows: list[tuple[str, str]]) -> None:
+        self.column.addWidget(_section(title))
+        card, grid = _card()
+        for name, value in rows:
+            _row(grid, "•", "muted", name, value)
+            self.report.append(f"{name}: {value}")
+        self.column.addWidget(card)
+
+    def _pythonator(self, data: dict[str, Any]) -> None:
+        self.column.addWidget(_section("Pythonator"))
+        card, grid = _card()
+        _row(grid, "✓", "ok", "Version", f"Pythonator {__version__}")
+        _row(grid, "✓", "ok", "Built with", f"Qt {QT_VERSION_STR} · PyQt {PYQT_VERSION_STR}")
+        for level, text in data.get("app", []):
+            mark, tone = TONE.get(level, ("•", "muted"))
+            _row(grid, mark, tone, {"ok": "Runs on", "warn": "Note", "error": "Problem"}.get(level, ""), text)
+            self.report.append(f"[{level}] {text}")
+        self.column.addWidget(card)
+
+    def _sandbox(self, caps: list[tuple[str, str]]) -> None:
+        self.column.addWidget(_section("Sandbox on this computer"))
+        card, grid = _card()
+        if not caps:
+            _row(grid, "!", "warn", "Sandbox", "Not reported by the background service")
+        for name, status in caps:
+            ok = status == "enforced"
+            _row(grid, "✓" if ok else "•", "ok" if ok else "warn", name, status)
+            self.report.append(f"{name}: {status}")
+        self.column.addWidget(card)
+
+    def _tools(self, found: list[sysinfo.Tool], engines: list[sysinfo.Tool]) -> None:
+        with contextlib.suppress(RuntimeError):  # closed before the versions came
+            card, grid = _card()
+            for tool in [*found, *engines]:
+                if tool.path:
+                    _row(grid, "✓", "ok", tool.name, tool.version or "found", tool.note or tool.path)
+                else:
+                    _row(grid, "–", "faint", tool.name, "not found on PATH")
+                self.report.append(f"{tool.name}: {tool.version or ('found' if tool.path else 'not found')}"
+                                   + (f" ({tool.note})" if tool.note else ""))
+            self.column.replaceWidget(self.tools_card, card)
+            self.tools_card.deleteLater()
+            self.tools_card, self.tools_grid = card, grid
+
+    def _copy(self) -> None:
+        clipboard = QGuiApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText("\n".join(self.report))

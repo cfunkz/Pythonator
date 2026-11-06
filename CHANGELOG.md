@@ -2,6 +2,41 @@
 
 Pythonator follows [semantic versioning](https://semver.org/). Each release lists what changed for users.
 
+## 0.0.11
+
+- **Notify**, a new official plugin, replaces Health checks and Webhooks (your settings move over by themselves):
+  one timeline for all services, or the ones you pick, of crashes, restarts given up, blocked starts, failed
+  installs, failing health checks, recoveries and anomalies (memory that keeps growing, CPU stuck high, a crash loop,
+  bursts of errors, a server's port gone). Alerts show in the window, as a tray pop-up while it is hidden, and on
+  Discord, Slack, Telegram, Teams, ntfy or any URL. A service can be muted for a while.
+- **Project builder**, a new official plugin: a React, Vue, Nuxt, FastAPI, Flask or Django project in one click,
+  made by each framework's own tool (`npm create vite`, `create-vue`, `create-nuxt`, pip and `django-admin`) in the
+  new service's own sandbox, and added as a service on a free port for this computer only. Plugins can ask for this
+  with the new `create_services` permission (plugin API 4).
+- **Docker Compose projects**: a folder with a `compose.yaml` runs as one service in Container mode. Start runs
+  `compose up` with every container's output in the console, Stop runs `compose stop`, and **Compose ▾** builds,
+  pulls, lists and takes it down. Before each start and build the file is checked as the engine reads it, and
+  privileged containers, host namespaces, devices, mounts outside the folder, the engine's socket and ports open to
+  every network are refused with the reason.
+- Plugin panels are docks: tabs side by side, or **⧉** for a real window of their own (any screen, minimise and
+  maximise). **Plugins ▾** shows or hides each one, gathers them back as tabs, and **Lock panel layout** keeps
+  them in place. The layout is remembered.
+- The AI assistant (1.2) shows its whole answer, however long, formatted as Markdown (headings, lists, tables,
+  code), instead of cutting it with "the rest is cut in the panel". A plugin message may now be up to 1 MB.
+- Smoother window: panel text no longer re-wraps on every pixel of a resize, plugin tables are updated in place
+  instead of rebuilt and measured, and the console doesn't redraw while you drag or resize the window.
+- Editor: saving no longer adds blank lines to Windows (CRLF) files, pasted text takes the file's own line endings,
+  and Undo right after opening no longer empties the file. A file that isn't UTF-8 opens read-only, with a note,
+  instead of being changed on save.
+- Service window: the Environment and Folders tables have **＋ Add** and **− Delete** buttons (and the Delete key),
+  and **Import from env file** copies its names into the table.
+- **System check** is redone: what the computer is (Windows edition and build, macOS or Linux distribution,
+  processor, cores, memory, disk), what it is doing now, which runtimes and container engines are installed with
+  their versions, and which sandbox protections are enforced, in cards. **Copy report** leaves out your computer
+  and user names.
+- Windows: a plugin no longer shows an "Unhandled exception in script" window (BrokenPipeError) when Pythonator
+  closes or restarts it; it just ends.
+
 ## 0.0.10
 
 - The editor's find bar is redone: icon buttons with tooltips, a match counter ("3 of 18"), every match highlighted,

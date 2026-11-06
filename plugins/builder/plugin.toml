@@ -1,0 +1,24 @@
+# A 1-click project builder: new React, Vue, Nuxt, FastAPI, Flask or Django projects as services.
+[plugin]
+id = "builder"
+name = "Project builder"
+version = "1.0.0"
+api = 4
+entry = "plugin.py"
+description = "New React, Vue, Nuxt, FastAPI, Flask or Django projects in one click, each made by the framework's official tool in a sandbox and added as a service that runs on this computer only."
+permissions = ["create_services", "ui"]
+author = "cfunkz <hello@routezero.tech>"
+homepage = "https://github.com/cfunkz/Pythonator/tree/main/plugins/builder"
+
+[[plugin.settings]]
+key = "folder"
+label = "Projects folder"
+kind = "text"
+default = ""
+help = "Where new projects go, each in a new folder of its own name. Empty: a Pythonator Projects folder in your home folder."
+
+[[plugin.settings]]
+key = "start"
+label = "Start a new project once it is made"
+kind = "bool"
+default = true

@@ -237,7 +237,7 @@ def test_plugin_panel_redraw_keeps_the_text_box_focus_and_cursor(qtbot: Any) -> 
 
     from pythonator.sdk import ui
 
-    dock = panels.PanelDock(lambda *a: None)
+    dock = panels.PanelPage("ai", lambda *a: None)
     qtbot.addWidget(dock)
     dock.show()
     qtbot.waitExposed(dock)
@@ -247,7 +247,7 @@ def test_plugin_panel_redraw_keeps_the_text_box_focus_and_cursor(qtbot: Any) -> 
         return ui.panel("AI", ui.text(status), ui.row(ui.stat("Tokens", status), ui.input("note", "Note…")),
                         ui.input("ask", "Ask…"))
 
-    dock.update_panel("ai", "AI", panel("idle"))
+    dock.show_panel(panel("idle"))
     edits = [w for w in dock.findChildren(QPlainTextEdit) if not w.isReadOnly()]
     assert len(edits) == 2
     ask = next(w for w in edits if w.placeholderText() == "Ask…")
@@ -258,7 +258,7 @@ def test_plugin_panel_redraw_keeps_the_text_box_focus_and_cursor(qtbot: Any) -> 
     cursor.setPosition(4)
     ask.setTextCursor(cursor)
     for i in range(20):  # the plugin redraws on every tick and every streamed piece of an answer
-        dock.update_panel("ai", "AI", panel(f"thinking {i}"))
+        dock.show_panel(panel(f"thinking {i}"))
     qtbot.wait(10)
     assert QApplication.focusWidget() is ask  # the same widget: never rebuilt, never loses focus
     assert ask.toPlainText() == "half a ques" and ask.textCursor().position() == 4
@@ -266,10 +266,10 @@ def test_plugin_panel_redraw_keeps_the_text_box_focus_and_cursor(qtbot: Any) -> 
     labels = [w.text() for w in dock.findChildren(QLabel) if w.isVisible()]
     assert "thinking 19" in labels and "idle" not in labels  # but what changed is drawn again
 
-    body = dock.pages["ai"].widget()
-    dock.update_panel("ai", "AI", panel("thinking 19"))  # nothing changed: nothing is touched
-    assert dock.pages["ai"].widget() is body
-    dock.update_panel("ai", "AI", ui.panel("AI", ui.input("ask", "Ask again…", "Go")))
+    body = dock.widget()
+    dock.show_panel(panel("thinking 19"))  # nothing changed: nothing is touched
+    assert dock.widget() is body
+    dock.show_panel(ui.panel("AI", ui.input("ask", "Ask again…", "Go")))
     qtbot.wait(10)
     assert ask.placeholderText() == "Ask again…" and QApplication.focusWidget() is ask
 
@@ -344,11 +344,11 @@ def test_find_bar_counts_steps_and_replaces(qtbot: Any, tmp_path: Path) -> None:
 
 
 def test_plugin_chat_updates_in_place_and_follows_the_end(qtbot: Any) -> None:
-    from PyQt6.QtWidgets import QLabel, QPlainTextEdit
+    from PyQt6.QtWidgets import QPlainTextEdit
 
     from pythonator.sdk import ui
 
-    dock = panels.PanelDock(lambda *a: None)
+    dock = panels.PanelPage("ai", lambda *a: None)
     qtbot.addWidget(dock)
     dock.resize(380, 500)
     dock.show()
@@ -358,20 +358,20 @@ def test_plugin_chat_updates_in_place_and_follows_the_end(qtbot: Any) -> None:
         return ui.panel("AI", ui.text("head"), ui.chat(ui.message("you", "Why?"), ui.message("ai", answer),
                                                        ui.message("ai", "x = 1", code=True), *more))
 
-    dock.update_panel("ai", "AI", panel("Because"))
+    dock.show_panel(panel("Because"))
     chat = dock.findChild(panels.ChatView)
     assert chat is not None and len(chat.rows) == 2  # the answer's text and code share one bubble
     first = chat.rows[1][1].widgets[0]
-    assert isinstance(first, QLabel) and isinstance(chat.rows[1][1].widgets[1], QPlainTextEdit)
-    dock.update_panel("ai", "AI", panel("Because the port is taken"))  # a streamed piece
+    assert isinstance(first, panels.Prose) and isinstance(chat.rows[1][1].widgets[1], QPlainTextEdit)
+    dock.show_panel(panel("Because the port is taken"))  # a streamed piece
     assert dock.findChild(panels.ChatView) is chat and chat.rows[1][1].widgets[0] is first
     assert first.text() == "Because the port is taken"
     for i in range(30):
-        dock.update_panel("ai", "AI", panel("Because", *[ui.message("note", f"line {n}") for n in range(i)]))
+        dock.show_panel(panel("Because", *[ui.message("note", f"line {n}") for n in range(i)]))
     qtbot.wait(20)
     bar = chat.verticalScrollBar()
     assert bar is not None and bar.maximum() > 0 and bar.value() == bar.maximum()  # follows the end
-    dock.update_panel("ai", "AI", panel("Again", ui.message("error", "404: not found")))
+    dock.show_panel(panel("Again", ui.message("error", "404: not found")))
     assert [b.role for _, b in chat.rows] == ["you", "ai", "error"]
 
 

@@ -16,6 +16,7 @@ call is refused (and in test mode, actions are recorded instead of carried out).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sys
 import threading
@@ -143,10 +144,16 @@ class ui:
         return {"type": "chat", "messages": list(messages)}
 
     @staticmethod
-    def message(role: str, text: str, code: bool = False) -> dict[str, Any]:
+    def message(role: str, text: str, code: bool = False, markdown: bool = False) -> dict[str, Any]:
         """``role``: "you", "ai", "note" or "error"; up to 20,000 characters. Messages of the same role in a row
-        share one bubble, so an answer can be text and ``code=True`` blocks in turn (API 3)."""
-        return {"role": role, "text": text, "code": code}
+        share one bubble, so an answer can be text and ``code=True`` blocks in turn (API 3). ``markdown=True``
+        shows an "ai" message's Markdown formatted: headings, lists, bold, tables; never HTML or images (API 4).
+        A long answer is best sent as several messages (paragraphs): while it streams, only the last one
+        changes."""
+        out: dict[str, Any] = {"role": role, "text": text, "code": code}
+        if markdown:
+            out["markdown"] = True
+        return out
 
 
 @dataclass
@@ -239,6 +246,21 @@ class Plugin:
         return str(data.get("proposal", ""))
 
 
+    # API 4: new projects as services (``create_services``), from Pythonator's own templates only.
+
+    def project_templates(self, timeout: float = 15.0) -> dict[str, Any]:
+        """``{"templates": [{"key", "label", "tool", "port", "ready", "needs"}], "folder": default parent}``."""
+        return dict(_request({"op": "templates"}, timeout))
+
+    def create_project(self, template: str, name: str, folder: str = "", start: bool = False,
+                       timeout: float = 30.0) -> dict[str, Any]:
+        """Make a new service from a template: ``name`` is a new folder in ``folder`` (empty: the default
+        projects folder), made by the framework's official tool in the new service's sandbox. Returns
+        ``{"id", "folder", "port"}``; the tool's output shows in the new service's console."""
+        return dict(_request({"op": "create", "template": template, "name": name, "folder": folder,
+                              "start": start}, timeout))
+
+
 _out_lock = threading.Lock()
 _out: Any = None  # the protocol stream; set by the worker (print() goes to the plugin's log instead)
 _waiting: dict[int, tuple[threading.Event, list[dict[str, Any]]]] = {}
@@ -277,6 +299,20 @@ def _send(message: dict[str, Any]) -> None:
     line = json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n"
     with _out_lock:
         stream = _out or sys.__stdout__
-        if stream is not None:
+        if stream is None:
+            return
+        try:
             stream.write(line)
             stream.flush()
+        except (OSError, ValueError):  # Pythonator closed the pipe (it quit or stopped the plugin): end quietly
+            _gone()
+
+
+def _gone() -> None:
+    """The host is gone: nobody reads what this process says any more. Exit at once, from any thread, without a
+    traceback (a frozen Windows app would show one in an "Unhandled exception" window)."""
+    import os
+
+    with contextlib.suppress(Exception):
+        sys.stderr.flush()
+    os._exit(0)

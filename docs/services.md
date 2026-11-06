@@ -38,7 +38,7 @@ could make a command look different from what runs.
 
 The wait before each restart doubles: 1 s, 2 s, 4 s, up to 60 s. A service that ran for more than a minute
 starts counting again from zero. When it gives up, the service shows **failed** and plugins such as
-[Webhooks](plugins.md#webhooks) send one *gave up* message instead of one per crash.
+[Notify](plugins.md#notify) sends one *gave up* message instead of one per crash.
 
 **Stopping** sends Ctrl+C on Windows and SIGTERM to the whole process group on macOS and Linux, waits for
 *Time to stop*, then kills the whole process tree. Press **Stop** (or **Stop all**) again to kill it at once
@@ -109,6 +109,9 @@ Variables come from, in order (later wins):
 2. The service's **env file**, for example `.env` in the project: `KEY=value` lines, `#` comments, optional quotes
    and `export`.
 3. The variables in the **Environment** table.
+
+In the service window, **＋ Add variable** adds a row and **− Delete** (or the Delete key) removes the selected rows;
+**Import from env file** copies the env file's names into the table, keeping the values you already have.
 
 Pythonator adds `PYTHONUNBUFFERED=1` and `FORCE_COLOR=1`, so output shows as it is printed and in colour. With a
 port listed it also sets `PORT` to the first port and, when only this computer may connect, `HOST=127.0.0.1`.

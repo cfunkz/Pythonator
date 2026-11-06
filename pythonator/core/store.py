@@ -21,11 +21,14 @@ MAX_FILE = 16 * 1024 * 1024
 
 
 def write_atomic(path: Path, text: str) -> None:
-    """Replace ``path`` with ``text`` in one step: a crash leaves the old file or the new one, never half."""
+    """Replace ``path`` with ``text`` in one step: a crash leaves the old file or the new one, never half.
+
+    The text is written exactly as given: no newline translation, so a file with Windows line endings saved on
+    Windows stays ``\r\n`` (text mode would make it ``\r\r\n``, an empty line after every line)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
             fh.write(text)
             fh.flush()
             os.fsync(fh.fileno())

@@ -109,8 +109,8 @@ def test_flood_is_cut_off(harness: DaemonHarness, tmp_path: Path) -> None:
 
 def test_oversized_message_is_cut_off(harness: DaemonHarness, tmp_path: Path) -> None:
     install(harness, tmp_path, "big", "class P(Plugin):\n    def on_start(self):\n"
-            "        os.write(1, b'{\"t\":\"log\",\"text\":\"' + b'a' * 70000 + b'\"}\\n')\n")
-    harness.wait(lambda: "larger than 64 KB" in activity(harness, "big"))
+            "        os.write(1, b'{\"t\":\"log\",\"text\":\"' + b'a' * 1100000 + b'\"}\\n')\n")
+    harness.wait(lambda: "larger than 1 MB" in activity(harness, "big"))
 
 
 def test_garbage_is_cut_off(harness: DaemonHarness, tmp_path: Path) -> None:
@@ -204,11 +204,12 @@ def test_chat_panels_are_validated() -> None:
 
 
 def test_official_plugins_run_sandboxed(dirs: Any, qtbot: Any) -> None:
-    h = DaemonHarness(dirs, qtbot)  # default settings: the three official plugins on
+    h = DaemonHarness(dirs, qtbot)  # default settings: Guard and Notify on
     try:
-        on = {"guard", "webhooks", "health"}
+        on = {"guard", "notify"}
         h.wait(lambda: {p["id"] for p in plugin_state_all(h) if p["running"]} == on, timeout=20_000)
-        assert {p["id"] for p in plugin_state_all(h)} == on | {"pythonator-ai"}, "the AI assistant is off at first"
+        assert {p["id"] for p in plugin_state_all(h)} == on | {"pythonator-ai", "builder"}, \
+            "the AI assistant and the Project builder are off at first"
         for p in plugin_state_all(h):
             assert p["official"] and not p["test_mode"]
             if p["id"] not in on:
@@ -238,3 +239,21 @@ def test_worker_reads_utf8_whatever_the_code_page(monkeypatch: Any) -> None:
     inbox: queue.Queue[Any] = queue.Queue()
     worker._read_stdin(inbox)
     assert inbox.get()["lines"] == ["━ ok …"]
+
+
+def test_health_and_webhooks_settings_move_to_notify(dirs: Any, qtbot: Any) -> None:
+    """0.0.11 merged Health checks and Webhooks into Notify: it is turned on with their settings."""
+    from pythonator.core.models import Settings
+    from pythonator.core.store import Store
+
+    Store(dirs).save_settings(Settings(plugins_enabled=["guard", "webhooks", "health"], plugin_settings={
+        "webhooks": {"urls": "https://ntfy.sh/x", "on_crash": False}, "health": {"path": "/health", "interval": 9}}))
+    h = DaemonHarness(dirs, qtbot)
+    try:
+        h.wait(lambda: any(p["id"] == "notify" and p["running"] for p in plugin_state_all(h)), timeout=20_000)
+        settings = Store(dirs).load_settings()
+        assert settings.plugins_enabled == ["guard", "notify"]
+        assert settings.plugin_settings == {"notify": {"urls": "https://ntfy.sh/x", "on_crash": False,
+                                                       "health_path": "/health", "health_interval": 9}}
+    finally:
+        h.close()

@@ -65,7 +65,7 @@ Close the window and the service keeps running. Open Pythonator again to see it.
   new file or folder, fold the tree, and open the folder in your file manager.
 * **Editor**, in the middle: the open files, with highlighting for every language Pythonator runs.
 * **Console**, under the editor: the program's output, and a line to type into its input.
-* **Plugins**, on the right: panels of the plugins that have one, such as Guard and Health checks.
+* **Plugins**, on the right: panels of the plugins that have one, such as Guard and Notify, as tabs or windows of their own.
 
 Drag the lines between them to give any part more room.
 

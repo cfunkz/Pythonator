@@ -29,7 +29,7 @@ and keeps it in a sandbox so it can't read your files or reach ports you didn't 
   connect. On Windows, **Make reachable** sets up the loopback exemption, a loopback permit and firewall rules for that service alone, so
   the browser on the same PC can open it.
 * **Plugin-first.** Plugins run in their own sandboxed process. Official ones are checked by hash; third-party ones
-  show a warning and start in test mode. Webhooks, Guard and Health checks are included.
+  show a warning and start in test mode. Notify (alerts, webhooks and health checks), Guard and a one-click Project builder are included.
 * **Many languages.** Python (with its `.venv`), Node.js, Bun, Deno, Go, Rust, Java, .NET, Ruby, PHP, PowerShell and
   shell scripts, or any command. **Install packages** runs inside the same isolation.
 * **A real editor.** QScintilla: highlighting for every language, folding, multiple carets, fast with big files.

@@ -1,0 +1,132 @@
+# Alerts and a timeline for every service: what was Health checks and Webhooks, in one plugin.
+[plugin]
+id = "notify"
+name = "Notify"
+version = "1.0.0"
+api = 4
+entry = "plugin.py"
+description = "One timeline and alerts for your services: crashes, blocked starts, recoveries, failing health checks and anomalies, for all services or the ones you pick. Shown in Pythonator and sent to Discord, Slack, Telegram, Teams, ntfy or any JSON endpoint."
+permissions = ["network", "read_logs", "inspect", "ui"]
+author = "cfunkz <hello@routezero.tech>"
+homepage = "https://github.com/cfunkz/Pythonator/tree/main/plugins/notify"
+
+[[plugin.settings]]
+key = "urls"
+label = "Webhook URLs"
+kind = "lines"
+help = "One per line. Discord and Slack webhooks, https://api.telegram.org/bot<token>/sendMessage?chat_id=<id>, https://ntfy.sh/<topic>, a Teams workflow URL, or any https endpoint (gets JSON). Empty: alerts show in Pythonator only."
+
+[[plugin.settings]]
+key = "services"
+label = "Only these services"
+kind = "lines"
+help = "Service names, one per line. Empty: every service. A service can also be muted from the panel."
+
+[[plugin.settings]]
+key = "in_app"
+label = "Show alerts in Pythonator (and as a tray pop-up while it is hidden)"
+kind = "bool"
+default = true
+
+[[plugin.settings]]
+key = "on_crash"
+label = "Alert when a service crashes"
+kind = "bool"
+default = true
+
+[[plugin.settings]]
+key = "on_gave_up"
+label = "Alert when Pythonator gives up restarting it"
+kind = "bool"
+default = true
+
+[[plugin.settings]]
+key = "on_blocked"
+label = "Alert when a start is blocked (Guard or another policy)"
+kind = "bool"
+default = true
+
+[[plugin.settings]]
+key = "on_install_failed"
+label = "Alert when installing its packages fails"
+kind = "bool"
+default = true
+
+[[plugin.settings]]
+key = "on_recover"
+label = "Alert when it runs (or answers) again after a problem"
+kind = "bool"
+default = true
+
+[[plugin.settings]]
+key = "on_stop"
+label = "Alert when it is started or stopped"
+kind = "bool"
+default = false
+
+[[plugin.settings]]
+key = "on_unhealthy"
+label = "Alert when a health check starts failing"
+kind = "bool"
+default = true
+
+[[plugin.settings]]
+key = "on_anomaly"
+label = "Alert on anomalies: memory growth, stuck CPU, crash loop, errors, port gone"
+kind = "bool"
+default = true
+
+[[plugin.settings]]
+key = "health_path"
+label = "Health check path"
+kind = "text"
+default = "/"
+help = "Each running service with a port is asked GET http://127.0.0.1:<port><path>, for example /health. Empty: no health checks."
+
+[[plugin.settings]]
+key = "health_interval"
+label = "Seconds between health checks"
+kind = "int"
+default = 30
+
+[[plugin.settings]]
+key = "health_timeout"
+label = "Health check timeout (seconds)"
+kind = "int"
+default = 5
+
+[[plugin.settings]]
+key = "memory_growth"
+label = "Anomaly: memory grew by this many % in 10 minutes (0 = off)"
+kind = "int"
+default = 50
+
+[[plugin.settings]]
+key = "cpu_busy"
+label = "Anomaly: CPU stays over this % of one core for 5 minutes (0 = off)"
+kind = "int"
+default = 95
+
+[[plugin.settings]]
+key = "restart_loop"
+label = "Anomaly: this many crashes in 10 minutes (0 = off)"
+kind = "int"
+default = 3
+
+[[plugin.settings]]
+key = "error_burst"
+label = "Anomaly: this many error lines in a minute (0 = off)"
+kind = "int"
+default = 30
+
+[[plugin.settings]]
+key = "log_lines"
+label = "Last output lines in a crash alert"
+kind = "int"
+default = 10
+
+[[plugin.settings]]
+key = "min_gap"
+label = "Seconds between webhook alerts for one service"
+kind = "int"
+default = 60

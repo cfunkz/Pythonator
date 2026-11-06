@@ -116,6 +116,8 @@ class Service(Model):
             raise ValueError(f"Unknown runtime {self.runtime!r}")
         if self.runtime == CUSTOM and not self.command:
             raise ValueError("A custom command can't be empty")
+        if self.runtime == "compose" and self.mode is not Mode.CONTAINER:
+            raise ValueError("A Docker Compose project runs in Container mode (Isolation)")
         if self.entry:
             validate.arg(self.entry)
             if self.entry.startswith("-"):
@@ -134,11 +136,13 @@ class Settings(Model):
     default_mode: Mode = Mode.SANDBOX
     start_at_once: int = Field(default=1, ge=0, le=64)  # Start all and login, in list order: how many together, 0 all
     tray: bool = False  # closing the window leaves Pythonator in the tray
-    plugins_enabled: list[str] = Field(default_factory=lambda: ["guard", "webhooks", "health"])
+    plugins_enabled: list[str] = Field(default_factory=lambda: ["guard", "notify"])
     plugin_settings: dict[str, dict[str, str | int | bool]] = Field(default_factory=dict)
     plugin_grants: dict[str, list[str]] = Field(default_factory=dict)  # third-party: permissions granted
     plugin_live: list[str] = Field(default_factory=list)  # third-party plugins taken out of test mode
     window_geometry: str = Field(default="", max_length=8192)
+    window_state: str = Field(default="", max_length=65_536)  # where the plugin panels are (QMainWindow.saveState)
+    panels_locked: bool = False  # plugin panels can't be dragged around or opened in windows of their own
 
 
 class ServiceFile(Model):

@@ -1,8 +1,8 @@
 {
   "plugins": {
+    "builder": "17703fc6d497374ba2bc0fe84e30543716077c95d42b35a1bd0210c501fece0a",
     "guard": "67d91ac41e5d81629ab039675b048ef7dfd4492c3ff9bfecc009934a7aef872c",
-    "health": "bf240bb59d9a97f02d9b06f3f48bc478a8f103d80c43e0546e8b3a9a1585ccc0",
-    "pythonator-ai": "f3d40ebbb4644ad736c49446e9aa78072793b4afbcd57ffcc67807f24e9f3ec6",
-    "webhooks": "b85185f24f03c07365aba0fb32bd64e54b77082a19e1731e98aa380daa98f415"
+    "notify": "0c9059125abdd37d472701b5c7613035f4fdc6e0b7893c0f47df6b64eb042c56",
+    "pythonator-ai": "101ce0997e2d31a741a5ae1fd94903cc831acab0fdbb1a1721a237c228979715"
   }
 }

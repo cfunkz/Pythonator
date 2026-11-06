@@ -1,7 +1,7 @@
 # Plugins
 
-Plugins add what a service runner doesn't need to have built in: alerts, rules, health checks, dashboards, links to
-other tools. Pythonator is built for them. Each plugin runs as a separate program in a sandbox of its own and talks
+Plugins add what a service runner doesn't need to have built in: alerts, rules, health checks, new projects,
+dashboards, links to other tools. Pythonator is built for them. Each plugin runs as a separate program in a sandbox of its own and talks
 to Pythonator through a small, checked set of messages, so a plugin can't crash Pythonator, freeze the window, or do
 more than you allowed.
 
@@ -30,9 +30,10 @@ before anything runs.
 | `inspect` | See ports, connections, memory and CPU of your services |
 | `control` | Start, stop and restart services |
 | `policy` | Refuse a service's start, with a reason shown to you |
-| `ui` | Show a panel in the Plugins dock of the window (**Plugins ▾ → Show plugin panels**) |
+| `ui` | Show a panel of its own in the window (**Plugins ▾**): a tab, or a window of its own |
 | `read_files` | Read a service's files through Pythonator, read-only: never `.env` files, keys, certificates or other secrets |
 | `propose_changes` | Suggest a change to a service's file. It opens a review window; only your **Apply** writes it |
+| `create_services` | Make a new project from one of Pythonator's built-in templates and add it as a service. The plugin picks the template and the name; Pythonator decides the command, the folder and the isolation (at most 10 an hour) |
 
 Every plugin, whatever it is granted, can see the list of services (name, language, mode, state, ports) and write to
 its own activity log. None can read your own files, Pythonator's data, or other plugins' data, and without
@@ -69,12 +70,21 @@ restarts with its new permissions.
 Pythonator stops a plugin, disables it and says why when it:
 
 * sends more than 200 messages a second for too long;
-* sends one message larger than 64 KB, or anything that isn't a protocol message;
+* sends one message larger than 1 MB, or anything that isn't a protocol message;
 * crashes three times in ten minutes.
 
 A plugin that doesn't answer a start check within 2 seconds is skipped for that start. Panels are checked against a
 fixed set of elements (text, numbers, tables, buttons, rows), at most 500, shown as plain text: a plugin can't put
-HTML, links or scripts into the window.
+HTML, links or scripts into the window. A chat message may ask for Markdown formatting (headings, lists, code, links),
+which is shown with HTML turned off and nothing loaded: links open in your browser only when you click them.
+
+## Panels, tabs and windows
+
+Each plugin's panel is a dock of its own. By default they share one area on the right, as tabs. Drag a tab to put
+panels side by side, or press **⧉** in a panel's title to give it a real window of its own (with minimise and
+maximise, on any screen); **⇲** brings it back. **Plugins ▾** lists every panel (tick to show or hide it), **Show
+all panels, as tabs** gathers them again, and **Lock panel layout** keeps them where they are: panels can then only
+be closed, not dragged or popped out. Pythonator remembers the layout.
 
 ## Installing a third-party plugin
 
@@ -84,20 +94,30 @@ deletes it and its data. Official plugins can be turned off, not removed.
 
 ## The official plugins
 
-### Webhooks
+### Notify
 
-Sends a message when a service crashes, gives up restarting, runs again, or (if you want) starts and stops.
+One timeline for all your services, and alerts when something happens: a crash, Pythonator giving up restarting,
+a blocked start (Guard or another policy), a failed install, a health check that starts failing, a recovery, and
+anomalies (memory that keeps growing, CPU stuck high, a crash loop, a burst of error lines, a server's port gone).
+It replaces the Webhooks and Health checks plugins of earlier versions; their settings move over by themselves.
+
+Its panel lists every service with its state, health and last event, and the events below it. Pick one service to
+see only its own, filter by kind, mute a service for a while, or press **Check now** and **Send a test**.
 
 | Setting | Meaning |
 | --- | --- |
 | Webhook URLs | One per line. Formats itself for Discord, Slack, Telegram (`https://api.telegram.org/bot<token>/sendMessage?chat_id=<id>`), Microsoft Teams workflows and ntfy; any other `https` address gets JSON `{"title", "text", "source"}` |
-| When a service crashes / gives up / runs again / starts or stops | Which events to send |
+| Only these services | Names, one per line; empty means all |
+| Show alerts in Pythonator | A notice in the window, and a tray pop-up while the window is hidden |
+| Alert when … | Which events alert: crashes, gives up, blocked, install failed, recovers, starts and stops, health, anomalies |
+| Health check path, interval, timeout | `GET http://127.0.0.1:<port><path>` on each running service that serves a port |
+| Anomaly thresholds | Memory growth in 10 minutes, CPU over a share of one core for 5 minutes, crashes in 10 minutes, error lines in a minute (0 turns one off) |
 | Last output lines in a crash alert | How much of the output goes with a crash |
-| Seconds between alerts for one service | So a crash loop is a few messages, not hundreds |
+| Seconds between webhook alerts for one service | So a crash loop is a few messages, not hundreds |
 
-Permissions: `network`, `read_logs`. Discord messages can't mention `@everyone`, whatever a service prints. Only
-`https` addresses are used (and `http` to this computer). A service that answers 429 *Too many requests* is
-retried after the time it asks for.
+Permissions: `network`, `read_logs`, `inspect`, `ui`. Health checks only connect to this computer. Discord messages
+can't mention `@everyone`, whatever a service prints. Only `https` addresses are used (and `http` to this computer).
+A service that answers 429 *Too many requests* is retried after the time it asks for.
 
 ### Guard
 
@@ -116,12 +136,31 @@ Security rules for every service, checked before each start and watched while th
 Permissions: `policy`, `inspect`, `control`, `ui`. Its panel lists violations with the time, the service, the rule
 and what it did.
 
-### Health checks
+### Project builder
 
-Calls each running service that serves a port, `GET http://127.0.0.1:<port><path>`, every few seconds, and shows a
-panel of which ones answer and how fast. It can notify you when a check starts failing.
+A new React, Vue, Nuxt, FastAPI, Flask or Django project in one click, added as a service that is ready to start.
+Off until you enable it.
 
-Permissions: `network`, `inspect`, `ui`. It only connects to this computer.
+| Template | Made by | Runs |
+| --- | --- | --- |
+| React | `npm create vite@9 <name> -- --template react` | Vite's dev server |
+| Vue | `npm create vue@3 <name> -- --default` | Vite's dev server |
+| Nuxt | `npm create nuxt@4 <name> -- --template minimal` | `nuxt dev` |
+| FastAPI | a `.venv`, `pip install fastapi[standard]` and FastAPI's first-steps app | `python main.py` (Uvicorn) |
+| Flask | a `.venv`, `pip install Flask` and Flask's quickstart app | `python app.py` |
+| Django | a `.venv`, `pip install Django`, then `django-admin startproject` | `manage.py runserver` |
+
+Only each framework's own tool is used, pinned to a major version. The plugin can only pick a template and a name:
+Pythonator builds the command, makes a new folder (it never writes into one that exists), and runs the tool in the
+new service's own sandbox, with the network on and write access to that folder only. The service is in Sandbox
+mode, on a free port, for this computer only. Its packages are installed by the first start, in the same sandbox.
+
+| Setting | Meaning |
+| --- | --- |
+| Projects folder | Where new projects go; empty means `Pythonator Projects` in your home folder |
+| Start a new project once it is made | Start it straight away |
+
+Permissions: `create_services`, `ui`. React, Vue and Nuxt need Node.js (npm); the others need Python 3.
 
 ## Writing your own
 

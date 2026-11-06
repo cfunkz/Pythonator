@@ -11,7 +11,6 @@ from PyQt6.QtCore import QByteArray, QEvent, QObject, Qt, QTimer, QUrl
 from PyQt6.QtGui import QAction, QCloseEvent, QDesktopServices, QDragEnterEvent, QDropEvent, QKeySequence, QResizeEvent
 from PyQt6.QtWidgets import (
     QApplication,
-    QDockWidget,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -36,7 +35,7 @@ from .about import SITE, AboutDialog, LicensingDialog, SupportDialog, SystemChec
 from .console import Console
 from .editor import EditorPanel
 from .git_dialog import GitDialog
-from .panels import PanelDock
+from .panels import PanelDocks
 from .plugins_view import PluginsDialog
 from .proposal_dialog import ProposalDialog
 from .service_dialog import ServiceDialog
@@ -90,7 +89,9 @@ def button(text: str, tip: str, *, prop: str = "") -> QToolButton:
 def short(text: str) -> str:
     """ "▶ Start" -> "▶" for a narrow window; the tooltip keeps the words."""
     head, _, rest = text.partition(" ")
-    return head if rest and len(head) == 1 and not head.isalnum() else {"Packages ▾": "Pkgs ▾"}.get(text, text)
+    if rest and len(head) == 1 and not head.isalnum():
+        return head
+    return {"Packages ▾": "Pkgs ▾", "Compose ▾": "Comp ▾"}.get(text, text)
 
 
 class MainWindow(QMainWindow):
@@ -250,9 +251,7 @@ class MainWindow(QMainWindow):
         self.b_more = button("⋯", "More actions")
         self.b_packages.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         packages = QMenu(self)
-        self.a_install = packages.addAction("Install packages", lambda: self._op("install"))
-        self.a_recreate = packages.addAction("Recreate environment…", self._recreate)
-        self.a_pull = packages.addAction("Pull from Git (fast-forward only)", lambda: self._op("pull"))
+        packages.aboutToShow.connect(lambda: self._packages_menu(packages))
         self.b_packages.setMenu(packages)
         self.b_more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         more = QMenu(self)
@@ -297,22 +296,11 @@ class MainWindow(QMainWindow):
         main.setCollapsible(1, False)
         self.setCentralWidget(main)
 
-        self.panels = PanelDock(lambda plugin, action, value: self.client.request(
+        self.panels = PanelDocks(self, lambda plugin, action, value: self.client.request(
             {"op": "plugin_action", "plugin": plugin, "action": action, "value": value}))
-        self.dock = QDockWidget("Plugins", self)
-        self.dock.setObjectName("plugin-panels")
-        self.dock.setWidget(self.panels)
-        self.dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetMovable
-                              | QDockWidget.DockWidgetFeature.DockWidgetClosable)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock)
-        self.dock.hide()  # out of the way until asked for: the editor and console keep the width
+        self.panels.set_locked(self.settings.panels_locked)
         plugins = QMenu(self)
-        plugins.addAction("Manage plugins…", self.show_plugins)
-        panels = self.dock.toggleViewAction()
-        if panels is not None:
-            panels.setText("Show plugin panels")
-            plugins.addAction(panels)
-            plugins.aboutToShow.connect(lambda: panels.setEnabled(self.panels.count() > 0))
+        plugins.aboutToShow.connect(lambda: self._plugins_menu(plugins))
         self.plugins_button.setMenu(plugins)
 
         for keys, slot in (("F5", lambda: self._op("restart" if self._live() else "start")),
@@ -360,6 +348,9 @@ class MainWindow(QMainWindow):
                 self.editor.set_font_size(self.settings.editor_font_size)
                 if self.settings.window_geometry:
                     self.restoreGeometry(QByteArray.fromHex(self.settings.window_geometry.encode()))
+                if self.settings.window_state:  # the panels' places: each is put back when it first shows up
+                    self.restoreState(QByteArray.fromHex(self.settings.window_state.encode()))
+                self.panels.set_locked(self.settings.panels_locked)
         elif ev == "services":
             self._set_services(msg["services"])
         elif ev == "state":
@@ -373,7 +364,7 @@ class MainWindow(QMainWindow):
             self.list.set_stats(items)
             self._update_header()
         elif ev == "notice":
-            self._notice(str(msg.get("level", "info")), str(msg.get("text", "")))
+            self._notice(str(msg.get("level", "info")), str(msg.get("text", "")), plugin=str(msg.get("plugin", "")))
         elif ev == "plugins":
             self.plugins = list(msg.get("plugins", []))
             if self.plugins_dialog is not None:
@@ -388,8 +379,6 @@ class MainWindow(QMainWindow):
                 dialog.closed_elsewhere()
         elif ev == "panel":
             self.panels.update_panel(str(msg.get("plugin")), str(msg.get("name", "")), msg.get("panel"))
-            if not self.panels.count():
-                self.dock.hide()
 
     def _set_services(self, items: list[dict[str, Any]]) -> None:
         services: dict[str, Service] = {}
@@ -427,10 +416,45 @@ class MainWindow(QMainWindow):
         self.proposals[pid] = dialog
         dialog.show()
 
-    def _notice(self, level: str, text: str) -> None:
+    def _notice(self, level: str, text: str, *, plugin: str = "") -> None:
         self._status(text, 8000)
+        if plugin:  # a plugin's alert never blocks the window with a modal box; in the tray it is a pop-up
+            if self.tray is not None and (self.isHidden() or self.isMinimized()) and level in ("warn", "error"):
+                icon = QSystemTrayIcon.MessageIcon.Critical if level == "error" else \
+                    QSystemTrayIcon.MessageIcon.Warning
+                self.tray.showMessage("Pythonator", text[:300], icon, 8000)
+            return
         if level == "error":
             QMessageBox.warning(self, "Pythonator", text)
+
+    def _plugins_menu(self, menu: QMenu) -> None:
+        menu.clear()
+        menu.addAction("Manage plugins…", self.show_plugins)
+        menu.addSeparator()
+        if not self.panels.count():
+            empty = menu.addAction("No plugin panels yet")
+            if empty is not None:
+                empty.setEnabled(False)
+            return
+        for dock in sorted(self.panels.docks.values(), key=lambda d: d.windowTitle().lower()):
+            toggle = dock.toggleViewAction()
+            if toggle is not None:
+                toggle.setText(dock.windowTitle() + ("  (own window)" if dock.isFloating() else ""))
+                menu.addAction(toggle)
+        menu.addSeparator()
+        menu.addAction("Show all panels, as tabs", self.panels.show_all)
+        lock = menu.addAction("Lock panel layout")
+        if lock is not None:
+            lock.setCheckable(True)
+            lock.setChecked(self.panels.locked)
+            lock.setToolTip("Panels stay where they are: no dragging, no windows of their own")
+            lock.toggled.connect(self._lock_panels)
+
+    def _lock_panels(self, locked: bool) -> None:
+        self.panels.set_locked(locked)
+        self.settings = self.settings.model_copy(update={"panels_locked": locked})
+        if self.client.ready:
+            self.client.request({"op": "settings", "settings": self.settings.model_dump(mode="json")})
 
     # -- the selected service -----------------------------------------------------------------------------
 
@@ -512,10 +536,7 @@ class MainWindow(QMainWindow):
         self.b_start.setEnabled(state not in theme.LIVE)
         self.b_stop.setEnabled(state in (*theme.LIVE, "waiting"))
         self._label(self.b_stop, "✖ Kill" if state == "stopping" else "■ Stop")
-        if self.a_install is not None and self.a_pull is not None and self.a_recreate is not None:
-            self.a_install.setEnabled(state not in theme.LIVE)
-            self.a_recreate.setEnabled(state not in theme.LIVE)
-            self.a_pull.setEnabled(state not in theme.LIVE and Path(service.folder, ".git").exists())
+        self._label(self.b_packages, "Compose ▾" if service.runtime == runtimes.COMPOSE else "Packages ▾")
         self._fit_header()
 
     def _header_icons(self, service: Service, state: str) -> None:
@@ -582,6 +603,46 @@ class MainWindow(QMainWindow):
         if op == "start":
             message["confirmed"] = confirmed
         self.client.request(message, lambda ok, _d, err: self._op_done(op, sid, ok, err))
+
+    def _packages_menu(self, menu: QMenu) -> None:
+        """Packages ▾ (Compose ▾ for a Compose project): what fits this service and its state."""
+        menu.clear()
+        service = self.services.get(self.current)
+        if service is None:
+            return
+        idle = self._state() not in theme.LIVE
+
+        def add(text: str, slot: Callable[[], object], enabled: bool = True) -> None:
+            action = menu.addAction(text, lambda: slot())
+            if action is not None:
+                action.setEnabled(enabled)
+
+        if service.runtime == runtimes.COMPOSE:
+            add("Build images (compose build)", lambda: self._compose("build"), idle)
+            add("Pull images (compose pull)", lambda: self._compose("pull"), idle)
+            add("List containers (compose ps)", lambda: self._compose("ps"))
+            menu.addSeparator()
+            add("Down: remove its containers and networks…", self._compose_down)
+        else:
+            add("Install packages", lambda: self._op("install"), idle)
+            add("Recreate environment…", self._recreate, idle)
+        menu.addSeparator()
+        add("Pull from Git (fast-forward only)", lambda: self._op("pull"),
+            idle and Path(service.folder, ".git").exists())
+
+    def _compose(self, action: str) -> None:
+        if sid := self.current:
+            self.client.request({"op": "compose", "id": sid, "action": action},
+                                lambda ok, _d, err: None if ok else self._notice("error", err))
+
+    def _compose_down(self) -> None:
+        service = self.services.get(self.current)
+        if service is not None and QMessageBox.question(
+                self, "Compose down", f"Stop {service.name} and remove its containers and networks?\n\n"
+                "Its volumes (databases, uploads) are kept, and so are its images.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+            self._compose("down")
 
     def _op_each(self, op: str, ids: list[str]) -> None:
         for sid in ids:
@@ -728,7 +789,7 @@ class MainWindow(QMainWindow):
     def system_check(self) -> None:
         def show(ok: bool, data: Any, error: str) -> None:
             if ok and isinstance(data, dict):
-                SystemCheckDialog(data, self).exec()
+                SystemCheckDialog(data, self, self.dirs.root).exec()
             else:
                 self._notice("error", error)
 
@@ -803,8 +864,10 @@ class MainWindow(QMainWindow):
     def _remember_window(self) -> None:
         if self.client.ready:
             geometry = bytes(self.saveGeometry().toHex().data()).decode()
+            state = bytes(self.saveState().toHex().data()).decode()
             self.settings = self.settings.model_copy(
-                update={"window_geometry": geometry, "editor_font_size": self.editor.font_size})
+                update={"window_geometry": geometry, "window_state": state if len(state) <= 65_536 else "",
+                        "editor_font_size": self.editor.font_size, "panels_locked": self.panels.locked})
             self.client.request({"op": "settings", "settings": self.settings.model_dump(mode="json")})
 
     def closeEvent(self, event: QCloseEvent | None) -> None:

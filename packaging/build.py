@@ -87,6 +87,11 @@ CloseApplications=yes
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
+[InstallDelete]
+; Official plugins retired in 0.0.11 (Notify took over Health checks and Webhooks): an update leaves no stale copy.
+Type: filesandordirs; Name: "{app}\_internal\plugins\health"
+Type: filesandordirs; Name: "{app}\_internal\plugins\webhooks"
+
 [Files]
 Source: "%(src)s\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 

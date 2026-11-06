@@ -86,6 +86,13 @@ class Pull(Ident):
     op: Literal["pull"]
 
 
+class Compose(Ident):
+    """A Docker Compose project's actions: build or pull its images, down, or list its containers."""
+
+    op: Literal["compose"]
+    action: Literal["build", "pull", "down", "ps"]
+
+
 class Tail(Ident):
     op: Literal["tail"]
 
@@ -176,7 +183,8 @@ class PluginRemove(PluginOp):
 
 
 Request = Annotated[
-    Hello | Add | Update | Remove | Start | Stop | Restart | Input | Shell | Install | Recreate | Pull | Tail | Clear
+    Hello | Add | Update | Remove | Start | Stop | Restart | Input | Shell | Install | Recreate | Pull | Compose | Tail
+    | Clear
     | Watch
     | Check
     | Reorder | StartAll | SaveSettings | Simple | Shutdown | PluginEnable | PluginSettings | PluginGrant | PluginAction

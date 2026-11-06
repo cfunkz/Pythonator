@@ -118,6 +118,23 @@ def _style_lexer(lexer: QsciLexer, size: int) -> None:
                                               255 - c.lightness() // 2), style)
 
 
+def _decode(data: bytes) -> tuple[str, str]:
+    """The file's text, and a note when it isn't UTF-8: such a file opens read only, so saving can't replace
+    its bytes with the � of a lossy decode."""
+    try:
+        return data.decode("utf-8"), ""
+    except UnicodeDecodeError:
+        return data.decode("utf-8", "replace"), "isn't UTF-8 text: opened read only so saving can't damage it"
+
+
+def _eol_mode(text: str) -> QsciScintilla.EolMode:
+    """The line ending most lines of the file use; new lines and pasted text get the same one."""
+    sample = text[:262_144]
+    crlf = sample.count("\r\n")
+    lf = sample.count("\n") - crlf
+    return QsciScintilla.EolMode.EolWindows if crlf > lf else QsciScintilla.EolMode.EolUnix
+
+
 BASE_SIZE = 11  # the editor's fonts are set at this size; Ctrl+ and Ctrl- zoom from it (Scintilla's own zoom)
 MIN_SIZE, MAX_SIZE = 6, 30  # Scintilla zooms from -10 to +20 points
 
@@ -165,10 +182,15 @@ class CodeEditor(QsciScintilla):
             self.setLexer(lexer)
         else:
             self.setFont(theme.mono_font(BASE_SIZE))
-        if b"\r\n" in data[:65536]:
-            self.setEolMode(QsciScintilla.EolMode.EolWindows)
-        self.setText(data.decode("utf-8", "replace"))
-        if size > MAX_EDIT:
+        text, self.encoding_note = _decode(data)
+        self.setEolMode(_eol_mode(text))
+        # Pasted text takes this file's line endings, so a paste from a Windows program never mixes \r\n into an
+        # \n file (or the other way round), which shows as extra blank lines once saved and opened again.
+        self.SendScintilla(QsciScintilla.SCI_SETPASTECONVERTENDINGS, 1)
+        self.setText(text)
+        # Opening a file isn't an edit: Ctrl+Z must not take the whole text away (or redo put it back twice).
+        self.SendScintilla(QsciScintilla.SCI_EMPTYUNDOBUFFER)
+        if size > MAX_EDIT or self.encoding_note:
             self.setReadOnly(True)
             self.read_only = True
         self.zoom(font_size)
@@ -177,8 +199,9 @@ class CodeEditor(QsciScintilla):
     def save(self) -> None:
         if self.read_only:
             return
-        write_atomic(self.path, self.text())
+        write_atomic(self.path, self.text())  # exactly what is shown: the file's own line endings, no translation
         self.setModified(False)
+        self.SendScintilla(QsciScintilla.SCI_SETSAVEPOINT)
 
     def zoom(self, size: int) -> None:
         """Show the text at ``size`` points: Scintilla's zoom, which scales every style and the margins alike."""
@@ -407,7 +430,9 @@ class EditorPanel(QWidget):
             bar.setTabButton(index, QTabBar.ButtonPosition.RightSide, close)
         self.tabs.setTabToolTip(self.tabs.currentIndex(), str(path))
         self._sync_empty()
-        if editor.read_only:
+        if editor.encoding_note:
+            self.status.emit(f"{path.name} {editor.encoding_note}")
+        elif editor.read_only:
             self.status.emit(f"{path.name} is over 20 MB: opened read only")
 
     def open_dialog(self) -> None:

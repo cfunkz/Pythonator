@@ -66,7 +66,15 @@ def _inner_argv(service: Service, task: list[str] | None) -> list[str]:
 
 
 def install_steps(service: Service) -> list[list[str]]:
-    """Installing packages inside the container: Python gets a venv of the container's own Python."""
+    """Installing packages inside the container: Python gets a venv of the container's own Python. A Compose
+    project pulls its images and builds its own."""
+    if service.runtime == runtimes.COMPOSE:
+        from . import compose
+
+        prog = engine(service.container.engine)
+        if not prog:
+            raise ValueError("No container engine is running: start Docker or Podman")
+        return compose.steps(prog, service, "install")
     if service.runtime == "python":
         steps = [["python", "-m", "venv", f"{APP}/.venv-container"]]
         pip = [f"{APP}/.venv-container/bin/python", "-m", "pip", "install", "--disable-pip-version-check"]
@@ -99,6 +107,10 @@ def wrap(service: Service, *, task: list[str] | None = None) -> Command:
     if not prog:
         raise IsolationError("No container engine is running. Install and start Docker or Podman, "
                              "or switch this service to Sandbox mode.")
+    if service.runtime == runtimes.COMPOSE:
+        from . import compose
+
+        return compose.wrap(service, prog, task=task)
     name = container_name(service.id) + ("-task" if task is not None else "")
     folder = Path(service.folder)
     writable = task is not None or service.sandbox.write_project

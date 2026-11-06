@@ -254,6 +254,8 @@ class Daemon:
                 s.recreate(sid)
             case p.Pull(id=sid):
                 s.pull(sid)
+            case p.Compose(id=sid, action=action):
+                s.compose(sid, action)
             case p.Tail(id=sid):
                 return s.tail(sid)
             case p.Clear(id=sid):

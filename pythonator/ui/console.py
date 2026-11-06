@@ -69,8 +69,16 @@ class _Input(QObject):
         self.at = 0.0
 
     def eventFilter(self, obj: QObject | None, event: QEvent | None) -> bool:
-        if event is not None and event.type() in self.KINDS:
+        if event is None:
+            return False
+        kind = event.type()
+        if kind in self.KINDS:
             self.at = time.perf_counter()
+        elif kind == QEvent.Type.MouseMove and isinstance(event, QMouseEvent) \
+                and event.buttons() != Qt.MouseButton.NoButton:
+            self.at = time.perf_counter()  # dragging a splitter, a panel or a selection: every frame goes to it
+        elif kind in (QEvent.Type.Resize, QEvent.Type.Move) and isinstance(obj, QWidget) and obj.isWindow():
+            self.at = time.perf_counter()  # a window being resized or moved
         return False
 
 

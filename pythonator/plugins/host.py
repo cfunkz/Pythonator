@@ -39,11 +39,13 @@ from . import files, trust
 from .manifest import PERMISSIONS, Manifest, load
 
 log = logging.getLogger(__name__)
-MAX_LINE = 64 * 1024
+RETIRED = ("health", "webhooks")  # official plugins that became Notify in 0.0.11
+MAX_LINE = 1024 * 1024  # one message; a panel with a long AI answer is a few hundred KB
 RATE, BURST, MAX_DROPS = 200.0, 400.0, 2000
 CHECK_DEADLINE = 2.0
 MAX_CRASHES = 3
 REQUESTS_PER_MINUTE = 120  # list, read and propose, per plugin
+CREATIONS_PER_HOUR = 10  # new projects (create_services), per plugin
 MASK = "••••••"
 
 
@@ -59,6 +61,7 @@ class Message(BaseModel):
     role: Literal["you", "ai", "note", "error"]
     text: str = Field(default="", max_length=20_000)
     code: bool = False  # monospaced, like a code block
+    markdown: bool = False  # "ai" text shown as Markdown, without HTML or images (API 4)
 
 
 class Node(BaseModel):
@@ -108,6 +111,7 @@ class Plugin:
     panel: dict[str, Any] | None = None
     stopping: bool = False
     requests: deque[float] = field(default_factory=deque)
+    creations: deque[float] = field(default_factory=deque)
 
     @property
     def id(self) -> str:
@@ -125,6 +129,7 @@ class PluginHost:
         self.vault = Vault(dirs.root / "secrets.json")
         self.proposals: dict[str, files.Proposal] = {}
         self.discover()
+        self._migrate()
         supervisor.listeners.append(self._on_supervisor_event)
         supervisor.gate = self.check_start
 
@@ -136,6 +141,8 @@ class PluginHost:
             if not base.is_dir():
                 continue
             for folder in sorted(p for p in base.iterdir() if p.is_dir() and not p.name.startswith(".")):
+                if base == official_plugins_dir() and folder.name in RETIRED:
+                    continue  # left behind by an update over an older version: Notify does their work now
                 try:
                     manifest = load(folder)
                 except ValueError as exc:
@@ -149,6 +156,29 @@ class PluginHost:
             if pid in found and old.proc:
                 found[pid] = old
         self.plugins = found
+
+    def _migrate(self) -> None:
+        """0.0.11: Health checks and Webhooks became one plugin, Notify. Whoever had either on gets Notify on, with
+        their webhook URLs, alert choices and health check settings carried over."""
+        old = [pid for pid in ("webhooks", "health") if pid not in self.plugins]
+        if "notify" not in self.plugins or not old:
+            return
+        settings = self.settings
+        was_on = [pid for pid in old if pid in settings.plugins_enabled]
+        values: dict[str, str | int | bool] = dict(settings.plugin_settings.get("notify", {}))
+        for pid in old:
+            renamed = {"path": "health_path", "interval": "health_interval", "timeout": "health_timeout",
+                       "alert": "on_unhealthy"} if pid == "health" else {}
+            for key, value in settings.plugin_settings.get(pid, {}).items():
+                values.setdefault(renamed.get(key, key), value)
+        if not was_on and not any(pid in settings.plugin_settings for pid in old):
+            return
+        enabled = [pid for pid in settings.plugins_enabled if pid not in old]
+        if was_on and "notify" not in enabled:
+            enabled.append("notify")
+        rest = {k: v for k, v in settings.plugin_settings.items() if k not in old}
+        self.sup.save_settings(settings.model_copy(update={"plugins_enabled": enabled,
+                                                           "plugin_settings": {**rest, "notify": values}}))
 
     @property
     def settings(self) -> Any:
@@ -280,7 +310,7 @@ class PluginHost:
             if not line:
                 break
             if len(line) > MAX_LINE:
-                self.sup.post(lambda: self._kill(p, proc, "sent a message larger than 64 KB"))
+                self.sup.post(lambda: self._kill(p, proc, "sent a message larger than 1 MB"))
                 break
             self.sup.post(lambda line=line: self._on_line(p, proc, line))
         code = proc.wait()
@@ -434,6 +464,8 @@ class PluginHost:
         if len(p.requests) >= REQUESTS_PER_MINUTE:
             raise files.FileRefused(f"Too many requests: at most {REQUESTS_PER_MINUTE} a minute")
         p.requests.append(now)
+        if op in ("templates", "create"):
+            return self._create(p, msg, granted)
         if op not in ("list", "read", "propose"):
             raise files.FileRefused("Unknown request")
         if not isinstance(sid, str) or sid not in self.sup.slots:
@@ -453,6 +485,38 @@ class PluginHost:
         result = view.read(str(msg.get("path", "")))
         self._activity(p, f"Read {service.name}: {result['path']}")
         return result
+
+    def _create(self, p: Plugin, msg: dict[str, Any], granted: set[str]) -> dict[str, Any]:
+        """The Project builder: Pythonator's own templates only; the plugin picks one and names it (API 4)."""
+        from ..core import templates
+
+        if "create_services" not in granted:
+            self._activity(p, "Wanted to create a project (needs create_services)")
+            raise files.FileRefused("Needs the create_services permission")
+        if msg.get("op") == "templates":
+            return {"templates": templates.catalog(), "folder": str(templates.default_parent())}
+        key, name = str(msg.get("template", "")), str(msg.get("name", ""))
+        raw = str(msg.get("folder", "") or "").strip()
+        try:
+            parent = Path(validate.folder(raw, "The projects folder", must_exist=False)) if raw \
+                else templates.default_parent()
+        except ValueError as exc:
+            raise files.FileRefused(str(exc)) from None
+        now = time.monotonic()
+        while p.creations and now - p.creations[0] > 3600:
+            p.creations.popleft()
+        if len(p.creations) >= CREATIONS_PER_HOUR:
+            raise files.FileRefused(f"At most {CREATIONS_PER_HOUR} new projects an hour")
+        if self.test_mode(p):
+            self._activity(p, f"Test mode: would create a {key} project {name!r} in {parent}")
+            raise files.FileRefused("Test mode: the project was only recorded in the plugin's Activity")
+        try:
+            service = self.sup.create_project(key, name, parent, start=bool(msg.get("start")))
+        except (ValueError, OSError) as exc:
+            raise files.FileRefused(str(exc)) from None
+        p.creations.append(now)
+        self._activity(p, f"Created {service.name} ({key}) in {service.folder}")
+        return {"id": service.id, "folder": service.folder, "port": service.network.ports[0]}
 
     def _files(self, service: Service) -> files.ServiceFiles:
         values = dict(service.env)

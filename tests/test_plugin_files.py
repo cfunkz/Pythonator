@@ -269,18 +269,18 @@ def test_panel_text_box_keeps_the_draft_and_sends_on_enter(qtbot: Any) -> None:
     from PyQt6.QtWidgets import QComboBox, QPlainTextEdit
 
     from pythonator.sdk import ui
-    from pythonator.ui.panels import PanelDock
+    from pythonator.ui.panels import PanelPage
 
     sent: list[tuple[str, str, str]] = []
-    dock = PanelDock(lambda plugin, action, value: sent.append((plugin, action, value)))
+    dock = PanelPage("ai", lambda plugin, action, value: sent.append((plugin, action, value)))
     qtbot.addWidget(dock)
     panel = ui.panel("AI", ui.select("pick", ["a", "b"], "b"), ui.code("x = 1"), ui.input("ask", "Ask…"))
-    dock.update_panel("ai", "AI", panel)
+    dock.show_panel(panel)
     box = dock.findChild(QPlainTextEdit, options=Qt.FindChildOption.FindChildrenRecursively)
     edits = [w for w in dock.findChildren(QPlainTextEdit) if not w.isReadOnly()]
     assert box is not None and len(edits) == 1
     edits[0].setPlainText("half a question")
-    dock.update_panel("ai", "AI", panel)  # the plugin redraws while the user types
+    dock.show_panel(panel)  # the plugin redraws while the user types
     edits = [w for w in dock.findChildren(QPlainTextEdit) if not w.isReadOnly() and w.toPlainText()]
     assert [w.toPlainText() for w in edits] == ["half a question"]
     qtbot.keyClick(edits[0], Qt.Key.Key_Return)

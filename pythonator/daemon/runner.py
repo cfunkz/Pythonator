@@ -57,7 +57,7 @@ class Runner:
         self.cmd = cmd
         self.sink = sink
         self.memory_mb = memory_mb
-        self.cpu_percent = 0 if cmd.container else limits.effective(cpu_percent)  # containers: --cpus
+        self.cpu_percent = 0 if cmd.container or cmd.compose else limits.effective(cpu_percent)  # containers: --cpus
         self._throttle: limits.Throttle | None = None
         self.proc: subprocess.Popen[bytes] | None = None
         self.started = 0.0
@@ -170,7 +170,11 @@ class Runner:
             self._throttle.release()
         if proc is None or proc.poll() is not None:
             return
-        if self.cmd.container and self.cmd.engine:
+        if self.cmd.compose:
+            from ..isolation import compose
+
+            compose.stop(self.cmd.compose, self.cmd.env, grace)
+        elif self.cmd.container and self.cmd.engine:
             containers.stop(self.cmd.engine, self.cmd.container, grace)
         elif sys.platform == "win32":
             if not winproc.request_ctrl_c(proc.pid):

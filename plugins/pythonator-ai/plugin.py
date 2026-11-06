@@ -20,8 +20,8 @@ from pythonator.sdk import Plugin, PluginError, ServiceEvent, ServiceInfo, ui
 
 MAX_FILES = 8
 SHOWN_TURNS = 4
-PANEL_BUDGET = 56_000  # bytes of panel JSON (the host takes 64 KB per message)
-SHOWN_ANSWER = 20_000
+PANEL_BUDGET = 900_000  # bytes of panel JSON (the host takes 1 MB per message): a whole 64k-token answer fits
+PIECE = 4_000  # an answer is shown in paragraphs of about this size: while it streams, only the last one changes
 HISTORY_TURNS = 6
 NO_FILE = "Add a file…"
 QUICK_PICK = "Quick question…"
@@ -519,10 +519,23 @@ class Assistant(Plugin):
             for i in range(start, len(turns)):
                 messages += self._turn(turns[i])
                 reviews += self._reviews(i, turns[i])
+            if len(messages) > 200 and start < len(turns) - 1:  # too many pieces: show fewer earlier questions
+                start += 1
+                continue
             panel = ui.panel("AI assistant", *head, ui.chat(*messages[-200:]), *reviews, *foot)
-            if len(json.dumps(panel, ensure_ascii=False).encode()) <= PANEL_BUDGET or start >= len(turns) - 1:
+            size = len(json.dumps(panel, ensure_ascii=False).encode())
+            if size <= PANEL_BUDGET:
                 return panel
-            start += 1
+            if start < len(turns) - 1:
+                start += 1
+                continue
+            # One answer bigger than a panel can carry (only near the hard output cap, in a script of 3-byte
+            # characters): its beginning goes, never the part that is still arriving.
+            shown = messages[-200:]
+            while len(shown) > 1 and size > PANEL_BUDGET:
+                size -= len(json.dumps(shown.pop(0), ensure_ascii=False).encode())
+            note = ui.message("note", "The start of this answer is longer than the panel holds and isn't shown.")
+            return ui.panel("AI assistant", *head, ui.chat(note, *shown), *reviews, *foot)
 
     def _foot(self) -> list[dict[str, Any]]:
         name = self._name(self.selected) if self.selected else ""
@@ -551,8 +564,6 @@ class Assistant(Plugin):
         if turn.sent:
             items.append(ui.message("note", f"Sent {turn.sent}"))
         answer = turn.answer
-        if len(answer) > SHOWN_ANSWER:
-            answer = answer[:SHOWN_ANSWER] + "\n… (the rest is cut in the panel)"
         if turn.status == "waiting":
             items.append(ui.message("note", "Gathering the logs and files…"))
         elif turn.status == "streaming" and not answer:
@@ -560,8 +571,12 @@ class Assistant(Plugin):
         for kind, text in context.split_answer(answer):
             if kind == "text" and not text.strip():
                 continue
-            for chunk in _chunks(text.strip("\n") if kind == "text" else text, 19_000):
-                items.append(ui.message("ai", chunk, code=kind in ("code", "edit")))
+            if kind == "text":
+                for piece in _paragraphs(text.strip("\n"), PIECE):
+                    items.append(ui.message("ai", piece, markdown=True))
+            else:
+                for chunk in _chunks(text, 19_000):
+                    items.append(ui.message("ai", chunk, code=True))
         if turn.status == "stopped":
             items.append(ui.message("note", "Stopped."))
         for note in turn.notes:
@@ -583,3 +598,19 @@ class Assistant(Plugin):
 
 def _chunks(text: str, size: int) -> list[str]:
     return [text[i:i + size] for i in range(0, len(text), size)] or [""]
+
+
+def _paragraphs(text: str, size: int) -> list[str]:
+    """``text`` in pieces of about ``size`` characters, cut only between paragraphs (a blank line), so each
+    piece is whole Markdown; a single paragraph longer than 19,000 characters is cut where it must be."""
+    pieces: list[str] = []
+    current = ""
+    for para in text.split("\n\n"):
+        if current and len(current) + len(para) + 2 > size:
+            pieces.append(current)
+            current = para
+        else:
+            current = f"{current}\n\n{para}" if current else para
+    if current or not pieces:
+        pieces.append(current)
+    return [chunk for piece in pieces for chunk in _chunks(piece, 19_000)]

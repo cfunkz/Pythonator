@@ -109,7 +109,10 @@ def prepare(service: Service, dirs: DataDirs, *, task: list[str] | None = None, 
         raise IsolationError(f"The folder {folder} doesn't exist")
     if service.mode is Mode.CONTAINER:
         cmd = container.wrap(service, task=task)
-        cmd.shown = cmd.argv[cmd.argv.index(container.image_for(service)):]
+        if cmd.compose:
+            cmd.shown = ["compose", *cmd.argv[len(cmd.compose):]]
+        else:
+            cmd.shown = cmd.argv[cmd.argv.index(container.image_for(service)):]
         return cmd
     argv = service_argv(service, task)
     _check_windows_batch(argv)

@@ -33,7 +33,7 @@ http.ListenAndServe(os.Getenv("HOST")+":"+os.Getenv("PORT"), mux)
 ```
 
 When the service runs, the header shows a link to `http://127.0.0.1:PORT/` and the list of ports it actually listens
-on. The [Health checks](plugins.md#health-checks) plugin calls it every few seconds and shows whether it answers.
+on. The [Notify](plugins.md#notify) plugin calls it every few seconds and shows whether it answers.
 
 ## What each mode enforces
 

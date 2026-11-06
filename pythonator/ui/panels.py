@@ -7,22 +7,25 @@ from __future__ import annotations
 
 import contextlib
 import json
+import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from PyQt6.QtCore import QEvent, QObject, Qt
-from PyQt6.QtGui import QColor, QKeyEvent
+from PyQt6.QtCore import QEvent, QObject, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtGui import QColor, QDesktopServices, QKeyEvent, QPalette, QResizeEvent, QTextDocument
 from PyQt6.QtWidgets import (
     QAbstractScrollArea,
     QApplication,
     QBoxLayout,
     QComboBox,
+    QDockWidget,
     QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLayout,
+    QMainWindow,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
@@ -30,12 +33,14 @@ from PyQt6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
+    QTextBrowser,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from . import theme
-from .widgets import label, scroll
+from .widgets import label
 
 Action = Callable[[str, str, str], None]  # plugin, action, value
 MAX_INPUT = 16_000
@@ -89,8 +94,87 @@ def _fit(code: QPlainTextEdit) -> None:
     code.setFixedHeight(min(320, 24 + code.fontMetrics().lineSpacing() * lines))
 
 
-Group = tuple[str, list[tuple[str, bool]]]  # a bubble: role, [(text, is code)]
+Part = tuple[str, bool, bool]  # text, is code, is Markdown
+Group = tuple[str, list[Part]]  # a bubble: role, its parts
 CAPTIONS = {"you": "You", "ai": "Assistant", "error": "Error"}
+
+
+MARKDOWN = QTextDocument.MarkdownFeature.MarkdownDialectGitHub | QTextDocument.MarkdownFeature.MarkdownNoHTML
+
+
+class Prose(QTextBrowser):
+    """A message's text: wraps to the chat's width and is exactly as tall as its text, with no scroll bar of its
+    own, so a long answer is laid out once per width instead of on every layout pass (as a word-wrapped QLabel is).
+
+    With ``markdown`` it shows Markdown (headings, lists, bold, ``code``, tables): never HTML (shown as text),
+    never images or files (nothing is loaded), and a link opens only when clicked, only http(s)."""
+
+    def __init__(self, text: str = "", *, markdown: bool = False, tone: str = "text", small: bool = False) -> None:
+        super().__init__()
+        self.markdown = markdown
+        self.shown: str | None = None
+        self.setReadOnly(True)
+        self.setUndoRedoEnabled(False)
+        self.setOpenLinks(False)
+        self.setOpenExternalLinks(False)
+        self.anchorClicked.connect(_open_link)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        doc = self.document()
+        if doc is not None:
+            doc.setDocumentMargin(1)
+            if layout := doc.documentLayout():
+                layout.documentSizeChanged.connect(lambda _s: self._fit())
+        size = " font-size: 8pt;" if small else ""
+        self.setStyleSheet(f"QTextBrowser {{ background: transparent; border: none; color: {theme.color(tone)};"
+                           f"{size} }}")
+        palette = self.palette()
+        palette.setColor(QPalette.ColorRole.Link, QColor(theme.color("accent_hi")))
+        self.setPalette(palette)
+        if viewport := self.viewport():
+            viewport.setAutoFillBackground(False)
+        self.set_text(text)
+
+    def set_text(self, text: str) -> None:
+        if text == self.shown:
+            return
+        self.shown = text
+        doc = self.document()
+        if self.markdown and doc is not None:
+            doc.setMarkdown(text, MARKDOWN)
+        else:
+            self.setPlainText(text)
+        self._fit()
+
+    def text(self) -> str:
+        return self.toPlainText()
+
+    def loadResource(self, kind: int, name: QUrl) -> Any:
+        return None  # never an image, a file or anything else the text names
+
+    def resizeEvent(self, e: QResizeEvent | None) -> None:
+        super().resizeEvent(e)
+        self._fit()
+
+    def _fit(self) -> None:
+        doc = self.document()
+        if doc is None:
+            return
+        viewport = self.viewport()
+        width = max(40, viewport.width() if viewport is not None else self.width())
+        if doc.textWidth() != width:
+            doc.setTextWidth(width)
+        height = math.ceil(doc.size().height()) + 2
+        if height != self.height():
+            self.setFixedHeight(height)
+
+
+def _open_link(url: QUrl) -> None:
+    if url.scheme() in ("http", "https"):
+        QDesktopServices.openUrl(url)
 
 
 class _Bubble(QFrame):
@@ -99,7 +183,7 @@ class _Bubble(QFrame):
     def __init__(self, role: str) -> None:
         super().__init__()
         self.role = role
-        self.parts: list[tuple[str, bool]] = []
+        self.parts: list[Part] = []
         self.widgets: list[QWidget] = []
         self.setObjectName("bubble")
         tint = {"you": "accent", "error": "error"}.get(role)
@@ -118,10 +202,10 @@ class _Bubble(QFrame):
                                   "font-size: 8pt; font-weight: 600; background: transparent; border: none;")
             self.body.addWidget(caption)
 
-    def show_parts(self, parts: list[tuple[str, bool]]) -> None:
+    def show_parts(self, parts: list[Part]) -> None:
         """Update in place: unchanged parts keep their widget (and the user's text selection)."""
         keep = 0
-        while keep < min(len(parts), len(self.parts)) and parts[keep][1] == self.parts[keep][1]:
+        while keep < min(len(parts), len(self.parts)) and parts[keep][1:] == self.parts[keep][1:]:
             if parts[keep][0] != self.parts[keep][0]:
                 self._set(self.widgets[keep], parts[keep][0])
             keep += 1
@@ -129,21 +213,15 @@ class _Bubble(QFrame):
             widget.hide()
             widget.deleteLater()
         self.widgets = self.widgets[:keep]
-        for text, code in parts[keep:]:
-            widget = _code_box(text) if code else self._label(text)
+        for text, code, markdown in parts[keep:]:
+            widget = _code_box(text) if code else self._prose(text, markdown)
             self.body.addWidget(widget)
             self.widgets.append(widget)
         self.parts = list(parts)
 
-    def _label(self, text: str) -> QLabel:
-        w = _plain(text)
-        w.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse
-                                  | Qt.TextInteractionFlag.TextSelectableByKeyboard)
-        w.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)  # wraps to the chat's width
+    def _prose(self, text: str, markdown: bool) -> Prose:
         tone = {"note": "muted", "error": "text"}.get(self.role, "text")
-        small = " font-size: 8pt;" if self.role == "note" else ""
-        w.setStyleSheet(f"color: {theme.color(tone)}; background: transparent; border: none;{small}")
-        return w
+        return Prose(text, markdown=markdown and self.role == "ai", tone=tone, small=self.role == "note")
 
     @staticmethod
     def _set(widget: QWidget, text: str) -> None:
@@ -154,8 +232,8 @@ class _Bubble(QFrame):
             _fit(widget)
             if bar is not None:
                 bar.setValue(x)
-        elif isinstance(widget, QLabel):
-            widget.setText(text)
+        elif isinstance(widget, Prose):
+            widget.set_text(text)
 
 
 class ChatView(QScrollArea):
@@ -191,7 +269,7 @@ class ChatView(QScrollArea):
         for m in messages:
             if not isinstance(m, dict) or m.get("role") not in ("you", "ai", "note", "error"):
                 continue
-            part = (str(m.get("text", "")), bool(m.get("code")))
+            part = (str(m.get("text", "")), bool(m.get("code")), bool(m.get("markdown")))
             if groups and groups[-1][0] == m["role"] and m["role"] != "note":
                 groups[-1][1].append(part)
             else:
@@ -273,28 +351,23 @@ def render(plugin: str, node: dict[str, Any], on_action: Action, drafts: Drafts 
         stack.addWidget(value)
         return card
     if kind == "table":
-        cols = [str(c) for c in node.get("columns", [])]
-        rows = node.get("rows", [])
-        tones = node.get("tones", [])
-        table = QTableWidget(len(rows), len(cols))
-        table.setHorizontalHeaderLabels(cols)
+        table = QTableWidget()
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        table.setSelectionMode(QTableWidget.SelectionMode.ContiguousSelection)
+        table.setWordWrap(False)
         vh = table.verticalHeader()
         if vh is not None:
             vh.hide()
+            vh.setDefaultSectionSize(26)
+            vh.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         hh = table.horizontalHeader()
         if hh is not None:
-            hh.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+            # Interactive, sized once per change: ResizeToContents measures every cell on every resize step, which
+            # made dragging a splitter or a window edge stutter with a long table in a panel.
+            hh.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+            hh.setResizeContentsPrecision(60)
             hh.setStretchLastSection(True)
-        for r, row in enumerate(rows):
-            color = QColor(_tone(str(tones[r]))) if r < len(tones) else None
-            for c, cell in enumerate(row[:len(cols)]):
-                item = QTableWidgetItem(str(cell))
-                if color is not None:
-                    item.setForeground(color)
-                table.setItem(r, c, item)
-        table.setMinimumHeight(min(400, 36 + 28 * len(rows)))
+        fill_table(table, node)
         return table
     if kind == "button":
         button = QPushButton(str(node.get("label", "")))
@@ -309,6 +382,45 @@ def render(plugin: str, node: dict[str, Any], on_action: Action, drafts: Drafts 
             layout.addWidget(render(plugin, child, on_action, drafts))
         return box
     return _plain("")
+
+
+def fill_table(table: QTableWidget, node: dict[str, Any]) -> None:
+    """Put a table node's rows into ``table``, reusing its cells: a panel that refreshes a status table every few
+    seconds changes some text, not a whole new widget."""
+    cols = [str(c) for c in node.get("columns", [])]
+    rows = node.get("rows", [])
+    tones = node.get("tones", [])
+    table.setUpdatesEnabled(False)
+    try:
+        fresh = table.columnCount() != len(cols) or table.rowCount() == 0
+        if table.columnCount() != len(cols):
+            table.setColumnCount(len(cols))
+        table.setHorizontalHeaderLabels(cols)
+        table.setRowCount(len(rows))
+        default = QColor(theme.color("text"))
+        for r, row in enumerate(rows):
+            color = QColor(_tone(str(tones[r]))) if r < len(tones) else default
+            cells = [str(c) for c in row[:len(cols)]] + [""] * max(0, len(cols) - len(row))
+            for c, cell in enumerate(cells):
+                item = table.item(r, c)
+                if item is None:
+                    item = QTableWidgetItem(cell)
+                    table.setItem(r, c, item)
+                elif item.text() != cell:
+                    item.setText(cell)
+                if item.foreground().color() != color:
+                    item.setForeground(color)
+                if len(cell) > 60:
+                    item.setToolTip(cell[:2000])
+        if fresh and rows:
+            table.resizeColumnsToContents()
+            hh = table.horizontalHeader()
+            for c in range(max(0, len(cols) - 1)):
+                if hh is not None and hh.sectionSize(c) > 320:
+                    hh.resizeSection(c, 320)
+        table.setFixedHeight(min(420, 32 + 26 * max(1, len(rows))))
+    finally:
+        table.setUpdatesEnabled(True)
 
 
 def _input(plugin: str, node: dict[str, Any], on_action: Action, drafts: Drafts) -> QWidget:
@@ -377,7 +489,11 @@ def _key(node: dict[str, Any]) -> str:
 
 def _slot(node: dict[str, Any]) -> str:
     kind = node.get("type")
-    return f"input:{node.get('action', '')}" if kind == "input" else f"{kind}:" if kind in ("row", "chat") else ""
+    if kind == "input":
+        return f"input:{node.get('action', '')}"
+    if kind == "table":
+        return "table:" + "\x1f".join(str(c) for c in node.get("columns", []))
+    return f"{kind}:" if kind in ("row", "chat") else ""
 
 
 def _update_input(widget: QWidget, node: dict[str, Any]) -> None:
@@ -413,6 +529,8 @@ def reconcile(plugin: str, layout: QLayout, old: list[_Item], nodes: list[Any], 
             _update_input(item.widget, node)
         if item is not None and isinstance(item.widget, ChatView) and item.key != key:
             item.widget.set_messages(list(node.get("messages", [])))
+        if item is not None and isinstance(item.widget, QTableWidget) and item.key != key:
+            fill_table(item.widget, node)
         if item is None:
             widget = QWidget() if kind == "row" else render(plugin, node, on_action, drafts)
             if kind == "row":
@@ -435,56 +553,228 @@ def reconcile(plugin: str, layout: QLayout, old: list[_Item], nodes: list[Any], 
     return out
 
 
-class PanelDock(QTabWidget):
-    """One tab per plugin panel. A redraw changes only what changed, so typing, focus and scroll stay put."""
+class PanelPage(QScrollArea):
+    """One plugin's panel. A redraw changes only what changed, so typing, focus and scroll stay put."""
 
-    def __init__(self, on_action: Action, parent: QWidget | None = None) -> None:
+    def __init__(self, plugin: str, on_action: Action, drafts: Drafts | None = None,
+                 parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.plugin = plugin
         self.on_action = on_action
-        self.pages: dict[str, QScrollArea] = {}
-        self.items: dict[str, list[_Item]] = {}
-        self.last: dict[str, str] = {}
-        self.drafts = Drafts()
-        self.setDocumentMode(True)
+        self.drafts = drafts or Drafts()
+        self.items: list[_Item] = []
+        self.last = ""
+        self.title = plugin
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)  # a panel fits its dock's width
+        body = QWidget()
+        body.setObjectName("PanelBody")
+        QVBoxLayout(body).setContentsMargins(10, 8, 10, 10)
+        self.setWidget(body)
 
-    def update_panel(self, plugin: str, name: str, panel: dict[str, Any] | None) -> None:
-        if panel is None:
-            page = self.pages.pop(plugin, None)
-            self.items.pop(plugin, None)
-            self.last.pop(plugin, None)
-            if page is not None:
-                self.removeTab(self.indexOf(page))
-                page.deleteLater()
-            return
+    def show_panel(self, panel: dict[str, Any], name: str = "") -> bool:
+        """Draw ``panel``; False when nothing changed (plugins redraw on a timer)."""
         same = _key(panel)
-        if self.last.get(plugin) == same:  # plugins redraw on a timer; nothing changed, nothing to do
-            return
-        self.last[plugin] = same
-        page = self.pages.get(plugin)
-        if page is None:
-            page = scroll()
-            page.setFrameShape(QFrame.Shape.NoFrame)
-            page.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)  # a panel fits the dock's width
-            page.setWidget(QWidget())
-            QVBoxLayout(page.widget())
-            self.pages[plugin] = page
-            self.addTab(page, str(panel.get("title") or name))
-        else:
-            index = self.indexOf(page)
-            title = str(panel.get("title") or name)
-            if self.tabText(index) != title:
-                self.setTabText(index, title)
-        body = page.widget()
+        self.title = str(panel.get("title") or name or self.plugin)
+        if self.last == same:
+            return False
+        self.last = same
+        body = self.widget()
         layout = body.layout() if body is not None else None
         if body is None or layout is None:
-            return
-        bar = page.verticalScrollBar()
+            return False
+        bar = self.verticalScrollBar()
         at_end = bar is None or bar.value() >= bar.maximum() - 4
         position = bar.value() if bar is not None else 0
-        self.items[plugin] = reconcile(plugin, layout, self.items.get(plugin, []), list(panel.get("items", [])),
-                                       self.on_action, self.drafts)
-        if isinstance(layout, QVBoxLayout) and not any(isinstance(i.widget, ChatView) for i in self.items[plugin]):
-            layout.addStretch(1)
+        body.setUpdatesEnabled(False)  # one repaint for the whole redraw, not one per changed widget
+        try:
+            self.items = reconcile(self.plugin, layout, self.items, list(panel.get("items", [])), self.on_action,
+                                   self.drafts)
+            if isinstance(layout, QVBoxLayout) and not any(isinstance(i.widget, ChatView) for i in self.items):
+                layout.addStretch(1)
+        finally:
+            body.setUpdatesEnabled(True)
         if bar is not None:  # a redraw keeps the place; at the end (a chat), it follows new lines
             body.adjustSize()
             bar.setValue(bar.maximum() if at_end else position)
+        return True
+
+
+class _TitleBar(QWidget):
+    """A panel dock's title: its name, ⧉ to open it in a window of its own (⇲ puts it back), ✕ to hide it.
+    Dragging it moves the panel, to another side, into tabs with the others, or out on its own."""
+
+    def __init__(self, dock: QDockWidget, docks: PanelDocks) -> None:
+        super().__init__(dock)
+        self.dock = dock
+        self.setObjectName("PanelTitle")
+        row = QHBoxLayout(self)
+        row.setContentsMargins(10, 3, 4, 3)
+        row.setSpacing(2)
+        self.name = QLabel(dock.windowTitle())
+        self.name.setProperty("section", True)
+        row.addWidget(self.name, 1)
+        self.pop = QToolButton()
+        self.pop.setAutoRaise(True)
+        self.pop.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.pop.clicked.connect(lambda: docks.toggle_window(dock))
+        close = QToolButton()
+        close.setAutoRaise(True)
+        close.setText("✕")
+        close.setToolTip("Hide this panel (Plugins ▾ shows it again)")
+        close.setCursor(Qt.CursorShape.PointingHandCursor)
+        close.clicked.connect(dock.close)
+        row.addWidget(self.pop)
+        row.addWidget(close)
+        dock.windowTitleChanged.connect(self.name.setText)
+        self.sync(locked=False)
+
+    def sync(self, *, locked: bool) -> None:
+        floating = self.dock.isFloating()
+        self.pop.setText("⇲" if floating else "⧉")
+        self.pop.setToolTip("Put it back in the main window" if floating else "Open in a window of its own")
+        self.pop.setVisible(floating or not locked)
+
+
+class PanelDocks(QObject):
+    """Every plugin panel in a dock of its own. They start as tabs on the right of the main window; each can be
+    dragged to another side, next to or into the others, or opened in a window of its own, and the layout is kept
+    with the window's. Locked, they stay where they are (still tabs, still hidden and shown)."""
+
+    changed = pyqtSignal()  # a panel came or went
+
+    def __init__(self, window: QMainWindow, on_action: Action) -> None:
+        super().__init__(window)
+        self.window = window
+        self.on_action = on_action
+        self.drafts = Drafts()
+        self.docks: dict[str, QDockWidget] = {}
+        self.pages: dict[str, PanelPage] = {}
+        self.locked = False
+        window.setDockOptions(QMainWindow.DockOption.AllowTabbedDocks | QMainWindow.DockOption.AllowNestedDocks
+                              | QMainWindow.DockOption.GroupedDragging | QMainWindow.DockOption.AnimatedDocks)
+        window.setTabPosition(Qt.DockWidgetArea.AllDockWidgetAreas, QTabWidget.TabPosition.North)
+
+    def count(self) -> int:
+        return len(self.docks)
+
+    def update_panel(self, plugin: str, name: str, panel: dict[str, Any] | None) -> None:
+        if panel is None:
+            self.pages.pop(plugin, None)
+            dock = self.docks.pop(plugin, None)
+            if dock is not None:
+                self.window.removeDockWidget(dock)
+                dock.deleteLater()
+                self.changed.emit()
+            return
+        page = self.pages.get(plugin)
+        dock = self.docks.get(plugin)
+        if page is None or dock is None:
+            page = PanelPage(plugin, self.on_action, self.drafts)
+            self.pages[plugin] = page
+            dock = self._dock(plugin, page)
+        if page.show_panel(panel, name) and dock.windowTitle() != page.title:
+            dock.setWindowTitle(page.title)
+        if plugin not in self.docks:
+            self.docks[plugin] = dock
+            self._place(dock)
+            self.changed.emit()
+
+    def _dock(self, plugin: str, page: PanelPage) -> QDockWidget:
+        dock = QDockWidget(page.title, self.window)
+        dock.setObjectName(f"panel-{plugin}")  # what saveState and restoreState know it by
+        dock.setWidget(page)
+        dock.setMinimumWidth(260)
+        bar = _TitleBar(dock, self)
+        dock.setTitleBarWidget(bar)
+        dock.topLevelChanged.connect(lambda floating, d=dock: self._floated(d, floating))
+        self._features(dock)
+        return dock
+
+    def _place(self, dock: QDockWidget) -> None:
+        if self.window.restoreDockWidget(dock):  # where the user left it last time
+            self._sync(dock)
+            return
+        others = [d for d in self.docks.values() if d is not dock and not d.isFloating()
+                  and self.window.dockWidgetArea(d) == Qt.DockWidgetArea.RightDockWidgetArea]
+        self.window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
+        if others:
+            self.window.tabifyDockWidget(others[0], dock)
+        dock.hide()  # out of the way until asked for: the editor and console keep the width
+
+    def _features(self, dock: QDockWidget) -> None:
+        f = QDockWidget.DockWidgetFeature
+        dock.setFeatures(f.DockWidgetClosable if self.locked else
+                         f.DockWidgetClosable | f.DockWidgetMovable | f.DockWidgetFloatable)
+        self._sync(dock)
+
+    def _sync(self, dock: QDockWidget) -> None:
+        bar = dock.titleBarWidget()
+        if isinstance(bar, _TitleBar):
+            bar.sync(locked=self.locked)
+
+    def set_locked(self, locked: bool) -> None:
+        self.locked = locked
+        for dock in self.docks.values():
+            self._features(dock)
+
+    def show_all(self) -> None:
+        """Every panel back in the main window, as tabs, the first one in front."""
+        first: QDockWidget | None = None
+        for dock in self.docks.values():
+            if dock.isFloating():
+                dock.setFloating(False)
+            dock.show()
+            if first is None:
+                first = dock
+            elif self.window.dockWidgetArea(dock) == self.window.dockWidgetArea(first):
+                self.window.tabifyDockWidget(first, dock)
+        if first is not None:
+            first.raise_()
+
+    def show(self, plugin: str) -> None:
+        dock = self.docks.get(plugin)
+        if dock is not None:
+            dock.show()
+            dock.raise_()
+            if dock.isFloating():
+                dock.activateWindow()
+
+    def toggle_window(self, dock: QDockWidget) -> None:
+        if dock.isFloating():
+            dock.setFloating(False)
+            dock.show()
+            dock.raise_()
+            return
+        size = dock.size()
+        dock.setFloating(True)
+        dock.resize(max(size.width(), 480), max(size.height(), 560))
+        dock.show()
+
+    def _floated(self, dock: QDockWidget, floating: bool) -> None:
+        if floating:
+            QTimer.singleShot(0, lambda: self._as_window(dock))
+        else:
+            dock.setProperty("own_window", False)
+        self._sync(dock)
+
+    def _as_window(self, dock: QDockWidget) -> None:
+        """A floating panel becomes a real window (its own taskbar entry, minimise and maximise), once the drag
+        that floated it has ended: changing a window's kind during a drag would drop it."""
+        with contextlib.suppress(RuntimeError):  # removed meanwhile
+            if not dock.isFloating() or dock.property("own_window"):
+                return
+            if QApplication.mouseButtons() != Qt.MouseButton.NoButton:
+                QTimer.singleShot(120, lambda: self._as_window(dock))
+                return
+            geometry = dock.geometry()
+            dock.setProperty("own_window", True)
+            dock.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowTitleHint
+                                | Qt.WindowType.WindowMinMaxButtonsHint | Qt.WindowType.WindowCloseButtonHint)
+            dock.setGeometry(geometry)
+            dock.show()
+            self._sync(dock)
+
+    def floating(self) -> list[QDockWidget]:
+        return [d for d in self.docks.values() if d.isFloating() and d.isVisible()]

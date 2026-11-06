@@ -29,7 +29,7 @@ Your code never sees Pythonator's objects, only copies of the data your permissi
 id = "my-plugin"            # required: a-z, 0-9 and -, 2 to 41 characters, starting with a letter
 name = "My plugin"          # required: shown everywhere, up to 64 characters
 version = "1.2.0"           # required: 1 to 4 numbers, optional suffix (1.2.0-beta1)
-api = 3                     # the plugin API it was written for; a newer one than Pythonator's is refused
+api = 4                     # the plugin API it was written for; a newer one than Pythonator's is refused
 entry = "plugin.py"         # the Python file, inside the plugin folder
 description = "..."         # up to 300 characters
 permissions = ["network"]   # see below
@@ -60,6 +60,7 @@ plugin is imported to read it.
 | `ui` | `show` displays a panel |
 | `read_files` | `list_files` and `read_file` on a service's folder, read-only (API 2) |
 | `propose_changes` | `propose_change` opens a review window for the user (API 2) |
+| `create_services` | `project_templates` and `create_project`: a new service from a built-in template (API 4) |
 
 Official plugins get what they declare. Third-party plugins get only what the user grants, which can be less.
 `self.permissions` holds what this run was granted, and `self.test_mode` whether it is in test mode.
@@ -111,8 +112,10 @@ An exception in any of them is reported in the plugin's Activity with its traceb
 | `list_files(id)` | `{"files": [{"path", "size"}], "hidden", "truncated", "entry"}` | `read_files` |
 | `read_file(id, path)` | `{"path", "text", "truncated", "size"}` | `read_files` |
 | `propose_change(id, path, edits, summary)` | Returns a proposal id; the answer comes as `on_proposal` | `propose_changes` |
+| `project_templates()` | `[{"key", "label", "tool", "port", "ready", "needs"}]`: what can be made on this computer | `create_services` |
+| `create_project(template, name, folder="", start=False)` | `{"id", "folder", "port"}`: the new service; it is made in its own sandbox, its progress shows in its console and as events | `create_services` |
 
-They are safe to call from any thread. The last three wait for Pythonator's answer (15 s at most) and raise
+They are safe to call from any thread. The last five wait for Pythonator's answer (15 s at most) and raise
 `PluginError` with the reason when refused, so call them from a thread of your own.
 
 ### Files (API 2)
@@ -198,7 +201,7 @@ text, never as HTML.
 | `ui.input(action, placeholder="", button="Send")` | A text box: Enter or the button calls `on_action(action, text)`, Shift+Enter is a new line; up to 16,000 characters; what the user typed survives panel updates (API 2) |
 | `ui.select(action, options, value="", label="")` | A drop-down of up to 300 options; choosing one calls `on_action(action, option)` (API 2) |
 | `ui.chat(*messages)` | A chat view that fills the panel's height and scrolls on its own, following new messages while scrolled to the end; up to 200 messages (API 3) |
-| `ui.message(role, text, code=False)` | One chat message: `role` is `you`, `ai`, `note` or `error`; up to 20,000 characters; messages of one role in a row share a bubble, and `code=True` shows a monospaced block (API 3) |
+| `ui.message(role, text, code=False, markdown=False)` | One chat message: `role` is `you`, `ai`, `note` or `error`; up to 20,000 characters; messages of one role in a row share a bubble, `code=True` shows a monospaced block (API 3), and `markdown=True` formats an `ai` message as Markdown, with HTML off and nothing loaded (API 4) |
 
 A tone is `""`, `ok`, `warn`, `error` or `muted`. A select shows the `value` the plugin sends: after a pick it shows
 that value until the next panel, so a placeholder option makes a one-shot menu. A panel holds at most 500 items in
@@ -210,11 +213,12 @@ previous panel stays.
 | Limit | Value | What happens |
 | --- | --- | --- |
 | Messages per second | 200, bursts of 400 | Extra messages are dropped; after 2000 dropped the plugin is disabled |
-| Message size | 64 KB | The plugin is disabled |
+| Message size | 1 MB | The plugin is disabled |
 | Not a protocol message | | The plugin is disabled |
 | Crashes | 3 in 10 minutes | The plugin is disabled; before that it restarts after 2 s, then 4 s |
 | `check_start` | 2 s | The start goes ahead without the plugin's answer |
 | File and proposal requests | 120 a minute | Refused with a reason; the plugin keeps running |
+| New projects (`create_project`) | 10 an hour | Refused with a reason |
 
 ## The protocol
 

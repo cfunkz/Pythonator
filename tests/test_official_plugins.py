@@ -75,7 +75,7 @@ def test_guard_acts_on_the_service_overloading_the_computer(sent: list[dict[str,
 
 
 def test_webhook_payloads_cannot_ping_everyone() -> None:
-    hooks = plugin_module("webhooks")
+    hooks = plugin_module("notify")
     body, kind = hooks.payload("https://discord.com/api/webhooks/1/x", "api crashed", "@everyone look")
     data = json.loads(body)
     assert data["allowed_mentions"] == {"parse": []} and kind == "application/json"
@@ -91,11 +91,11 @@ def test_health_probe_against_a_real_server(tmp_path: Path) -> None:
     import http.server
     import threading
 
-    health = plugin_module("health")
+    notify = plugin_module("notify")
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), http.server.SimpleHTTPRequestHandler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        status, ms = health.probe(server.server_address[1], "/", 2.0)
+        status, ms = notify.probe(server.server_address[1], "/", 2.0)
         assert status.startswith(("200", "OK", "HTTP")) or "200" in status, status
         assert ms >= 0
     finally:
@@ -103,19 +103,97 @@ def test_health_probe_against_a_real_server(tmp_path: Path) -> None:
 
 
 def test_health_asks_the_port_the_server_really_listens_on() -> None:
-    from pythonator.sdk import ServiceInfo
+    notify = plugin_module("notify")
+    assert notify.target_port(info(ports=[8764], listening=[8000])) == 8000  # started with --port 8000
+    assert notify.target_port(info(ports=[8764], listening=[8764, 9000])) == 8764
+    assert notify.target_port(info(ports=[8764])) == 8764  # not listening yet
+    assert notify.target_port(info(listening=[5000])) == 5000  # no port set up
+    assert notify.target_port(info()) == 0
 
-    health = plugin_module("health")
-    plugin = health.Health()
-    def svc(sid: str, ports: tuple[int, ...] = (), listening: tuple[int, ...] = (), state: str = "running") -> Any:
-        return ServiceInfo(id=sid, name=sid, runtime="python", mode="sandbox", state=state, ports=ports,
-                           listening=listening)
 
-    plugin.services = {
-        "a": svc("a", (8764,), (8000,)),  # set up for 8764, started with --port 8000
-        "b": svc("b", (8764,), (8764, 9000)),
-        "c": svc("c", (8764,)),  # not listening yet
-        "d": svc("d", (), (5000,)),  # no port set up
-        "e": svc("e", (1,), state="stopped"),
-    }
-    assert {svc.id: port for svc, port in plugin.targets()} == {"a": 8000, "b": 8764, "c": 8764, "d": 5000}
+def notify_plugin(tmp_path: Path, **settings: Any) -> Any:
+    notify = plugin_module("notify")
+    plugin = notify.Notify(settings=settings, permissions=frozenset({"ui", "inspect", "read_logs"}),
+                           data_dir=tmp_path)
+    plugin.on_start()
+    plugin.services = {"a1": info(), "b2": info(id="b2", name="web")}
+    return plugin
+
+
+def test_notify_tracks_crashes_recoveries_and_blocks(sent: list[dict[str, Any]], tmp_path: Path) -> None:
+    plugin = notify_plugin(tmp_path)
+    plugin.on_event(sdk.ServiceEvent("crashed", info(), 1, "Restarting"))
+    plugin.on_event(sdk.ServiceEvent("started", info()))
+    plugin.on_event(sdk.ServiceEvent("blocked", info(id="b2", name="web", state="failed"), None, "Guard: port 22"))
+    assert [e.kind for e in plugin.events] == ["crashed", "recovered", "blocked"]
+    notices = [m["text"] for m in sent if m.get("t") == "notify"]
+    assert notices == ["api crashed: exit code 1 · Restarting", "api is running again",
+                       "web was blocked from starting: Guard: port 22"]
+    panel = [m for m in sent if m.get("t") == "panel"][-1]["panel"]
+    assert panel["title"] == "Notify"
+    plugin.on_tick()  # the timeline is kept for the next start
+    assert [e.kind for e in notify_plugin(tmp_path).events] == ["crashed", "recovered", "blocked"]
+
+
+def test_notify_watches_only_the_chosen_services(sent: list[dict[str, Any]], tmp_path: Path) -> None:
+    plugin = notify_plugin(tmp_path, services="web\n")
+    plugin.on_event(sdk.ServiceEvent("crashed", info(), 1))
+    plugin.on_event(sdk.ServiceEvent("crashed", info(id="b2", name="web"), 1))
+    assert [m["text"] for m in sent if m.get("t") == "notify"] == ["web crashed: exit code 1"]
+    assert len(plugin.events) == 2  # the timeline still has both
+    plugin.view = "web"
+    plugin.panel(list(plugin.events))
+    plugin.on_action("mute", "")
+    plugin.on_event(sdk.ServiceEvent("crashed", info(id="b2", name="web"), 1))
+    assert len([m for m in sent if m.get("t") == "notify"]) == 1
+
+
+def test_notify_spots_anomalies(sent: list[dict[str, Any]], tmp_path: Path) -> None:
+    notify = plugin_module("notify")
+    mb = 2 ** 20
+    leak = [(t * 10.0, 5.0, (200 + t * 2) * mb) for t in range(61)]  # 200 MB to 320 MB in ten minutes
+    assert "grew from" in notify.memory_grew(leak, 50)
+    assert not notify.memory_grew(leak, 80)
+    spike = [(t * 10.0, 5.0, (200 if t != 30 else 900) * mb) for t in range(61)]  # one big allocation, freed
+    assert not notify.memory_grew(spike, 50)
+    busy = [(t * 2.0, 99.0, mb) for t in range(160)]
+    assert "CPU over 95%" in notify.cpu_stuck(busy, 95)
+    assert not notify.cpu_stuck([*busy[:-1], (busy[-1][0], 20.0, mb)], 95)
+    assert notify.count_errors(["ok", "Traceback (most recent call last):", "ERROR db down", "errors=0x"]) == 2
+    plugin = notify_plugin(tmp_path, restart_loop=3, error_burst=3)
+    for _ in range(3):
+        plugin.on_event(sdk.ServiceEvent("crashed", info(), 1))
+    plugin.on_output(info(), ["Error: one", "error two", "fatal three"])
+    anomalies = [e.detail for e in plugin.events if e.kind == "anomaly"]
+    assert anomalies == ["crashed 3 times in 10 minutes", "3 error lines in a minute"]
+
+
+def test_builder_only_asks_for_templates(sent: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch) -> None:
+    builder = plugin_module("builder")
+    assert builder.suggest("my-react", {"my-react", "my-react-2"}) == "my-react-3"
+    plugin = builder.Builder(permissions=frozenset({"ui", "create_services"}))
+    asked: list[tuple[Any, ...]] = []
+
+    def create(*args: Any) -> dict[str, Any]:
+        asked.append(args)
+        return {"folder": "/p/x", "port": 5050}
+
+    monkeypatch.setattr(plugin, "project_templates", lambda: {"templates": [
+        {"key": "flask", "label": "Flask", "tool": "pip", "port": 5050, "ready": True, "needs": ""}],
+        "folder": "/p"})
+    monkeypatch.setattr(plugin, "create_project", create)
+    plugin.on_start()
+    import time as time_
+
+    deadline = time_.monotonic() + 5
+    while not plugin.templates and time_.monotonic() < deadline:
+        time_.sleep(0.01)
+    plugin.on_action("create", "x")
+    assert "Choose a framework" in plugin.status[0]
+    plugin.on_action("template", "Flask")
+    plugin.on_action("create", "Bad Name")
+    assert "lowercase" in plugin.status[0]
+    plugin.on_action("create", "shop")
+    while plugin.busy and time_.monotonic() < deadline:
+        time_.sleep(0.01)
+    assert asked == [("flask", "shop", "", True)]

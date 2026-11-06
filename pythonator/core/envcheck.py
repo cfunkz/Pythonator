@@ -28,6 +28,19 @@ def is_elevated() -> bool:
     return hasattr(os, "geteuid") and os.geteuid() == 0
 
 
+def _since_start() -> str:
+    import time
+
+    import psutil
+
+    from .sysinfo import human_duration
+
+    try:
+        return human_duration(time.time() - psutil.Process().create_time())
+    except (psutil.Error, OSError):
+        return "a while"
+
+
 def app_report(dirs: DataDirs) -> list[Item]:
     """What Pythonator runs on, and anything that weakens it."""
     items: list[Item] = []
@@ -41,6 +54,8 @@ def app_report(dirs: DataDirs) -> list[Item]:
         else:
             items.append(("warn", "Running from the system Python; a virtual environment or the installer keeps "
                                   "Pythonator's packages apart from yours"))
+    items.append(("ok", f"Background service: process {os.getpid()}, running for {_since_start()}"))
+    items.append(("ok", f"Data folder: {dirs.root}"))
     if is_elevated():
         items.append(("warn", "Running as administrator/root: Full-mode services get those rights too"))
     if IS_LINUX:

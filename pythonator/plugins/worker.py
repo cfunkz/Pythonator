@@ -77,6 +77,14 @@ def _read_stdin(inbox: queue.Queue[dict[str, Any] | None]) -> None:
 
 
 def main(args: list[str]) -> int:
+    try:
+        return _main(args)
+    except (BrokenPipeError, ConnectionError, OSError, ValueError):
+        sdk._gone()  # the pipe to Pythonator closed under us: nothing left to report to
+        return 0
+
+
+def _main(args: list[str]) -> int:
     if len(args) < 2:
         return 2
     folder, data_dir = Path(args[0]), Path(args[1])

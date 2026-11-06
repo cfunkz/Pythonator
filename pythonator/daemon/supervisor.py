@@ -58,6 +58,12 @@ VENV_LAUNCHER = {101: "it couldn't start the real Python", 103: "the Python the 
                  106: "it couldn't find the venv's pyvenv.cfg", 107: "the venv's pyvenv.cfg is unreadable or wrong"}
 QUEUED = "Starting in turn"  # the note of a service waiting in the start queue
 MAKING_ENV = "Setting up its environment"  # the task that makes a project's own environment
+CREATING = "Creating the project"
+# A task's words when it ends well, and when it fails; anything else installs packages.
+TASK_DONE = {"Building images": "Images built", "Pulling images": "Images pulled", "Taking it down": "Taken down",
+             "Listing containers": "Done"}
+TASK_FAILED = {CREATING: "Couldn't create the project", "Building images": "Build failed",
+               "Pulling images": "Pull failed", "Taking it down": "Down failed", "Listing containers": "ps failed"}
 
 
 class NeedsConfirmation(Exception):
@@ -598,6 +604,48 @@ class Supervisor:
             raise ValueError("Nothing to install for this project")
         self._run_steps(slot, steps, "Installing packages")
 
+    def compose(self, sid: str, verb: str) -> None:
+        """A Compose project's own actions: build or pull its images, take it down (containers and networks; its
+        volumes stay), or list its containers. Down stops it first."""
+        from ..isolation import compose
+
+        slot = self.slot(sid)
+        service = slot.service
+        if service.runtime != runtimes.COMPOSE or service.mode is not Mode.CONTAINER:
+            raise ValueError("Only for Docker Compose projects")
+        if verb not in ("build", "pull", "down", "ps"):
+            raise ValueError("Unknown Compose action")
+        if slot.task or slot.state is State.TASK:
+            raise ValueError("Wait for what it is doing to finish")
+        prog = containers.engine(service.container.engine)
+        if not prog:
+            raise ValueError("No container engine is running: start Docker or Podman")
+        try:
+            steps = compose.steps(prog, service, verb)
+        except isolation.IsolationError as exc:
+            raise ValueError(str(exc)) from None
+        title = {"build": "Building images", "pull": "Pulling images", "down": "Taking it down",
+                 "ps": "Listing containers"}[verb]
+        if slot.runner and verb == "down":
+            slot.stop_then = lambda: self._run_steps(slot, steps, title)
+            self.stop(sid)
+            return
+        if slot.runner and verb != "ps":
+            raise ValueError("Stop it first")
+        if slot.runner:  # ps next to the running project: a shell-like side command, its output in the console
+            if slot.shell is not None:
+                raise ValueError("A console command is still running")
+            self.note(slot, "$ compose ps --all")
+            try:
+                cmd = isolation.prepare(service, self.dirs, task=steps[0])
+                runner = Runner(f"{sid}:shell", cmd, self.queue)  # type: ignore[arg-type]
+                runner.start()
+            except (isolation.IsolationError, OSError) as exc:
+                raise ValueError(str(exc)) from None
+            slot.shell = runner
+            return
+        self._run_steps(slot, steps, title)
+
     def _install_steps(self, service: Service) -> list[list[str]]:
         if service.mode is Mode.CONTAINER:
             return containers.install_steps(service)
@@ -667,18 +715,59 @@ class Supervisor:
 
         threading.Thread(target=work, name=f"recreate-{service.id}", daemon=True).start()
 
+    def create_project(self, key: str, name: str, parent: Path, *, start: bool = False) -> Service:
+        """A new service from a built-in template (the Project builder): a new folder, the framework's official
+        tool run in the new service's own sandbox, then (``start``) its first start. Raises ValueError."""
+        from ..core import templates
+
+        if not parent.is_absolute():
+            raise ValueError("The projects folder must be a full path")
+        folder = parent / name
+        if why := isolation.base.forbidden_write(folder, self.dirs):
+            raise ValueError(f"A project can't go in {why}")
+        taken = {port for s in self.slots.values() for port in s.service.network.ports}
+        plan = templates.plan(key, name, parent, taken)
+        service = Service.model_validate(plan.service)
+        parent.mkdir(parents=True, exist_ok=True)
+        templates.write_files(folder, plan.files)
+        self.add(service)
+        slot = self.slots[service.id]
+        self.note(slot, f"New {templates.TEMPLATES[key].label} project in {folder}, made by "
+                        f"{templates.TEMPLATES[key].tool}")
+
+        def made() -> None:
+            if plan.flatten:
+                try:
+                    templates.flatten(folder, plan.flatten)
+                except OSError as exc:
+                    self._task_failed(slot, str(exc))
+                    return
+            self.note(slot, "Project ready" + (": starting it (its packages are installed first)" if start else
+                                               ". Press Start: its packages are installed first"))
+            slot.task_name = ""
+            self._set(slot, State.STOPPED, "installed", "")
+            self.emit({"ev": "notice", "level": "ok", "id": service.id, "text": f"{service.name}: project ready"})
+            if start:
+                self.start(service.id)
+
+        self._run_steps(slot, plan.steps, CREATING, then=made)
+        return service
+
     def _next_step(self, slot: Slot) -> None:
         if not slot.steps:
-            slot.task, slot.task_name = None, ""
+            name, slot.task, slot.task_name = slot.task_name, None, ""
             if (then := slot.after_steps) is not None:
                 slot.after_steps = None
-                self.note(slot, "Environment ready")
+                if name == MAKING_ENV:
+                    self.note(slot, "Environment ready")
                 then()
                 return
-            self.note(slot, "Packages installed")
+            done = TASK_DONE.get(name, "Packages installed")
+            self.note(slot, done)
             self._set(slot, State.STOPPED, "installed", "")
-            self.emit({"ev": "notice", "level": "ok", "id": slot.service.id,
-                       "text": f"{slot.service.name}: packages installed"})
+            if name != "Listing containers":
+                self.emit({"ev": "notice", "level": "ok", "id": slot.service.id,
+                           "text": f"{slot.service.name}: {done.lower()}"})
             return
         step = slot.steps.pop(0)
         try:
@@ -703,9 +792,10 @@ class Supervisor:
         self._next_step(slot)
 
     def _task_failed(self, slot: Slot, why: str) -> None:
+        what = TASK_FAILED.get(slot.task_name, "Install failed")
         slot.task, slot.steps, slot.task_name, slot.after_steps = None, [], "", None
-        self.note(slot, f"Install failed: {why}")
-        self._set(slot, State.FAILED, "install_failed", f"Install failed: {why}")
+        self.note(slot, f"{what}: {why}")
+        self._set(slot, State.FAILED, "install_failed", f"{what}: {why}")
         if slot.stop_then:
             then, slot.stop_then = slot.stop_then, None
             then()

@@ -84,11 +84,11 @@ pythonator/
   launcher.py      the sandbox launcher (standard library only)
   sdk.py           the plugin SDK (standard library only)
   core/            no Qt: models, validation, store, runtimes, git, schedules, logs, ANSI, environment checks
-  isolation/       building the command for each mode: linux, macos, windows, container
+  isolation/       building the command for each mode: linux, macos, windows, container, compose
   daemon/          the background service: supervisor, runner, server, protocol, client
   plugins/         manifest, trust (official hashes), host, worker
   ui/              the window
-plugins/           the official plugins: guard, health, webhooks
+plugins/           the official plugins: guard, notify, builder, pythonator-ai
 tests/             pytest, run on Linux, macOS and Windows in CI
 docs/              these pages; website/ is their design
 ```
