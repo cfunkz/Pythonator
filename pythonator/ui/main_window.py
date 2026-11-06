@@ -1,5 +1,5 @@
-"""The main window: 0.0.9's layout on 0.0.10's engine. Every action is a request to the background service, so
-nothing here waits: Start all and Stop all return at once and the list follows the service's state events."""
+"""The main window. Every action is a request to the background service, so nothing here waits: Start all and
+Stop all return at once and the list follows the service's state events."""
 
 from __future__ import annotations
 
@@ -36,12 +36,15 @@ from .about import SITE, AboutDialog, LicensingDialog, SupportDialog, SystemChec
 from .console import Console
 from .editor import EditorPanel
 from .git_dialog import GitDialog
+from .leftovers import LeftoversDialog
 from .panels import PanelDock
 from .plugins_view import PluginsDialog
 from .proposal_dialog import ProposalDialog
 from .service_dialog import ServiceDialog
 from .service_list import MODE_LABEL, ServiceList, entry_text, human_bytes, status_text
 from .system_meter import SystemMeter
+from .widgets import ask, warn
+from .widgets import tip as as_tip
 
 MODE_TIPS = {
     "sandbox": "Sandbox: it can change only its own folder; your other files, keys and Pythonator's data are out "
@@ -123,6 +126,9 @@ class MainWindow(QMainWindow):
         self.current = ""
         self.plugins_dialog: PluginsDialog | None = None
         self.proposals: dict[str, ProposalDialog] = {}
+        self.removing: set[str] = set()  # asked about or on their way out: never asked about twice
+        self.remove_box: QMessageBox | None = None
+        self.leftovers_box: LeftoversDialog | None = None
         self._restored = False
         self._quitting = False  # closing for real, not into the tray
         self.tray: QSystemTrayIcon | None = None
@@ -273,7 +279,6 @@ class MainWindow(QMainWindow):
                         self.b_info, self.b_more)
         for b in self.buttons:
             hl.addWidget(b)
-        self.header = header
 
         self.console = Console(self.settings.console_lines)
         self.console.submitted.connect(self._send_input)
@@ -318,7 +323,7 @@ class MainWindow(QMainWindow):
             plugins.aboutToShow.connect(lambda: panels.setEnabled(self.panels.count() > 0))
         self.plugins_button.setMenu(plugins)
 
-        for keys, slot in (("F5", lambda: self._op("restart" if self._live() else "start")),
+        for keys, slot in (("F5", lambda: None if self._live() else self._op("start")),  # Ctrl+R restarts
                            ("Shift+F5", lambda: self._op("stop")), ("Ctrl+R", lambda: self._op("restart")),
                            ("Ctrl+E", self.edit_service)):
             a = QAction(self)
@@ -390,6 +395,8 @@ class MainWindow(QMainWindow):
             self._show_proposal(msg.get("proposal"))
         elif ev == "confirm_delete":
             self._confirm_delete(msg)
+        elif ev == "confirm_leftovers":
+            self._confirm_leftovers(msg)
         elif ev == "proposal_done":
             dialog = self.proposals.pop(str(msg.get("id", "")), None)
             if dialog is not None:
@@ -409,6 +416,7 @@ class MainWindow(QMainWindow):
             services[s.id] = s
         self.services = services
         self.states = {k: v for k, v in self.states.items() if k in services}
+        self.removing.intersection_update(services)  # the ones gone are done
         self.list.set_services(list(services.values()))
         self.empty_hint.setVisible(not services)
         self.list.setVisible(bool(services))
@@ -444,7 +452,7 @@ class MainWindow(QMainWindow):
                 self.tray.showMessage("Pythonator", text[:300], icon, 8000)
             return
         if level == "error":
-            QMessageBox.warning(self, "Pythonator", text)
+            warn(self, "Pythonator", text)
 
     # -- the selected service -----------------------------------------------------------------------------
 
@@ -505,7 +513,7 @@ class MainWindow(QMainWindow):
         if state in ("running", "stopping") and live:
             short.append(f"{float(live.get('cpu', 0)):.0f}% · {human_bytes(float(live.get('memory', 0)))}")
         self.h_info.set("  ·  ".join(short))
-        self.h_info.setToolTip("\n".join(f"{k}: {v}" for k, v in self.details(service)))
+        theme.set_tooltip(self.h_info, as_tip("\n".join(f"{k}: {v}" for k, v in self.details(service))))
         self.b_start.setEnabled(state not in theme.LIVE)
         self.b_stop.setEnabled(state in (*theme.LIVE, "waiting"))
         theme.set_tooltip(self.b_stop, "Kill it now (it is still stopping)" if state == "stopping" else
@@ -564,7 +572,7 @@ class MainWindow(QMainWindow):
         flicker."""
         mode = service.mode.value
         offline = mode != "full" and not service.network.enabled
-        key = (service.id, state, mode, offline, tuple(service.network.ports))
+        key = (service.id, state, mode, offline, tuple(service.network.ports), self.devicePixelRatioF())
         if key == self._icons:
             return
         self._icons = key
@@ -637,7 +645,7 @@ class MainWindow(QMainWindow):
 
     def _compose_down(self) -> None:
         service = self.services.get(self.current)
-        if service is not None and QMessageBox.question(
+        if service is not None and ask(
                 self, "Compose down", f"Stop {service.name} and remove its containers and networks?\n\n"
                 "Its volumes (databases, uploads) are kept, and so are its images.",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -659,7 +667,7 @@ class MainWindow(QMainWindow):
         if not container and service.runtime in runtimes.CACHE_VARS:
             names.append(f"its private {runtimes.RUNTIMES[service.runtime].label} package cache")
         what = ", ".join(names) or "nothing yet"
-        if QMessageBox.question(self, "Recreate environment", f"Delete {what} and install {service.name}'s packages "
+        if ask(self, "Recreate environment", f"Delete {what} and install {service.name}'s packages "
                                 "again from scratch?\n\nYour code and data aren't touched.",
                                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                                 QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
@@ -670,13 +678,13 @@ class MainWindow(QMainWindow):
             return
         if error == "confirm_full" and op == "start":
             name = self.services[sid].name if sid in self.services else "This service"
-            if QMessageBox.warning(self, "Full access", f"{name} runs with Full access: it can read and change "
+            if warn(self, "Full access", f"{name} runs with Full access: it can read and change "
                                    "everything your account can. Start it anyway?\n\nSandbox mode keeps it to its "
                                    "own folder.", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                                    QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
                 self._op("start", sid=sid, confirmed=True)
             return
-        QMessageBox.warning(self, "Pythonator", error)
+        warn(self, "Pythonator", error)
 
     def _send_input(self, text: str) -> None:
         if self.current:
@@ -708,37 +716,121 @@ class MainWindow(QMainWindow):
                                 lambda ok, _d, err: None if ok else self._notice("error", err))
 
     def remove_service(self) -> None:
-        """Remove the selected services (one or several), after one question."""
+        """Remove the selected services (one or several), after one question. A project the Project builder made
+        is asked about as the builder's Delete asks: its folder can go with it."""
         chosen = [self.services[i] for i in self.list.selected_ids() if i in self.services]
-        if not chosen:
-            return
-        names = ", ".join(s.name for s in chosen[:5]) + (f" and {len(chosen) - 5} more" if len(chosen) > 5 else "")
-        what = names if len(chosen) == 1 else f"{len(chosen)} services ({names})"
-        if QMessageBox.question(self, "Remove", f"Remove {what}? Their files stay where they are; their logs and "
-                                "sandbox folders are deleted.") == QMessageBox.StandardButton.Yes:
-            for service in chosen:
-                self.client.request({"op": "remove", "id": service.id})
+        if chosen:
+            self._ask_remove(chosen)
 
     def _confirm_delete(self, msg: dict[str, Any]) -> None:
         """A plugin (the Project builder) asks to delete a project it made: the user decides, here."""
-        sid, name, folder = str(msg.get("id", "")), str(msg.get("name", "")), str(msg.get("folder", ""))
-        if sid not in self.services:
+        service = self.services.get(str(msg.get("id", "")))
+        if service is not None:
+            self._ask_remove([service], asked_by=str(msg.get("plugin") or "A plugin"))
+
+    @staticmethod
+    def deletable(service: Service) -> bool:
+        """A project the Project builder made, still in the folder it made: its folder may be deleted with it
+        (the background service checks again)."""
+        made = service.made_by
+        if made is None:
+            return False
+        try:
+            folder = Path(service.folder)
+            return folder.is_dir() and not folder.is_symlink() and folder.resolve() == Path(made.folder).resolve()
+        except OSError:
+            return False
+
+    def _ask_remove(self, services: list[Service], *, asked_by: str = "") -> None:
+        """One question for the right-click Remove and the Project builder's Delete alike. It never waits in a
+        loop of its own (the window keeps drawing), and services already asked about or on their way out are
+        never asked about again: a second click brings the open question to the front."""
+        if any(s.id in self.removing for s in services):
+            if self.remove_box is not None:
+                self.remove_box.raise_()
+                self.remove_box.activateWindow()
             return
+        projects = [s for s in services if self.deletable(s)]
+        names = ", ".join(s.name for s in services[:5]) + (f" and {len(services) - 5} more" if len(services) > 5
+                                                           else "")
+        what = names if len(services) == 1 else f"{len(services)} services ({names})"
         box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Warning)
-        box.setWindowTitle("Delete project")
-        box.setText(f"{msg.get('plugin') or 'A plugin'} asks to delete {name}.")
-        box.setInformativeText(f"Delete the service and its whole folder?\n\n{folder}\n\n"
-                               "Everything in it is deleted for good, your own changes too.")
-        delete = box.addButton("Delete project and folder", QMessageBox.ButtonRole.DestructiveRole)
-        only = box.addButton("Remove service, keep folder", QMessageBox.ButtonRole.ActionRole)
-        box.addButton(QMessageBox.StandardButton.Cancel)
-        box.exec()
-        if box.clickedButton() in (delete, only):
-            if box.clickedButton() is delete and folder:
-                self.editor.release(Path(folder))  # an open file or the watched tree would keep it on Windows
-            self.client.request({"op": "remove", "id": sid, "files": box.clickedButton() is delete},
+        box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        box.setTextFormat(Qt.TextFormat.PlainText)
+        delete = None
+        if projects:
+            many = len(projects) > 1
+            box.setIcon(QMessageBox.Icon.Warning)
+            box.setWindowTitle("Delete project" + ("s" if many else ""))
+            box.setText(f"{asked_by} asks to delete {what}." if asked_by else f"Remove {what}?")
+            folders = "\n".join(s.folder for s in projects[:8]) + (f"\n…and {len(projects) - 8} more" if
+                                                                    len(projects) > 8 else "")
+            others = "" if len(projects) == len(services) else "\n\nThe other services' files stay where they are."
+            box.setInformativeText(f"Delete the service{'s' if many else ''} and {'their' if many else 'its'} whole "
+                                   f"folder{'s' if many else ''}?\n\n{folders}\n\nEverything in "
+                                   f"{'them' if many else 'it'} is deleted for good, your own changes too.{others}")
+            delete = box.addButton("Delete projects and folders" if many else "Delete project and folder",
+                                   QMessageBox.ButtonRole.DestructiveRole)
+            keep = box.addButton("Remove service, keep folder" if len(services) == 1 else
+                                 f"Remove, keep folder{'s' if many else ''}", QMessageBox.ButtonRole.ActionRole)
+            box.setDefaultButton(box.addButton(QMessageBox.StandardButton.Cancel))
+        else:
+            box.setIcon(QMessageBox.Icon.Question)
+            box.setWindowTitle("Remove")
+            box.setText(f"Remove {what}?")
+            box.setInformativeText("Their files stay where they are; their logs and sandbox folders are deleted.")
+            keep = box.addButton("Remove", QMessageBox.ButtonRole.AcceptRole)
+            box.addButton(QMessageBox.StandardButton.Cancel)
+            box.setDefaultButton(keep)
+        ids = {s.id for s in services}
+        self.removing |= ids
+
+        def answered(_result: int) -> None:
+            clicked = box.clickedButton()
+            if self.remove_box is box:
+                self.remove_box = None
+            if clicked is not delete and clicked is not keep:
+                self.removing -= ids
+                return
+            for service in services:
+                wipe = clicked is delete and service in projects
+                if wipe:
+                    self.editor.release(Path(service.folder))  # an open file or the watched tree would keep it
+                self._remove(service.id, wipe)
+
+        box.finished.connect(answered)
+        self.remove_box = box
+        box.open()
+
+    def _remove(self, sid: str, files: bool) -> None:
+        def done(ok: bool, _data: Any, error: str) -> None:
+            if not ok:
+                self.removing.discard(sid)
+                self._notice("error", error)
+
+        self.client.request({"op": "remove", "id": sid, "files": files}, done)
+
+    def _confirm_leftovers(self, msg: dict[str, Any]) -> None:
+        """The Project builder's Refresh found project folders no service uses: the user ticks which go, here."""
+        folders = [str(f) for f in msg.get("folders", []) if isinstance(f, str)][:200]
+        if not folders:
+            return
+        if self.leftovers_box is not None:  # asked already: that window, to the front
+            self.leftovers_box.raise_()
+            self.leftovers_box.activateWindow()
+            return
+
+        def delete(chosen: list[str]) -> None:
+            for folder in chosen:
+                self.editor.release(Path(folder))
+            self.client.request({"op": "delete_leftovers", "folders": chosen},
                                 lambda ok, _d, err: None if ok else self._notice("error", err))
+
+        box = LeftoversDialog(str(msg.get("plugin") or "A plugin"), folders, delete, self)
+        box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        box.finished.connect(lambda _r: setattr(self, "leftovers_box", None))
+        self.leftovers_box = box
+        box.open()
 
     def from_git(self) -> None:
         dialog = GitDialog(self)
@@ -847,7 +939,7 @@ class MainWindow(QMainWindow):
 
         def step(what: str) -> None:
             if what == "ask":
-                if QMessageBox.question(
+                if ask(
                         self, "Make reachable",
                         f"Windows keeps sandboxed servers out of reach, even of the browser on this PC, until you "
                         f"allow it once. Let this PC reach {service.name} on port {', '.join(map(str, ports))}? "
@@ -944,7 +1036,7 @@ class MainWindow(QMainWindow):
             if event:
                 event.ignore()
             return
-        if self.editor.unsaved() and QMessageBox.question(
+        if self.editor.unsaved() and ask(
                 self, "Unsaved files", "Some files have unsaved changes. Close anyway?") \
                 != QMessageBox.StandardButton.Yes:
             if event:

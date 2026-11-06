@@ -29,7 +29,7 @@ from typing import Any
 
 from ..core.models import Service
 from ..paths import IS_WINDOWS, quiet_start
-from .base import Command, IsolationError, read_env_file
+from .base import Command, IsolationError, env_file_values
 
 FILES = ("compose.yaml", "compose.yml", "docker-compose.yml", "docker-compose.yaml")
 VERBS = ("up", "stop", "down", "build", "pull", "ps")  # what Pythonator itself runs
@@ -73,8 +73,7 @@ def environment(service: Service) -> dict[str, str]:
     """The compose CLI's own environment: what it needs to reach the engine, and the service's variables (for
     ``${VAR}`` in the compose file). Values never go on a command line."""
     env = {k: os.environ[k] for k in KEEP if os.environ.get(k)}
-    if service.env_file:
-        env.update(read_env_file(Path(service.folder) / service.env_file))
+    env.update(env_file_values(service))
     env.update(service.env)
     env.setdefault("COMPOSE_MENU", "false")  # no interactive key menu in the console
     return env
@@ -152,6 +151,14 @@ def audit(config: dict[str, Any], folder: Path, *, lan: bool) -> list[str]:
             path = str(item.get("file", "")) if isinstance(item, dict) else ""
             if path and not _inside(path, folder):
                 problems.append(f"{kind} {name}: reads {path}, outside the project folder")
+    for name, vol in (config.get("volumes") or {}).items():  # driver_opts device: a bind mount by another name
+        opts = vol.get("driver_opts") if isinstance(vol, dict) else None
+        device = str(opts.get("device", "")) if isinstance(opts, dict) else ""
+        if device and not _inside(device, folder):
+            problems.append(f"volume {name}: mounts {device}, outside the project folder")
+    for name, net in (config.get("networks") or {}).items():
+        if isinstance(net, dict) and "host" in (str(net.get("name", "")), str(net.get("driver", ""))):
+            problems.append(f"network {name}: the host network is this computer's own")
     return problems
 
 

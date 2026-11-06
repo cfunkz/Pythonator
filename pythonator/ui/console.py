@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 import time
 
-from PyQt6.QtCore import QEvent, QObject, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, QPoint, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
     QDesktopServices,
@@ -43,6 +43,8 @@ from . import icons, theme
 
 FRAME_MS = 16  # how often waiting output is drawn: every screen frame, so it scrolls smoothly
 FLOOD_FRAME_MS = 33  # under a flood: half as often (it scrolls by too fast to tell), half the CPU
+HIDDEN_MS = 250  # while the console can't be seen (minimised, another tab, in the tray)
+MAX_MARKS = 500  # search matches marked at once: the visible ones
 DRAW_BUDGET = 0.003  # seconds of each frame that drawing may take: a key press waits at most about this long
 SLICE = 2_000  # characters drawn between two looks at the clock
 LONG_LINE = 8_000  # longer lines are broken: one huge line is slow to lay out on every change
@@ -183,7 +185,7 @@ class Console(QWidget):
         self.follow = tool("Follow", "Follow: keep scrolled to the newest output", checkable=True, shape="follow")
         self.follow.setChecked(True)
         open_log = tool("Open log", "Open the full log file", shape="log")
-        clear = tool("Clear", "Clear the console and the log", shape="delete")
+        clear = tool("Clear", "Clear the console (the log file keeps everything)", shape="delete")
         for w in (self.search, self.count, prev, nxt, self.wrap, self.follow, open_log, clear):
             bl.addWidget(w)
 
@@ -218,7 +220,7 @@ class Console(QWidget):
 
         self.input.returnPressed.connect(self._submit)
         send.clicked.connect(self._submit)
-        self.search.textChanged.connect(lambda _t: self._highlight())
+        self.search.textChanged.connect(lambda _t: self._find_timer.start(150))  # once typing pauses
         self.search.returnPressed.connect(lambda: self.step(backward=False))
         prev.clicked.connect(lambda: self.step(backward=True))
         nxt.clicked.connect(lambda: self.step(backward=False))
@@ -235,6 +237,7 @@ class Console(QWidget):
         if sb := self.view.verticalScrollBar():  # scrolling up stops following, back at the end resumes
             sb.valueChanged.connect(lambda v: self.follow.setChecked(v >= sb.maximum() - 4)
                                     if not self._writing else None)
+            sb.valueChanged.connect(lambda _v: self._find_timer.start(50) if self.search.text() else None)
         self._parser = Parser()
         self._queue: list[str] = []
         self._queued = 0  # characters in _queue
@@ -343,6 +346,8 @@ class Console(QWidget):
         if fmt is None:
             fmt = QTextCharFormat()
             colour = QColor(theme.color("accent_hi") if href else fg or theme.color("text"))
+            if colour.lightness() > 170 and QColor(theme.color("code_bg")).lightness() > 170:
+                colour.setHsl(colour.hslHue(), colour.hslSaturation(), 90)  # white on the light theme's white
             if dim:
                 colour.setAlphaF(0.6)
             fmt.setForeground(colour)
@@ -366,6 +371,7 @@ class Console(QWidget):
         if not self._showing():  # nobody sees it: keep about what the console would hold, draw nothing
             if self._queued > self.max_lines * 150:
                 self._skip(self._queued - self.max_lines * 100)
+            self._timer.setInterval(HIDDEN_MS)  # and look again a few times a second, not every frame
             return
         began = time.perf_counter()
         if began - self._input.at < QUIET and began - self._drawn < MAX_WAIT:
@@ -428,7 +434,7 @@ class Console(QWidget):
         if spent > 0.0005:
             self._rate = 0.8 * self._rate + 0.2 * (pos / spent)
         if self.search.text() and not self._find_timer.isActive():
-            self._find_timer.start()
+            self._find_timer.start(1000)
 
     def _draw(self, cursor: QTextCursor, text: str) -> None:
         if "\r" in text:
@@ -478,21 +484,30 @@ class Console(QWidget):
     # -- find -----------------------------------------------------------------------------------------------
 
     def _highlight(self) -> None:
-        needle = self.search.text()
-        doc = self.view.document()
+        """Mark the matches on screen, and count them all. Marking every match of a long log on each keystroke
+        (and keeping thousands of marks in step with new output) froze the window."""
+        needle = self.search.text().lower()
+        doc, viewport = self.view.document(), self.view.viewport()
         marks: list[QTextEdit.ExtraSelection] = []
-        if needle and doc is not None:
+        if needle and doc is not None and viewport is not None:
             fmt = QTextCharFormat()
             fmt.setBackground(QColor(theme.color("warn")).darker(250))
-            cursor = doc.find(needle)
-            while not cursor.isNull() and len(marks) < 5000:
-                mark = QTextEdit.ExtraSelection()
-                mark.cursor = cursor
-                mark.format = fmt
-                marks.append(mark)
-                cursor = doc.find(needle, cursor)
+            block = self.view.firstVisibleBlock()
+            last = self.view.cursorForPosition(QPoint(0, viewport.height())).blockNumber()
+            while block.isValid() and block.blockNumber() <= last and len(marks) < MAX_MARKS:
+                text, at = block.text().lower(), 0
+                while (at := text.find(needle, at)) >= 0 and len(marks) < MAX_MARKS:
+                    cursor = QTextCursor(doc)
+                    cursor.setPosition(block.position() + at)
+                    cursor.setPosition(block.position() + at + len(needle), QTextCursor.MoveMode.KeepAnchor)
+                    mark = QTextEdit.ExtraSelection()
+                    mark.cursor = cursor
+                    mark.format = fmt
+                    marks.append(mark)
+                    at += len(needle)
+                block = block.next()
         self.view.setExtraSelections(marks)
-        self.count.setText(("5000+" if len(marks) >= 5000 else str(len(marks))) if needle else "")
+        self.count.setText(str(self.view.toPlainText().lower().count(needle)) if needle else "")
 
     def step(self, *, backward: bool) -> bool:
         needle = self.search.text()

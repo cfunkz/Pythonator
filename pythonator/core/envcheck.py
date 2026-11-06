@@ -176,7 +176,15 @@ def _declared_version(runtime: str, folder: Path, prog: str) -> str:
     spec, source = versions.declared(runtime, folder)
     if not spec:
         return ""
-    return versions.problem(runtime, versions.installed(prog), spec, what=f"This project ({source})")
+    if Path(prog).absolute().is_relative_to(folder.absolute()):
+        # The project's own venv Python: a sandboxed service can replace it, and this runs outside the sandbox,
+        # so its version comes from pyvenv.cfg instead of from running it.
+        venv = runtimes.project_venv(folder)
+        cfg = (runtimes.venv_config(venv, "version") or runtimes.venv_config(venv, "version_info")) if venv else ""
+        found = versions.parse(cfg) if cfg else None
+    else:
+        found = versions.installed(prog)
+    return versions.problem(runtime, found, spec, what=f"This project ({source})")
 
 
 def _python(folder: Path, prog: str | None, *, own: bool = True) -> list[Item]:

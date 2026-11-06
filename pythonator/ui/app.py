@@ -6,12 +6,34 @@ import sys
 from pathlib import Path
 
 from PyQt6.QtGui import QIcon
+from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 from PyQt6.QtWidgets import QApplication
 
 from .. import __version__
 from ..core.store import Store
-from ..paths import DataDirs
+from ..instance import InstanceLock
+from ..paths import IS_WINDOWS, DataDirs
 from . import theme
+
+
+def window_socket(dirs: DataDirs) -> str:
+    """Where the running window listens for a second start, to come to the front instead."""
+    from ..daemon.server import socket_name
+
+    name = socket_name(dirs)
+    return f"{name}-window" if IS_WINDOWS else str(Path(name).with_name(f"{Path(name).stem}-window.sock"))
+
+
+def wake_first(dirs: DataDirs) -> bool:
+    """Ask the window already running to come to the front. True if it answered."""
+    sock = QLocalSocket()
+    sock.connectToServer(window_socket(dirs))
+    if not sock.waitForConnected(1500):
+        return False
+    sock.write(b"show\n")
+    sock.waitForBytesWritten(1000)
+    sock.disconnectFromServer()
+    return True
 
 
 def main(args: list[str]) -> int:
@@ -27,14 +49,34 @@ def main(args: list[str]) -> int:
         app.setWindowIcon(QIcon(str(icon)))
     dirs = DataDirs()
     dirs.ensure()
+    lock = InstanceLock(dirs.root / "window.lock")
+    if not lock.acquire():  # one window per data folder: two would each ask every question, and run twice
+        if not hidden:
+            wake_first(dirs)
+        return 0
     settings = Store(dirs).load_settings()  # read-only here: the theme before the first paint, and the tray
     theme.apply(app, settings.theme)
 
     from .main_window import MainWindow  # after the theme, so widgets pick it up
 
     window = MainWindow(dirs, settings)
+    woken = QLocalServer(app)
+    woken.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
+    QLocalServer.removeServer(window_socket(dirs))
+    woken.listen(window_socket(dirs))  # if it can't, a second start still only exits
+
+    def wake() -> None:
+        while (conn := woken.nextPendingConnection()) is not None:
+            conn.disconnected.connect(conn.deleteLater)
+            conn.disconnectFromServer()
+            window.show_window()
+
+    woken.newConnection.connect(wake)
     if not hidden:
         window.show()
     elif not settings.tray:  # no tray to wait in: minimised, so it is still on the taskbar
         window.showMinimized()
-    return app.exec()
+    try:
+        return app.exec()
+    finally:
+        lock.release()

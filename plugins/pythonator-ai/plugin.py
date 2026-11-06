@@ -239,8 +239,9 @@ class Assistant(Plugin):
             turn.notes += result.notes
             if result.output_tokens:
                 turn.notes.append(f"{result.input_tokens:,} tokens in, {result.output_tokens:,} out")
-            turn.edits, moved = context.resolve_paths(context.parse_edits(turn.answer), turn.known, turn.shown)
-            turn.notes += moved
+            parsed, broken = context.parse_answer(turn.answer, turn.shown)
+            turn.edits, moved = context.resolve_paths(parsed, turn.known, turn.shown)
+            turn.notes += broken + moved
             turn.status = "done"
         except providers.Cancelled:
             turn.status = "stopped"
@@ -521,9 +522,11 @@ class Assistant(Plugin):
                 messages.append(ui.message("note", f"Ask anything about {self._name(self.selected)}: why it stopped, "
                                            "what the logs say, how to fix something. Or pick a quick question "
                                            "below."))
+            offered: set[str] = set()
+            for i in reversed(range(start, len(turns))):  # a file's Review button only for its latest change
+                reviews[:0] = self._reviews(i, turns[i], offered)
             for i in range(start, len(turns)):
                 messages += self._turn(turns[i])
-                reviews += self._reviews(i, turns[i])
             if len(messages) > 200 and start < len(turns) - 1:  # too many pieces: show fewer earlier questions
                 start += 1
                 continue
@@ -593,12 +596,17 @@ class Assistant(Plugin):
             items.append(ui.message("note", f"{path}: {state}"))
         return items
 
-    def _reviews(self, index: int, turn: Turn) -> list[dict[str, Any]]:
-        """A Review button for each file the answer would change, until its change is applied or waiting."""
+    def _reviews(self, index: int, turn: Turn, offered: set[str]) -> list[dict[str, Any]]:
+        """A Review button for each file the answer would change, until its change is applied, waiting or refused.
+        A file a later answer also changes gets no button here (``offered``): that change was written for the file
+        as it is now, so two buttons for one file would only make you guess."""
         out = []
         for path, edits in turn.edits.items():
+            if path in offered:
+                continue
+            offered.add(path)
             state = turn.proposals.get(path, "")
-            if not state or state.startswith(("Refused", "Not applied", "You rejected", "Not reviewed")):
+            if not state or state.startswith(("Not applied", "You rejected", "Not reviewed")):
                 out.append(ui.row(ui.button(f"Review change to {path} ({len(edits)} edit"
                                             f"{'s' if len(edits) > 1 else ''})", "propose", f"{index}:{path}")))
         return out

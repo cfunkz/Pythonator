@@ -2,7 +2,7 @@
 [plugin]
 id = "builder"
 name = "Project builder"
-version = "1.3.0"
+version = "1.4.0"
 api = 5
 entry = "plugin.py"
 description = "New web apps and APIs (React, Vue, Svelte, Next.js, Nuxt, Astro, Angular, Express, Fastify, FastAPI, Django, Streamlit, Go, Rust, Bun, Java, PHP, Ruby and more), bots and workers in one click, made by official tools in a sandbox and added as services. Deleting one asks you first."
@@ -22,3 +22,10 @@ key = "start"
 label = "Start a new project once it is made"
 kind = "bool"
 default = true
+
+[[plugin.settings]]
+key = "leftovers"
+label = "Refresh looks for leftover project folders"
+kind = "bool"
+default = false
+help = "Folders in the projects folder no service uses any more: a project removed with its folder kept, or a delete a locked file stopped halfway. Pythonator asks you which ones to delete."

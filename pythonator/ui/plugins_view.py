@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
     QFileDialog,
-    QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QInputDialog,
@@ -30,7 +30,7 @@ from PyQt6.QtWidgets import (
 
 from ..plugins.manifest import PERMISSIONS
 from . import theme
-from .widgets import label, scroll, spin, view
+from .widgets import ask, info, label, scroll, spin, tip, view, warn
 
 Send = Callable[..., None]  # (message, reply=None)
 
@@ -201,19 +201,34 @@ class PluginsDialog(QDialog):
         return box
 
     def _settings(self, p: dict[str, Any]) -> QGroupBox:
+        """The plugin's settings, one row each. A grid, not a QFormLayout: a form gives a wrapped label the height
+        of its field (one line next to a check box), so a label of three lines was cut off at the top and bottom.
+        A grid sizes each row for its tallest wrapped text. A yes/no setting is a check box with its words beside
+        it, across the whole row."""
         box = QGroupBox("Settings")
-        form = QFormLayout(box)
-        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)  # a long label goes above its field
-        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        grid = QGridLayout(box)
+        grid.setColumnStretch(1, 1)
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(6)
         widgets: dict[str, Any] = {}
+        row = 0
         for s in p["settings"]:
             value = p["values"].get(s["key"], s["default"])
             kind = s["kind"]
             w: QWidget
             if kind == "bool":
-                w = QCheckBox()
-                w.setChecked(bool(value))
-            elif kind == "int":
+                line, check = _wrapped_check(s["label"])
+                check.setChecked(bool(value))
+                if s.get("help"):
+                    line.setToolTip(tip(s["help"]))
+                widgets[s["key"]] = check
+                grid.addWidget(line, row, 0, 1, 2)
+                row += 1
+                if s.get("help"):
+                    grid.addWidget(_hint(s["help"]), row, 0, 1, 2)
+                    row += 1
+                continue
+            if kind == "int":
                 w = spin(0, 1_000_000, int(value or 0))
             elif kind == "choice":
                 w = QComboBox()
@@ -227,29 +242,31 @@ class PluginsDialog(QDialog):
                 if kind == "secret":
                     w.setEchoMode(QLineEdit.EchoMode.Password)
             if s.get("help"):
-                w.setToolTip(s["help"])
+                w.setToolTip(tip(s["help"]))
             widgets[s["key"]] = w
-            name = label(s["label"], plain=True, wrap=len(s["label"]) > 34)  # a long label wraps, a short doesn't
-            name.setMaximumWidth(260)
-            form.addRow(name, w)
-            if s.get("help"):
-                hint = label(s["help"])
-                hint.setTextFormat(Qt.TextFormat.PlainText)
-                hint.setProperty("muted", True)
-                form.addRow("", hint)
+            name = label(s["label"], plain=True)
+            name.setMinimumWidth(150)
+            name.setMaximumWidth(220)
+            name.setBuddy(w)
+            grid.addWidget(name, row, 0, Qt.AlignmentFlag.AlignTop)
+            grid.addWidget(w, row, 1, Qt.AlignmentFlag.AlignTop)
+            row += 1
+            notes = [s["help"]] if s.get("help") else []
             if kind == "secret":
                 where = p.get("secrets_stored", {}).get(s["key"], "")
-                text = {"keychain": "Saved in your system keychain, not in Pythonator's settings.",
-                        "file": "No system keychain here: saved in a private file only you can read.",
-                        "settings": "Saved in an older place: save it again to move it to the keychain."}.get(
-                    where, "Saved in your system keychain when you save it.")
-                hint = label(text, muted=True)
-                form.addRow("", hint)
+                notes.append({"keychain": "Saved in your system keychain, not in Pythonator's settings.",
+                              "file": "No system keychain here: saved in a private file only you can read.",
+                              "settings": "Saved in an older place: save it again to move it to the keychain."}.get(
+                    where, "Saved in your system keychain when you save it."))
+            for text in notes:
+                grid.addWidget(_hint(text), row, 1)
+                row += 1
         save = QPushButton("Save settings")
         save.setProperty("primary", True)
         save.clicked.connect(lambda: self.send({"op": "plugin_settings", "plugin": p["id"],
                                                 "values": {k: _value(w) for k, w in widgets.items()}}))
-        form.addRow("", save)
+        grid.addWidget(save, row, 0, 1, 2)
+        grid.setRowStretch(row + 1, 1)
         return box
 
     def _enable(self, p: dict[str, Any], on: bool) -> None:
@@ -259,16 +276,16 @@ class PluginsDialog(QDialog):
         self.send({"op": "plugin_enable", "plugin": p["id"], "enabled": on})
 
     def _remove(self, p: dict[str, Any]) -> None:
-        if QMessageBox.question(self, "Remove plugin", f"Remove {p['name']} and its data?") \
+        if ask(self, "Remove plugin", f"Remove {p['name']} and its data?") \
                 == QMessageBox.StandardButton.Yes:
             self.send({"op": "plugin_remove", "plugin": p["id"]})
 
     def _install(self, source: str) -> None:
         def done(ok: bool, data: Any, error: str) -> None:
             if not ok:
-                QMessageBox.warning(self, "Not installed", error)
+                warn(self, "Not installed", error)
             else:
-                QMessageBox.information(self, "Installed", f"Installed {data}. It is off until you enable it.")
+                info(self, "Installed", f"Installed {data}. It is off until you enable it.")
 
         self.send({"op": "plugin_install", "source": source}, done)
 
@@ -295,6 +312,11 @@ def _wrapped_check(text: str) -> tuple[QWidget, QCheckBox]:
     line.addWidget(check, 0, Qt.AlignmentFlag.AlignTop)
     line.addWidget(words, 1)
     return row, check
+
+
+def _hint(text: str) -> QLabel:
+    """A setting's help, in small muted words that wrap (plain text: a plugin wrote it)."""
+    return label(text, plain=True, muted=True)
 
 
 def _value(w: Any) -> str | int | bool:

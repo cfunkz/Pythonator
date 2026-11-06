@@ -80,8 +80,9 @@ def program_folders(service: Service, argv: list[str], dirs: DataDirs, *, with_n
     if with_node and node_script and (node := runtimes.which("node")):
         programs.append(node)
     out: list[Path] = []
+    project = Path(service.folder).absolute()
     for prog in programs:
-        for p in runtime_folders(prog):
+        for p in runtime_folders(prog, project):
             if p.exists() and not forbidden_read(p, dirs) and not _in_windows(p) and p not in out:
                 out.append(p)
     return out

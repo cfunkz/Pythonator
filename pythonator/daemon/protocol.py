@@ -49,6 +49,13 @@ class Remove(Ident):
     files: bool = False  # a project the Project builder made: delete its folder too
 
 
+class DeleteLeftovers(Req):
+    """The user picked leftover project folders to delete (the Project builder's Refresh found them)."""
+
+    op: Literal["delete_leftovers"]
+    folders: list[Annotated[str, Field(min_length=1, max_length=4096)]] = Field(min_length=1, max_length=200)
+
+
 class Start(Ident):
     op: Literal["start"]
     confirmed: bool = False  # the user confirmed Full access
@@ -185,6 +192,7 @@ class PluginRemove(PluginOp):
 
 Request = Annotated[
     Hello | Add | Update | Remove | Start | Stop | Restart | Input | Shell | Install | Recreate | Pull | Compose | Tail
+    | DeleteLeftovers
     | Clear
     | Watch
     | Check

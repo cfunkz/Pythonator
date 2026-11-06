@@ -162,6 +162,7 @@ def _run_linux(plan: dict[str, Any]) -> int:
             apply_seccomp(block_net=bool(seccomp.get("net")), block_unix=bool(seccomp.get("unix")),
                           library=str(seccomp.get("lib") or ""))
         drop_capabilities()
+        _subreaper()
     except SandboxError as exc:
         _say(f"{exc}; not starting the service without its sandbox")
         return EXIT_SANDBOX
@@ -206,6 +207,15 @@ def _no_new_privs() -> None:
     if _libc().prctl(38, ctypes.c_ulong(1), zero, zero, zero) != 0:  # PR_SET_NO_NEW_PRIVS
         err = ctypes.get_errno()
         raise SandboxError(f"could not set no_new_privs: {os.strerror(err)}")
+
+
+def _subreaper() -> None:
+    """Programs the service orphans (a server that daemonises with setsid) become its children, not init's, so
+    Stop still finds them in its process tree. The setting survives exec."""
+    import ctypes
+
+    zero = ctypes.c_ulong(0)
+    _libc().prctl(36, ctypes.c_ulong(1), zero, zero, zero)  # PR_SET_CHILD_SUBREAPER; best effort
 
 
 def drop_capabilities() -> None:
@@ -651,16 +661,15 @@ if sys.platform == "win32":
 
         # -- SIDs ---------------------------------------------------------------------------------
 
-        def profile_sid(self, name: str, *, create: bool = True) -> Any:
+        def profile_sid(self, name: str) -> Any:
             """The AppContainer SID of profile ``name`` (created if needed). Free with FreeSid."""
             sid = ctypes.c_void_p()
-            if create:
-                hr = self.uenv.CreateAppContainerProfile(name, name, "A Pythonator service sandbox", None, 0,
-                                                         ctypes.byref(sid))
-                if hr >= 0:
-                    return sid
-                if hr & 0xFFFFFFFF != _HRESULT_ALREADY_EXISTS:
-                    raise SandboxError(f"could not create the AppContainer profile {name} (0x{hr & 0xFFFFFFFF:08X})")
+            hr = self.uenv.CreateAppContainerProfile(name, name, "A Pythonator service sandbox", None, 0,
+                                                     ctypes.byref(sid))
+            if hr >= 0:
+                return sid
+            if hr & 0xFFFFFFFF != _HRESULT_ALREADY_EXISTS:
+                raise SandboxError(f"could not create the AppContainer profile {name} (0x{hr & 0xFFFFFFFF:08X})")
             hr = self.uenv.DeriveAppContainerSidFromAppContainerName(name, ctypes.byref(sid))
             if hr < 0:
                 raise SandboxError(f"could not find the AppContainer profile {name} (0x{hr & 0xFFFFFFFF:08X})")
@@ -896,18 +905,6 @@ if sys.platform == "win32":
     def windows_delete_profile(name: str) -> None:
         _Win().uenv.DeleteAppContainerProfile(name)
 
-    def windows_profile_sid(name: str) -> str:
-        """The SID of AppContainer profile ``name`` (it follows from the name; nothing is created)."""
-        api = _Win()
-        sid = api.profile_sid(name, create=False)
-        try:
-            return api.sid_string(sid)
-        finally:
-            api.adv.FreeSid(sid)
-
-    def windows_acl_sids(path: str, *, inherited: bool = False) -> list[str]:
-        return _Win().acl_sids(path, inherited=inherited)
-
     def windows_revoke(path: str, sids: Iterable[str]) -> list[str]:
         """Take the entries for ``sids`` off ``path`` (and off what inherited them). Returns the SIDs removed."""
         api = _Win()
@@ -1089,12 +1086,6 @@ else:
 
     def windows_delete_profile(name: str) -> None:
         raise OSError("AppContainers exist only on Windows")
-
-    def windows_profile_sid(name: str) -> str:
-        raise OSError("AppContainers exist only on Windows")
-
-    def windows_acl_sids(path: str, *, inherited: bool = False) -> list[str]:
-        raise OSError("Windows permissions exist only on Windows")
 
     def windows_revoke(path: str, sids: Iterable[str]) -> list[str]:
         raise OSError("Windows permissions exist only on Windows")

@@ -15,6 +15,8 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import os
+import queue
 import shutil
 import subprocess
 import sys
@@ -43,6 +45,10 @@ log = logging.getLogger(__name__)
 RETIRED = ("health", "webhooks")  # official plugins that became Notify in 0.0.11
 MAX_LINE = 1024 * 1024  # one message; a panel with a long AI answer is a few hundred KB
 RATE, BURST, MAX_DROPS = 200.0, 400.0, 2000
+BYTE_RATE, BYTE_BURST = 2.0 * 1024 * 1024, 8.0 * 1024 * 1024  # and at most this much a second (panels are big)
+MAX_TEXT = 2000  # characters of one log line, error or stderr line kept
+ERR_RATE = 50  # stderr lines a second shown; more are counted, not shown
+MAX_OUTBOX = 2000  # messages to a plugin it hasn't read yet; then it is stopped: it no longer reads them
 CHECK_DEADLINE = 2.0
 MAX_CRASHES = 3
 REQUESTS_PER_MINUTE = 120  # list, read and propose, per plugin
@@ -120,7 +126,9 @@ class Plugin:
     ready: bool = False
     crashes: deque[float] = field(default_factory=deque)
     tokens: float = BURST
+    byte_tokens: float = BYTE_BURST
     last: float = field(default_factory=time.monotonic)
+    outbox: queue.Queue[bytes | None] | None = None  # what its writer thread sends it
     drops: int = 0
     activity: deque[str] = field(default_factory=lambda: deque(maxlen=200))
     panel: dict[str, Any] | None = None
@@ -245,6 +253,14 @@ class PluginHost:
 
     def launch(self, p: Plugin) -> None:
         p.error, p.ready, p.stopping, p.drops = "", False, False, 0
+        if (now := _safe_hash(p.folder)) != p.sha256:  # trust and grants were for the files checked before
+            p.sha256, p.official = now, trust.is_official(p.id, p.folder)
+            if not p.official:
+                self._forget(p.id, keep_values=True)
+                p.error = "Its files changed, so it is off, in test mode and granted nothing: turn it on to try them"
+                self._activity(p, f"Not started: {p.error}")
+                self.changed()
+                return
         try:
             cmd = self._command(p)
             p.proc = subprocess.Popen(cmd.argv, cwd=cmd.cwd, env=cmd.env, stdin=subprocess.PIPE,
@@ -256,7 +272,10 @@ class PluginHost:
             self._activity(p, f"Not started: {exc}")
             return
         proc = p.proc
-        threading.Thread(target=self._read, args=(p, proc), daemon=True, name=f"plugin-{p.id}").start()
+        outbox: queue.Queue[bytes | None] = queue.Queue(maxsize=MAX_OUTBOX)
+        p.outbox = outbox
+        threading.Thread(target=self._write, args=(proc, outbox), daemon=True, name=f"plugin-{p.id}-in").start()
+        threading.Thread(target=self._read, args=(p, proc, outbox), daemon=True, name=f"plugin-{p.id}").start()
         threading.Thread(target=self._read_err, args=(p, proc), daemon=True, name=f"plugin-{p.id}-err").start()
         self._activity(p, f"Started ({'official' if p.official else 'third-party'}"
                           f"{', test mode' if self.test_mode(p) else ''}; {cmd.describe or 'no sandbox'})")
@@ -295,11 +314,13 @@ class PluginHost:
         for prop in [x for x in self.proposals.values() if x.plugin == p.id]:
             self._end_proposal(prop, "expired", "The plugin stopped", tell_plugin=False)
         proc, p.proc = p.proc, None
+        outbox, p.outbox = p.outbox, None
         p.ready, p.stopping, p.panel = False, True, None
         if proc is None:
             return
-        with contextlib.suppress(OSError, ValueError):
-            self._write_raw(proc, {"t": "stop"})
+        if outbox is not None:
+            with contextlib.suppress(queue.Full):  # full: it isn't reading, and is killed in 3 s anyway
+                outbox.put_nowait(b'{"t": "stop"}\n')
 
         def finish() -> None:
             try:
@@ -317,7 +338,7 @@ class PluginHost:
 
     # -- reading (threads) → handling (supervisor thread) -------------------------------------------------
 
-    def _read(self, p: Plugin, proc: subprocess.Popen[bytes]) -> None:
+    def _read(self, p: Plugin, proc: subprocess.Popen[bytes], outbox: queue.Queue[bytes | None]) -> None:
         if proc.stdout is None:
             return
         while True:
@@ -329,16 +350,39 @@ class PluginHost:
                 break
             self.sup.post(lambda line=line: self._on_line(p, proc, line))
         code = proc.wait()
+        with contextlib.suppress(queue.Full):
+            outbox.put_nowait(None)  # its writer thread ends too
         self.sup.post(lambda: self._on_exit(p, proc, code))
+
+    @staticmethod
+    def _write(proc: subprocess.Popen[bytes], outbox: queue.Queue[bytes | None]) -> None:
+        """Its own thread: a plugin that stops reading blocks this one, never the background service."""
+        while (data := outbox.get()) is not None and proc.stdin is not None:
+            try:
+                proc.stdin.write(data)
+                proc.stdin.flush()
+            except (OSError, ValueError):
+                return
 
     def _read_err(self, p: Plugin, proc: subprocess.Popen[bytes]) -> None:
         err = proc.stderr
         if err is None:
             return
+        second, shown, dropped = 0, 0, 0
         for raw in iter(lambda: err.readline(8192), b""):
-            text = raw.decode("utf-8", "replace").rstrip()
-            if text:
-                self.sup.post(lambda text=text: self._activity(p, text))
+            now = int(time.monotonic())
+            if now != second:
+                if dropped:
+                    self.sup.post(lambda n=dropped: self._activity(p, f"(skipped {n} more lines of its errors)"))
+                second, shown, dropped = now, 0, 0
+            text = raw.decode("utf-8", "replace").rstrip()[:MAX_TEXT]
+            if not text:
+                continue
+            if shown >= ERR_RATE:
+                dropped += 1
+                continue
+            shown += 1
+            self.sup.post(lambda text=text: self._activity(p, _clean(text)))
 
     def _on_exit(self, p: Plugin, proc: subprocess.Popen[bytes], code: int) -> None:
         if p.proc is not proc and not p.stopping:
@@ -377,12 +421,15 @@ class PluginHost:
         self.sup.save_settings(self.settings.model_copy(update={"plugins_enabled": enabled}))
         self.changed()
 
-    def _rate_ok(self, p: Plugin) -> bool:
+    def _rate_ok(self, p: Plugin, size: int) -> bool:
         now = time.monotonic()
         p.tokens = min(BURST, p.tokens + (now - p.last) * RATE)
+        p.byte_tokens = min(BYTE_BURST, p.byte_tokens + (now - p.last) * BYTE_RATE)
         p.last = now
-        if p.tokens >= 1:
+        if p.tokens >= 1 and p.byte_tokens >= size:
             p.tokens -= 1
+            p.byte_tokens -= size
+            p.drops = max(0, p.drops - 1)  # a burst now and then is forgiven; only a flood adds up
             return True
         p.drops += 1
         return False
@@ -390,7 +437,7 @@ class PluginHost:
     def _on_line(self, p: Plugin, proc: subprocess.Popen[bytes], line: bytes) -> None:
         if p.proc is not proc:
             return
-        if not self._rate_ok(p):
+        if not self._rate_ok(p, len(line)):
             if p.drops >= MAX_DROPS:
                 self._kill(p, proc, f"sent more than {int(RATE)} messages a second for too long")
             return
@@ -404,12 +451,14 @@ class PluginHost:
         kind = msg["t"]
         granted = self.granted(p)
         if kind == "hello":
+            if p.ready:
+                return  # once per start: init reads its secrets from the keychain
             p.ready = True
             self._send(p, {"t": "init", "settings": self._values(p), "permissions": sorted(granted),
                            "test_mode": self.test_mode(p), "services": self._views(p)})
             self.changed()
         elif kind in ("log", "error"):
-            self._activity(p, _clean(str(msg.get("text", ""))))
+            self._activity(p, _clean(str(msg.get("text", ""))[:MAX_TEXT]))
         elif kind == "notify":
             level = msg.get("level") if msg.get("level") in ("info", "ok", "warn", "error") else "info"
             self.sup.emit({"ev": "notice", "level": level, "text": f"{p.manifest.name}: "
@@ -437,7 +486,10 @@ class PluginHost:
         if _count(panel.items) > 500:
             self._activity(p, "Panel refused: more than 500 items")
             return
-        p.panel = panel.model_dump(exclude_defaults=True)
+        shown = panel.model_dump(exclude_defaults=True)
+        if shown == p.panel:
+            return  # the same panel again: the window has it
+        p.panel = shown
         self.sup.emit({"ev": "panel", "plugin": p.id, "name": p.manifest.name, "panel": p.panel})
 
     def _on_control(self, p: Plugin, msg: dict[str, Any], granted: set[str]) -> None:
@@ -462,6 +514,15 @@ class PluginHost:
         req = msg.get("req")
         if not isinstance(req, int):
             return
+        if msg.get("op") == "templates" and "create_services" in granted:
+            # Looks for every template's tools on PATH (slow on Windows, with a long PATH): never on the event
+            # loop, which the window and every service wait on. It reads no state of the supervisor's.
+            threading.Thread(target=self._reply, args=(p, req, msg, granted, True), daemon=True,
+                             name=f"plugin-{p.id}-templates").start()
+            return
+        self._reply(p, req, msg, granted)
+
+    def _reply(self, p: Plugin, req: int, msg: dict[str, Any], granted: set[str], later: bool = False) -> None:
         try:
             data = self._answer(p, msg, granted)
             reply: dict[str, Any] = {"t": "reply", "req": req, "ok": True, "data": data}
@@ -469,7 +530,10 @@ class PluginHost:
             reply = {"t": "reply", "req": req, "ok": False, "error": str(exc)}
         except OSError as exc:
             reply = {"t": "reply", "req": req, "ok": False, "error": f"Couldn't read it: {exc.strerror or exc}"}
-        self._send(p, reply)
+        if later:
+            self.sup.post(lambda: self._send(p, reply))
+        else:
+            self._send(p, reply)
 
     def _answer(self, p: Plugin, msg: dict[str, Any], granted: set[str]) -> dict[str, Any]:
         op, sid = msg.get("op"), msg.get("id")
@@ -479,7 +543,7 @@ class PluginHost:
         if len(p.requests) >= REQUESTS_PER_MINUTE:
             raise files.FileRefused(f"Too many requests: at most {REQUESTS_PER_MINUTE} a minute")
         p.requests.append(now)
-        if op in ("templates", "create", "projects", "delete"):
+        if op in ("templates", "create", "projects", "delete", "leftovers", "delete_leftovers"):
             return self._create(p, msg, granted)
         if op not in ("list", "read", "propose"):
             raise files.FileRefused("Unknown request")
@@ -517,13 +581,10 @@ class PluginHost:
                                  for s in self.sup.slots.values() if s.service.made_by is not None]}
         if msg.get("op") == "delete":
             return self._ask_delete(p, str(msg.get("id", "")))
+        parent = self._projects_folder(msg)
+        if msg.get("op") in ("leftovers", "delete_leftovers"):
+            return self._leftovers(p, parent, msg)
         key, name = str(msg.get("template", "")), str(msg.get("name", ""))
-        raw = str(msg.get("folder", "") or "").strip()
-        try:
-            parent = Path(validate.folder(raw, "The projects folder", must_exist=False)) if raw \
-                else templates.default_parent()
-        except ValueError as exc:
-            raise files.FileRefused(str(exc)) from None
         now = time.monotonic()
         while p.creations and now - p.creations[0] > 3600:
             p.creations.popleft()
@@ -540,9 +601,40 @@ class PluginHost:
         self._activity(p, f"Created {service.name} ({key}) in {service.folder}")
         return {"id": service.id, "folder": service.folder, "port": service.network.ports[0]}
 
+    @staticmethod
+    def _projects_folder(msg: dict[str, Any]) -> Path:
+        from ..core import templates
+
+        raw = str(msg.get("folder", "") or "").strip()
+        try:
+            return Path(validate.folder(raw, "The projects folder", must_exist=False)) if raw \
+                else templates.default_parent()
+        except ValueError as exc:
+            raise files.FileRefused(str(exc)) from None
+
+    def _leftovers(self, p: Plugin, parent: Path, msg: dict[str, Any]) -> dict[str, Any]:
+        """Folders in the projects folder no service uses any more. Listing them reads nothing inside;
+        deleting them, like a project, is only ever asked of the user in Pythonator's own window."""
+        found = self.sup.leftover_projects(parent)
+        if msg.get("op") == "leftovers":
+            return {"folder": str(parent), "leftovers": found}
+        wanted = msg.get("folders")
+        keys = {os.path.normcase(str(x)) for x in wanted} if isinstance(wanted, list) else set()
+        chosen = [x["folder"] for x in found if os.path.normcase(x["folder"]) in keys]
+        if not chosen:
+            raise files.FileRefused("None of those folders is a leftover any more: press Refresh")
+        if self.test_mode(p):
+            self._activity(p, f"Test mode: would ask to delete {len(chosen)} leftover folders in {parent}")
+            raise files.FileRefused("Test mode: the request was only recorded in the plugin's Activity")
+        self._activity(p, f"Asks you to delete {len(chosen)} leftover project folders in {parent}")
+        self.sup.emit({"ev": "confirm_leftovers", "folders": chosen, "plugin": p.manifest.name})
+        return {"asked": len(chosen)}
+
     def _ask_delete(self, p: Plugin, sid: str) -> dict[str, Any]:
         """A plugin never deletes anything itself: Pythonator asks the user, in its own window, whether to delete
         the project and its folder. Only projects the Project builder made, still in the folder it made."""
+        if sid in self.sup.slots and self.sup.slots[sid].removing:
+            raise files.FileRefused("It is being removed already")
         try:
             folder = self.sup.project_folder(sid)
         except ValueError as exc:
@@ -557,10 +649,7 @@ class PluginHost:
         return {"asked": True}
 
     def _files(self, service: Service) -> files.ServiceFiles:
-        values = dict(service.env)
-        if service.env_file:
-            with contextlib.suppress(OSError, ValueError):
-                values.update(isolation.base.read_env_file(Path(service.folder) / service.env_file))
+        values = {**service.env, **isolation.base.env_file_values(service)}
         return files.ServiceFiles(Path(service.folder), service.env_file, values)
 
     def _propose(self, p: Plugin, service: Service, msg: dict[str, Any]) -> dict[str, Any]:
@@ -721,17 +810,12 @@ class PluginHost:
         return values
 
     def _send(self, p: Plugin, msg: dict[str, Any]) -> None:
-        if p.proc is None:
+        if p.proc is None or p.outbox is None:
             return
-        with contextlib.suppress(OSError, ValueError):  # it is ending; _on_exit reports it
-            self._write_raw(p.proc, msg)
-
-    @staticmethod
-    def _write_raw(proc: subprocess.Popen[bytes], msg: dict[str, Any]) -> None:
-        if proc.stdin is None:
-            raise ValueError("no stdin")
-        proc.stdin.write(json.dumps(msg, ensure_ascii=False).encode() + b"\n")
-        proc.stdin.flush()
+        try:
+            p.outbox.put_nowait(json.dumps(msg, ensure_ascii=False).encode() + b"\n")
+        except queue.Full:
+            self._kill(p, p.proc, f"stopped reading what Pythonator sends it ({MAX_OUTBOX} messages waiting)")
 
     def _activity(self, p: Plugin, text: str) -> None:
         p.activity.append(f"{time.strftime('%H:%M:%S')} {text}")
@@ -824,6 +908,7 @@ class PluginHost:
             dest = self.dirs.plugins / manifest.id
             if manifest.id in self.plugins:
                 self.stop(self.plugins[manifest.id])
+                self._forget(manifest.id, keep_values=True)  # new code: off, in test mode, nothing granted
             shutil.rmtree(dest, ignore_errors=True)
             shutil.copytree(folder, dest, symlinks=True, ignore=shutil.ignore_patterns("__pycache__", ".git"))
         self.discover()
@@ -838,10 +923,21 @@ class PluginHost:
         for s in p.manifest.settings:
             if s.kind == "secret":
                 self.vault.delete(_account(pid, s.key))
+        self._forget(pid)
         shutil.rmtree(p.folder, ignore_errors=True)
         shutil.rmtree(self.dirs.plugin_data / pid, ignore_errors=True)
         self.discover()
         self.changed()
+
+    def _forget(self, pid: str, *, keep_values: bool = False) -> None:
+        """What the user allowed a third-party plugin: never carried over to other code with the same id."""
+        s = self.settings
+        self.sup.save_settings(s.model_copy(update={
+            "plugins_enabled": [i for i in s.plugins_enabled if i != pid],
+            "plugin_grants": {k: v for k, v in s.plugin_grants.items() if k != pid},
+            "plugin_live": [i for i in s.plugin_live if i != pid],
+            "plugin_settings": s.plugin_settings if keep_values else
+            {k: v for k, v in s.plugin_settings.items() if k != pid}}))
 
 
 def _account(pid: str, key: str) -> str:

@@ -1,8 +1,9 @@
 """One running process: start it, read its output, stop it with its whole process tree.
 
 Each process has one thread, which reads the merged stdout/stderr in 64 KiB chunks and, at end of file, waits for
-the exit. Everything it learns goes into the supervisor's queue; the supervisor handles it on its own thread, so
-no state is shared between threads. Stopping asks first (SIGTERM to the process group, Ctrl+C on Windows,
+the exit, and (once something is typed into it) one that writes its input, so a program that doesn't read never
+holds up the supervisor. Everything it learns goes into the supervisor's queue; the supervisor handles it on its
+own thread, so no state is shared between threads. Stopping asks first (SIGTERM to the process group, Ctrl+C on Windows,
 ``stop`` for a container) and kills the tree after the grace period.
 """
 
@@ -17,6 +18,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
+from typing import IO
 
 import psutil
 
@@ -30,6 +32,7 @@ CHUNK = 64 * 1024
 SMALL_READ = 16 * 1024  # a read shorter than this: the pipe was nearly empty
 GATHER = 0.004  # seconds to let output gather after a short read (the window shows it every 50 ms anyway)
 MAX_PENDING = 2 * 1024 * 1024  # bytes read but not yet taken; then the reader waits, and so does the program
+MAX_INPUT = 256  # lines typed into it that it hasn't read yet; more are refused
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +64,7 @@ class Runner:
         self._throttle: limits.Throttle | None = None
         self.proc: subprocess.Popen[bytes] | None = None
         self.started = 0.0
+        self.created = 0.0  # its start time as the system knows it (with the pid, it can't be mistaken)
         self.stop_requested = False
         self.limit_hit = ""
         self._job: winproc.Job | None = None
@@ -69,6 +73,10 @@ class Runner:
         # waits on its pipe, like in a terminal, so nothing piles up and a stop is never stuck behind a backlog.
         self._out = bytearray()
         self._out_ready = threading.Condition()
+        self._input: queue.Queue[bytes | None] | None = None
+        # Its process tree as the stats thread last saw it: Stop and the clean-up after an exit end these too,
+        # including any that left its process group (setsid). psutil checks each is still the same process.
+        self.seen: tuple[psutil.Process, ...] = ()
 
     @property
     def pid(self) -> int:
@@ -135,6 +143,9 @@ class Runner:
         self._cleanup_tree()
         if self._job is not None:
             self._job.close()
+        if self._input is not None:
+            with contextlib.suppress(queue.Full):
+                self._input.put_nowait(None)
         self.sink.put(Exited(self.key, code, time.monotonic() - self.started))
 
     def take(self) -> bytes:
@@ -146,15 +157,28 @@ class Runner:
         return data
 
     def write(self, text: str) -> bool:
+        """Queue ``text`` for the program's input. False when it has ended, or hasn't read what it was given."""
         proc = self.proc
         if proc is None or proc.stdin is None or proc.poll() is not None:
             return False
+        if self._input is None:
+            self._input = queue.Queue(maxsize=MAX_INPUT)
+            threading.Thread(target=self._write, args=(proc.stdin, self._input), name=f"in-{self.key}",
+                             daemon=True).start()
         try:
-            proc.stdin.write(text.encode("utf-8", "replace"))
-            proc.stdin.flush()
-        except (OSError, ValueError):
+            self._input.put_nowait(text.encode("utf-8", "replace"))
+        except queue.Full:
             return False
         return True
+
+    @staticmethod
+    def _write(stdin: IO[bytes], pending: queue.Queue[bytes | None]) -> None:
+        while (data := pending.get()) is not None:
+            try:
+                stdin.write(data)
+                stdin.flush()
+            except (OSError, ValueError):
+                return
 
     def stop(self, grace: float) -> None:
         """Ask the process to end, and kill its tree after ``grace`` seconds. Returns at once."""
@@ -187,6 +211,7 @@ class Runner:
             proc.wait(grace)
         except subprocess.TimeoutExpired:
             self.kill()
+        self._kill_seen()
 
     def kill(self, reason: str = "") -> None:
         """End the whole tree now."""
@@ -206,12 +231,20 @@ class Runner:
                 p.kill()
         with contextlib.suppress(OSError):
             proc.kill()
+        self._kill_seen()
 
     def _cleanup_tree(self) -> None:
         """Children left behind by a process that exited (a daemonising server, a stray worker)."""
         if sys.platform != "win32" and self.proc is not None:
             with contextlib.suppress(OSError):
                 os.killpg(self.proc.pid, signal.SIGKILL)
+        self._kill_seen()
+
+    def _kill_seen(self) -> None:
+        for p in self.seen:
+            if p.pid != self.pid:
+                with contextlib.suppress(psutil.Error):
+                    p.kill()  # psutil refuses when the pid now belongs to another process
 
     def tree(self) -> list[psutil.Process]:
         return _tree(self.pid) if self.pid else []

@@ -13,7 +13,6 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox,
     QFormLayout,
     QGroupBox,
-    QMessageBox,
     QSystemTrayIcon,
     QVBoxLayout,
 )
@@ -21,7 +20,7 @@ from PyQt6.QtWidgets import (
 from ..core.models import Settings
 from ..paths import IS_WINDOWS
 from . import login
-from .widgets import label, spin
+from .widgets import label, spin, warn
 
 Request = Callable[..., None]
 ONE, FEW, ALL = range(3)  # the start modes, as the combo box lists them
@@ -91,5 +90,5 @@ class SettingsDialog(QDialog):
             try:
                 login.set_enabled(self.login.isChecked())
             except OSError as exc:
-                QMessageBox.warning(self, "Settings", f"Couldn't change starting with the computer: {exc}")
+                warn(self, "Settings", f"Couldn't change starting with the computer: {exc}")
         self.accept()

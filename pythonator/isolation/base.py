@@ -7,6 +7,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..core.logs import SECRET_NAME
 from ..core.models import Service
 from ..paths import FROZEN, IS_WINDOWS, DataDirs, source_root
 
@@ -62,14 +63,24 @@ SECRET_DIRS = (".ssh", ".gnupg", ".aws", ".azure", ".docker", ".kube", ".passwor
                ".config/gcloud", ".netrc", ".git-credentials", ".npmrc", ".pypirc")
 
 
-def read_env_file(path: Path) -> dict[str, str]:
-    """``KEY=value`` lines (``#`` comments, optional quotes, ``export`` prefix). Bad lines are skipped."""
+def env_file_values(service: Service) -> dict[str, str]:
+    """The variables in the service's env file ({} when it has none)."""
+    return read_env_file(Path(service.folder), service.env_file) if service.env_file else {}
+
+
+def read_env_file(folder: Path, name: str) -> dict[str, str]:
+    """``KEY=value`` lines of the file ``name`` in ``folder`` (``#`` comments, optional quotes, ``export``
+    prefix). Bad lines are skipped. Only a file inside the folder counts: a sandboxed service can write its folder,
+    and a link from there to your own files (``.env`` -> ``~/.aws/credentials``) must not hand them to it."""
     from ..core import validate
 
     out: dict[str, str] = {}
     try:
+        path = (folder / name).resolve(strict=True)
+        if not path.is_relative_to(folder.resolve()):
+            return out
         text = path.read_text(encoding="utf-8-sig")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return out
     for raw in text.splitlines()[:1000]:
         line = raw.strip()
@@ -82,18 +93,19 @@ def read_env_file(path: Path) -> dict[str, str]:
         elif " #" in value:
             value = value.split(" #", 1)[0].rstrip()
         try:
-            out[validate.env_key(key)] = validate.arg(value)
+            out[validate.env_file_key(key)] = validate.arg(value)
         except ValueError:
             continue
     return out
 
 
 def base_env(service: Service, *, sandboxed: bool) -> dict[str, str]:
-    """The service's environment: yours (minus the app's own and, in a sandbox, the desktop session's
-    variables), then its ``.env`` file, then the variables set on the service."""
+    """The service's environment: yours (minus the app's own and, in a sandbox, the desktop session's variables
+    and anything named like a secret, such as GITHUB_TOKEN), then its ``.env`` file, then the variables set on the
+    service."""
     env = {k: v for k, v in os.environ.items()
            if k.upper() not in APP_ENV and not k.upper().startswith(APP_ENV_PREFIXES)
-           and not (sandboxed and k.upper() in SESSION_ENV)}
+           and not (sandboxed and (k.upper() in SESSION_ENV or SECRET_NAME.search(k)))}
     if FROZEN and "LD_LIBRARY_PATH_ORIG" in os.environ:  # PyInstaller changed it for itself
         env["LD_LIBRARY_PATH"] = os.environ["LD_LIBRARY_PATH_ORIG"]
     elif FROZEN:
@@ -105,8 +117,7 @@ def base_env(service: Service, *, sandboxed: bool) -> dict[str, str]:
         env.setdefault("BUNDLE_PATH", "vendor/bundle")  # gems stay with the project, like a venv
     if service.own_env and service.runtime == "python":
         env["PYTHONNOUSERSITE"] = "1"  # nothing from the user's own site-packages either
-    if service.env_file:
-        env.update(read_env_file(Path(service.folder) / service.env_file))
+    env.update(env_file_values(service))
     env.update(service.env)
     if service.network.ports:
         env.setdefault("PORT", str(service.network.ports[0]))
@@ -157,9 +168,8 @@ def forbidden_write(path: Path, dirs: DataDirs) -> str:
         return "Pythonator's own data folder"
     if len(p.parts) <= (2 if IS_WINDOWS else 1):
         return "a whole drive"
-    for secret in SECRET_DIRS:
-        if p.is_relative_to(home / secret):
-            return "a folder of passwords or keys"
+    if _holds_secrets(p, home):
+        return "a folder of passwords or keys"
     if IS_WINDOWS:
         system = [Path(os.environ.get(v, "")) for v in ("SystemRoot", "ProgramFiles", "ProgramFiles(x86)")]
         if any(s.parts and p.is_relative_to(s.resolve()) for s in system if str(s)):
@@ -177,14 +187,20 @@ def forbidden_read(path: Path, dirs: DataDirs) -> str:
         return "your whole home folder"
     if p.is_relative_to(dirs.root) or dirs.root.is_relative_to(p):
         return "Pythonator's own data folder"
-    for secret in SECRET_DIRS:
-        if p.is_relative_to(home / secret):
-            return "a folder of passwords or keys"
+    if _holds_secrets(p, home):
+        return "a folder of passwords or keys"
     return ""
 
 
-def runtime_folders(argv0: str) -> list[Path]:
-    """The folders a program needs to read to run: its install folder and, for a venv, the base Python."""
+def _holds_secrets(p: Path, home: Path) -> bool:
+    """``p`` is one of the folders of passwords or keys, inside one, or holds one (``~/.config`` holds gh's)."""
+    return any(p.is_relative_to(home / s) or (home / s).is_relative_to(p) for s in SECRET_DIRS)
+
+
+def runtime_folders(argv0: str, project: Path | None = None) -> list[Path]:
+    """The folders a program needs to read to run: its install folder and, for a venv, the base Python.
+    ``project``: the folder the service may write. A program there (its .venv) can point anywhere, with a link or
+    pyvenv.cfg's ``home``, so outside the folder only a real Python installation counts."""
     from ..core import runtimes
 
     out: list[Path] = []
@@ -195,18 +211,29 @@ def runtime_folders(argv0: str) -> list[Path]:
             return out
         prog = Path(found)
     real = prog.resolve()
+    untrusted = project is not None and prog.absolute().is_relative_to(project)
+
+    def add(folder: Path) -> None:
+        if not untrusted or folder.is_relative_to(project or folder) or _python_install(folder):
+            out.append(folder)
+
     for candidate in {prog.absolute().parent, real.parent}:
         root = candidate.parent if candidate.name.lower() in ("bin", "scripts", "sbin") else candidate
         venv = root if (root / "pyvenv.cfg").is_file() else None
-        out.append(root)
+        add(root)
         if venv and (home := runtimes.venv_home(venv)):
-            out.append(runtimes.install_root(str(home / "python")))
+            add(runtimes.install_root(str(home / "python")))
     if (rustup := rustup_home(prog)) is not None:  # cargo / rustc there are rustup's proxies: the toolchains
         out.append(rustup)
     if IS_WINDOWS:
         return out
     # On macOS and Linux most runtimes live in system folders the sandbox reads anyway.
     return [p for p in out if p.parts[1:2] and p.parts[1] not in ("usr", "bin", "lib", "System")]
+
+
+def _python_install(root: Path) -> bool:
+    """Whether ``root`` is a Python installation (its standard library is there), not just any folder."""
+    return (root / "Lib" / "os.py").is_file() or any(root.glob("lib/python3*/os.py"))
 
 
 def rustup_home(prog: Path) -> Path | None:

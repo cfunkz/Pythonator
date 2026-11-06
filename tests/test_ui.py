@@ -386,3 +386,31 @@ def test_plugin_select_shows_what_the_plugin_chose(qtbot: Any) -> None:
     assert combo is not None
     combo.activated.emit(2)
     assert picked == ["B"] and combo.currentText() == "Pick…"  # a one-shot pick goes back to the placeholder
+
+
+def test_plugin_settings_labels_are_never_cut_off(qtbot: Any) -> None:
+    """A long setting label wraps onto as many lines as it needs. Notify's settings in a QFormLayout gave a
+    three-line label the height of its check box or number box, so its top and bottom were cut off."""
+    import tomllib
+
+    from PyQt6.QtWidgets import QCheckBox, QScrollArea
+
+    manifest = tomllib.loads((Path(__file__).parents[1] / "plugins" / "notify" / "plugin.toml").read_text("utf-8"))
+    settings = [{"choices": [], "help": "", "default": "", **s} for s in manifest["plugin"]["settings"]]
+    dlg = PluginsDialog(lambda *a: None)
+    qtbot.addWidget(dlg)
+    box = dlg._settings({"id": "notify", "settings": settings, "values": {}})
+    area = QScrollArea()
+    area.setWidgetResizable(True)
+    area.setWidget(box)
+    qtbot.addWidget(area)
+    for width in (340, 470, 900):
+        area.resize(width, 600)  # shorter than the settings: they scroll, and must not be squeezed
+        area.show()
+        qtbot.wait(20)
+        for w in box.findChildren(QLabel):
+            if w.isVisible() and w.wordWrap() and w.text():
+                assert w.height() >= w.heightForWidth(w.width()), (width, w.text(), w.height())
+    bools = [s for s in settings if s["kind"] == "bool"]
+    checks = box.findChildren(QCheckBox)
+    assert len(checks) == len(bools) and [c.isChecked() for c in checks] == [bool(s["default"]) for s in bools]

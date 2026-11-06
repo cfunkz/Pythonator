@@ -13,11 +13,13 @@ use [a private advisory](https://github.com/cfunkz/Pythonator/security/advisorie
 | An official plugin is swapped or edited | Official means *its files match the reviewed SHA-256 catalog*; one changed byte makes it third-party, with the warning, test mode and no permissions |
 | Another user on the computer, or a program, talks to the background service | The socket is your account's only (0600 / a per-user pipe) and needs a random token from a file only you can read; the token is compared in constant time |
 | A crafted message to the background service | Every request is a strict typed model with limits; unknown fields are refused; one line is at most 1 MB; a slow reader is cut off, never waited for |
-| A cloned repository runs code on clone or pull | Hooks off, submodules off, fsmonitor off, only `https` and `ssh` transports, addresses checked, fast-forward only |
+| A cloned repository runs code on clone or pull | Hooks off, submodules off, fsmonitor off, only `https` and `ssh` transports, addresses checked, fast-forward only; a pull refuses a checkout whose own `.git/config` holds anything but plain settings (`core.sshCommand`, a filter, `credential.helper`, `include.path` would run a program as you) |
+| A sandboxed service changes its own folder to get out | Nothing in the project folder runs outside the sandbox: its venv's Python version is read from `pyvenv.cfg`, not by running it; `pyvenv.cfg` and links can only point the sandbox at a real Python installation; an env file is read only inside the folder (never through a link) and can't set `PATH`, `LD_*`, `DOCKER_*`, `HOME` or `XDG_*`; a sandboxed service must be stopped for a pull |
 | Arguments that look different from what runs | Programs start from argument lists, never a shell; NUL, bidi and zero-width characters are refused |
 | `LD_PRELOAD` and friends | Refused as service variables |
+| Your shell's secrets | Inherited variables named like a secret (`GITHUB_TOKEN`, `AWS_SECRET_ACCESS_KEY`, `*_API_KEY`) don't reach a sandboxed service or plugin; set them on the service when it needs them |
 | Secrets in output | Values of secret-looking variables are masked in the console, logs and plugin messages |
-| Pythonator itself crashes | Services keep running; the next start finds them by process id and start time |
+| Pythonator itself crashes | Sandboxed services on Windows and under bubblewrap end with it; others keep running, and the next start ends them, found by process id and start time |
 
 ## How each system enforces the sandbox
 
@@ -29,7 +31,12 @@ use [a private advisory](https://github.com/cfunkz/Pythonator/security/advisorie
   outside its own sandbox are refused.
 * **seccomp** (through `libseccomp`): with the network off, no sockets but Unix ones. Always: no `ptrace`, `bpf`,
   `io_uring`, kernel module loading, `kexec`, `perf_event_open`, `userfaultfd`, mounts, joining other namespaces,
-  or typing into your terminal (`TIOCSTI`).
+  or typing into your terminal (`TIOCSTI`). No new Unix sockets without bubblewrap, nor with it when the network
+  is on and Landlock can't scope them (before Linux 6.12): they would reach your desktop session (X11, D-Bus).
+* **Devices**: only `/dev/null`, `zero`, `random`, `urandom`, `tty`, `ptmx` and `shm`, not cameras or microphones;
+  `/dev/pts` (your terminals) only inside bubblewrap, where it is the sandbox's own.
+* **Stop**: a program that leaves the service's process group (`setsid`, a daemonising server) stays in its process
+  tree (the launcher is a child subreaper), so Stop ends it too.
 * **bubblewrap**, when installed and allowed to make user namespaces: a private `/tmp`, PID, IPC and UTS
   namespaces, only the needed folders mounted, every capability dropped, and the service dies with its parent.
 
@@ -40,7 +47,8 @@ namespaces with AppArmor; bubblewrap from the distribution's package has the pro
 
 A Seatbelt profile, passed to `sandbox-exec`, that denies by default and allows the same folders, with every path
 passed as a parameter rather than pasted into the profile. Network: outbound connections only when on, listening only
-on the listed ports, on `127.0.0.1` unless *Other computers* is chosen. Apple marks `sandbox-exec` as deprecated but
+on the listed ports, on `127.0.0.1` unless *Other computers* is chosen. Your Terminal tabs (`/dev/ttys*`) are out
+of reach. Apple marks `sandbox-exec` as deprecated but
 uses the same mechanism for its own services; if it is ever removed, the sandbox reports *not enforced* and services
 don't start in Sandbox mode.
 

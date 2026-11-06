@@ -15,6 +15,7 @@ to the webhooks you set: Discord, Slack, Telegram, Teams, ntfy or any https endp
 
 from __future__ import annotations
 
+import email.utils
 import http.client
 import json
 import queue
@@ -26,6 +27,7 @@ import urllib.parse
 import urllib.request
 from collections import deque
 from dataclasses import asdict, dataclass
+from typing import Any
 
 from pythonator.sdk import Plugin, ServiceEvent, ServiceInfo, ui
 
@@ -94,6 +96,32 @@ def allowed(url: str) -> bool:
     parts = urllib.parse.urlsplit(url.strip())
     local = parts.hostname in ("localhost", "127.0.0.1", "::1")
     return bool(parts.hostname) and (parts.scheme == "https" or (parts.scheme == "http" and local))
+
+
+def retry_after(value: str | None) -> float:
+    """Seconds to wait from a Retry-After header (seconds or an HTTP date), 1 to 60."""
+    if not value:
+        return 5.0
+    try:
+        seconds = float(value)
+    except ValueError:
+        try:
+            seconds = email.utils.parsedate_to_datetime(value).timestamp() - time.time()
+        except (TypeError, ValueError):
+            seconds = 5.0
+    return max(1.0, min(60.0, seconds))
+
+
+class _HttpsRedirects(urllib.request.HTTPRedirectHandler):
+    """Follow a redirect only to an address an alert may go to (https), never down to plain http."""
+
+    def redirect_request(self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str) -> Any:
+        if not allowed(newurl):
+            raise urllib.error.HTTPError(newurl, code, "redirected to a plain http address", headers, fp)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_OPENER = urllib.request.build_opener(_HttpsRedirects)
 
 
 # -- health checks -------------------------------------------------------------------------------------------
@@ -370,24 +398,30 @@ class Notify(Plugin):
     def _deliver(self) -> None:
         while True:
             url, title, body = self.outbox.get()
-            data, ctype = payload(url, title, body)
-            host = urllib.parse.urlsplit(url).hostname
-            for attempt in range(3):
-                try:
-                    req = urllib.request.Request(url, data=data, headers={"Content-Type": ctype,  # noqa: S310
-                                                                          "User-Agent": "Pythonator-Notify"})
-                    with urllib.request.urlopen(req, timeout=15):  # noqa: S310 - https only, checked above
-                        break
-                except urllib.error.HTTPError as exc:
-                    if exc.code == 429:
-                        time.sleep(min(60.0, float(exc.headers.get("Retry-After", "5") or 5)))
-                        continue
-                    self.log(f"{host} refused the alert: HTTP {exc.code}")
-                    break
-                except (urllib.error.URLError, TimeoutError, OSError) as exc:
-                    if attempt == 2:
-                        self.log(f"Couldn't reach {host}: {exc}")
-                    time.sleep(2 ** attempt)
+            try:
+                self._post(url, title, body)
+            except Exception as exc:  # one bad alert never stops the ones after it
+                self.log(f"Couldn't send an alert: {exc}")
+
+    def _post(self, url: str, title: str, body: str) -> None:
+        data, ctype = payload(url, title, body)
+        host = urllib.parse.urlsplit(url).hostname
+        for attempt in range(3):
+            try:
+                req = urllib.request.Request(url, data=data, headers={"Content-Type": ctype,  # noqa: S310
+                                                                      "User-Agent": "Pythonator-Notify"})
+                with _OPENER.open(req, timeout=15):  # https only, checked above and on every redirect
+                    return
+            except urllib.error.HTTPError as exc:
+                if exc.code == 429:
+                    time.sleep(retry_after(exc.headers.get("Retry-After")))
+                    continue
+                self.log(f"{host} refused the alert: HTTP {exc.code}")
+                return
+            except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                if attempt == 2:
+                    self.log(f"Couldn't reach {host}: {exc}")
+                time.sleep(2 ** attempt)
 
     # -- health checks ------------------------------------------------------------------------------------
 

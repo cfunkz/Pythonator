@@ -46,7 +46,7 @@ from ..core.store import write_atomic
 from . import theme
 from .findbar import FindBar
 from .icons import LANG, TINT, FileIcons, icon
-from .widgets import label, tabs
+from .widgets import ask, label, tabs, warn
 
 MAX_EDIT = 20 * 1024 * 1024  # bigger files open read only, without highlighting
 
@@ -173,7 +173,8 @@ class CodeEditor(QsciScintilla):
         self.SendScintilla(QsciScintilla.SCI_SETIDLESTYLING, QsciScintilla.SC_IDLESTYLING_ALL)
         self.SendScintilla(QsciScintilla.SCI_SETLAYOUTCACHE, QsciScintilla.SC_CACHE_PAGE)
         self.read_only = False
-        size = path.stat().st_size
+        stat = path.stat()
+        size, self.mtime = stat.st_size, stat.st_mtime_ns  # to notice a change made outside (a pull, a plugin)
         with path.open("rb") as f:
             data = f.read(MAX_EDIT)
         lexer = _lexer_for(path) if size < MAX_EDIT else None
@@ -196,12 +197,22 @@ class CodeEditor(QsciScintilla):
         self.zoom(font_size)
         self.setModified(False)
 
-    def save(self) -> None:
+    def changed_on_disk(self) -> bool:
+        try:
+            return self.path.stat().st_mtime_ns != self.mtime
+        except OSError:
+            return False  # deleted: saving puts it back
+
+    def save(self) -> bool:
+        """Write the file; False when it is read only (nothing was written)."""
         if self.read_only:
-            return
+            return False
         write_atomic(self.path, self.text())  # exactly what is shown: the file's own line endings, no translation
+        with contextlib.suppress(OSError):
+            self.mtime = self.path.stat().st_mtime_ns
         self.setModified(False)
         self.SendScintilla(QsciScintilla.SCI_SETSAVEPOINT)
+        return True
 
     def zoom(self, size: int) -> None:
         """Show the text at ``size`` points: Scintilla's zoom, which scales every style and the margins alike."""
@@ -233,7 +244,6 @@ class FileTree(QWidget):
     """The service's folder: under the service list, so the editor and console get the full width."""
 
     open_file = pyqtSignal(Path)
-    status = pyqtSignal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -327,7 +337,7 @@ class FileTree(QWidget):
             return None
         problem = _bad_name(name)
         if problem:
-            QMessageBox.warning(self, f"New {what}", problem)
+            warn(self, f"New {what}", problem)
             return None
         return folder / name
 
@@ -339,7 +349,7 @@ class FileTree(QWidget):
             with path.open("x", encoding="utf-8"):
                 pass
         except OSError as exc:
-            QMessageBox.warning(self, "New file", str(exc))
+            warn(self, "New file", str(exc))
             return
         self.open_file.emit(path)
 
@@ -349,7 +359,7 @@ class FileTree(QWidget):
             try:
                 path.mkdir()
             except OSError as exc:
-                QMessageBox.warning(self, "New folder", str(exc))
+                warn(self, "New folder", str(exc))
 
     def reveal(self) -> None:
         if self.root:
@@ -416,12 +426,14 @@ class EditorPanel(QWidget):
                 self.tabs.setCurrentIndex(i)
                 return
         try:
-            if b"\0" in path.read_bytes()[:8192]:
+            with path.open("rb") as f:  # only the start: a log of gigabytes must not be read to check it
+                head = f.read(8192)
+            if b"\0" in head:
                 self.status.emit(f"{path.name} looks like a binary file; not opened")
                 return
             editor = CodeEditor(path, self.font_size)
         except OSError as exc:
-            QMessageBox.warning(self, "Can't open", str(exc))
+            warn(self, "Can't open", str(exc))
             return
         editor.modificationChanged.connect(lambda _m, e=editor: self._title(e))
         editor.textChanged.connect(lambda e=editor: self.findbar.text_changed() if e is self.current() else None)
@@ -442,7 +454,7 @@ class EditorPanel(QWidget):
         if editor.encoding_note:
             self.status.emit(f"{path.name} {editor.encoding_note}")
         elif editor.read_only:
-            self.status.emit(f"{path.name} is over 20 MB: opened read only")
+            self.status.emit(f"{path.name} is over 20 MB: showing its first 20 MB, read only")
 
     def open_dialog(self) -> None:
         name, _ = QFileDialog.getOpenFileName(self, "Open file", self.files.root or str(Path.home()))
@@ -468,25 +480,39 @@ class EditorPanel(QWidget):
 
     def save(self) -> None:
         ed = self.current()
-        if ed is None:
-            return
+        if ed is not None:
+            self._save(ed)
+
+    def _save(self, ed: CodeEditor) -> bool:
+        """Save ``ed``, asking first if the file changed on disk since it was opened. False if it wasn't saved."""
+        if ed.read_only:
+            self.status.emit(f"{ed.path.name} is read only here: not saved")
+            return False
+        if ed.changed_on_disk():
+            answer = ask(
+                self, "Changed on disk", f"{ed.path.name} changed on disk since you opened it (a pull, a plugin, "
+                "the service). Save over those changes?",
+                QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Cancel)
+            if answer != QMessageBox.StandardButton.Save:
+                return False
         try:
             ed.save()
-            self.status.emit(f"Saved {ed.path.name}")
         except OSError as exc:
-            QMessageBox.warning(self, "Can't save", str(exc))
+            warn(self, "Can't save", str(exc))
+            return False
+        self.status.emit(f"Saved {ed.path.name}")
+        return True
 
     def close_tab(self, index: int) -> None:
         ed = self.tabs.widget(index)
         if isinstance(ed, CodeEditor) and ed.isModified():
-            answer = QMessageBox.question(self, "Unsaved changes", f"Save {ed.path.name}?",
+            answer = ask(self, "Unsaved changes", f"Save {ed.path.name}?",
                                           QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard
                                           | QMessageBox.StandardButton.Cancel)
             if answer == QMessageBox.StandardButton.Cancel:
                 return
-            if answer == QMessageBox.StandardButton.Save:
-                with contextlib.suppress(OSError):
-                    ed.save()
+            if answer == QMessageBox.StandardButton.Save and not self._save(ed):
+                return  # the edits stay open rather than lost
         self.tabs.removeTab(index)
         if ed is not None:
             ed.deleteLater()

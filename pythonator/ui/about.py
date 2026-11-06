@@ -18,7 +18,6 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QHeaderView,
     QLabel,
-    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -29,7 +28,7 @@ from PyQt6.QtWidgets import (
 from .. import __version__
 from ..core import sysinfo
 from . import theme
-from .widgets import label, scroll
+from .widgets import info, label, scroll, warn
 
 REPO = "https://github.com/cfunkz/Pythonator"
 SITE = "https://cfunkz.github.io/Pythonator"
@@ -335,7 +334,7 @@ class SystemCheckDialog(QDialog):
         from ..isolation import windows
 
         bridge = _Found(self)
-        bridge.done.connect(lambda ok, message: (QMessageBox.information if ok else QMessageBox.warning)(
+        bridge.done.connect(lambda ok, message: (info if ok else warn)(
             self, "Sandboxes", str(message)))
 
         def work() -> None:  # waits for the administrator prompt, off the window's thread

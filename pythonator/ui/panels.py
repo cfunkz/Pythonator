@@ -39,6 +39,7 @@ from PyQt6.QtWidgets import (
 from ..sdk import ICONS
 from . import icons, theme
 from .widgets import label
+from .widgets import tip as as_tip
 
 Action = Callable[[str, str, str], None]  # plugin, action, value
 MAX_INPUT = 16_000
@@ -166,14 +167,14 @@ class FitButton(QPushButton):
         shown = self.fontMetrics().elidedText(self.full, Qt.TextElideMode.ElideRight, max(12, self.width() - 38))
         if shown != self.text():
             super().setText(shown)
-        self.setToolTip(self.full if shown != self.full else "")
+        self.setToolTip(as_tip(self.full) if shown != self.full else "")
 
 
 def icon_button(name: str, tip: str) -> QToolButton:
     """A small icon-only button; ``tip`` says what it does (its tooltip and accessible name)."""
     button = QToolButton()
     button.setIcon(icons.icon(name))
-    button.setToolTip(tip)
+    button.setToolTip(as_tip(tip))
     button.setAccessibleName(tip)
     button.setAutoRaise(True)
     button.setFixedSize(30, 28)
@@ -602,7 +603,7 @@ def fill_table(table: QTableWidget, node: dict[str, Any]) -> None:
                 if item.foreground().color() != color:
                     item.setForeground(color)
                 if len(cell) > 60:
-                    item.setToolTip(cell[:2000])
+                    item.setToolTip(as_tip(cell[:2000]))
         if fresh and rows:
             table.resizeColumnsToContents()
             hh = table.horizontalHeader()

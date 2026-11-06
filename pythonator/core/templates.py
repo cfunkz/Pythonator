@@ -236,8 +236,11 @@ def catalog() -> list[dict[str, Any]]:
     """For the plugin: each template, and whether this computer has what it needs (the program, and a Node.js
     the framework supports)."""
     out = []
+    checked: dict[tuple[str, str], tuple[str, str]] = {}  # many templates need the same program: look once
     for t in TEMPLATES.values():
-        missing, how = _missing(t)
+        if (t.needs, t.engines) not in checked:
+            checked[(t.needs, t.engines)] = _missing(t)
+        missing, how = checked[(t.needs, t.engines)]
         out.append({"key": t.key, "label": t.label, "tool": t.tool, "port": t.port, "kind": t.kind,
                     "group": t.group, "ready": not missing, "needs": missing, "how": how})
     return out

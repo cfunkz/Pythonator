@@ -46,14 +46,22 @@ exact lines to replace
 new lines
 >>>>>>> END
 
-To create a new file, leave the part before ======= empty. Use as many blocks as needed. The user reviews every \
-change before anything is written. Pythonator refuses changes to scripts and programs (.sh, .bat, .ps1, .exe...), \
-to secret files, changes that empty a file, and code that runs shell commands, deletes files or evaluates strings.
+Every block ends with its own >>>>>>> END line. The marker lines only frame a block: never write them in the new \
+lines, never nest blocks, and don't wrap blocks in ``` fences. (If a file already holds stray marker lines, copy \
+them into the part to replace, and leave them out of the new lines, to remove them.) Keep the part to replace short: \
+only the lines that change and a line or two around them, copied character for character with the same \
+indentation, never "..." for skipped lines. For several changes to one file, write one block per change, in file \
+order. To create a new file, leave the part before ======= empty. The user reviews every change before anything is \
+written. Pythonator refuses changes to scripts and programs (.sh, .bat, .ps1, .exe...), to secret files, changes \
+that empty a file, and code that runs shell commands, deletes files or evaluates strings.
 
 Answer in plain text with short paragraphs; use ``` fences for code that isn't an edit block."""
 
-_EDIT = re.compile(r"^<<<<<<< EDIT[ \t]+(?P<path>[^\n]+?)[ \t]*\n(?P<old>.*?)^=======[ \t]*\n(?P<new>.*?)"
-                   r"^>>>>>>> END[ \t]*$", re.MULTILINE | re.DOTALL)
+_HEAD = re.compile(r"^[ \t]*<{7}[ \t]*(?P<word>EDIT|SEARCH|FILE|UPDATE)?\b[ \t:]*(?P<path>[^\n]*?)[ \t]*$", re.I)
+_SEP = re.compile(r"^[ \t]*={7}[ \t]*$")
+_END = re.compile(r"^[ \t]*>{7}(?:[ \t]+\S.*)?[ \t]*$")
+MARKER = re.compile(r"^[ \t]*(?:<{7}(?:[ \t]|$)|={7}[ \t]*$|>{7}(?:[ \t]|$))", re.M)
+MAX_SPLITS = 40  # how many ways to read one block are tried (a block that quotes markers has several)
 
 
 @dataclass
@@ -63,15 +71,110 @@ class Edit:
     new: str
 
 
-def parse_edits(answer: str) -> dict[str, list[Edit]]:
+def parse_edits(answer: str, shown: dict[str, str] | None = None) -> dict[str, list[Edit]]:
     """Edit blocks by file, in order. Paths that aren't plainly relative are dropped (the host checks again)."""
+    return parse_answer(answer, shown)[0]
+
+
+def parse_answer(answer: str, shown: dict[str, str] | None = None) -> tuple[dict[str, list[Edit]], list[str]]:
+    """Edit blocks by file, in order, and a note for each block that couldn't be read.
+
+    Models get the format a little wrong: a missing ``>>>>>>> END`` (the next block, or the end of the answer,
+    closes it), ``>>>>>>> REPLACE`` instead of END, markers indented or inside a ``` fence. Those are read as
+    meant. What is never accepted is new text holding a marker line: written to the file, that breaks it (a model
+    that drops one END would otherwise write the next block's markers into the file). When the text to replace
+    itself holds marker lines (fixing a file that already has them), ``shown`` (the files the model saw) picks the
+    reading whose text to replace is really in a file."""
+    lines = answer.replace("\r\n", "\n").split("\n")
+    texts = [t.replace("\r\n", "\n") for t in (shown or {}).values()]
     out: dict[str, list[Edit]] = {}
-    for m in _EDIT.finditer(answer):
-        path = m.group("path").strip().strip("`\"'").replace("\\", "/")
-        if not path or path.startswith(("/", "~")) or ".." in path.split("/") or re.match(r"^[A-Za-z]:", path):
+    notes: list[str] = []
+    i = 0
+    while i < len(lines):
+        head = _HEAD.match(lines[i])
+        if not head or not (head.group("word") or head.group("path")):
+            i += 1
             continue
-        out.setdefault(path.removeprefix("./"), []).append(Edit(path, m.group("old"), m.group("new")))
-    return out
+        path = _clean_path(head.group("path")) or _path_before(lines, i)
+        picked = _read_block(lines, i, texts)
+        if picked is None:
+            notes.append(f"An edit for {path or 'a file'} was left out: it isn't a whole edit block (it needs "
+                         "=======, then >>>>>>> END). Ask again.")
+            i += 1
+            continue
+        old, new, i = picked
+        if not path:
+            notes.append("An edit was left out: it doesn't say which file it changes. Ask again and name the file.")
+            continue
+        if path.startswith(("/", "~")) or ".." in path.split("/") or re.match(r"^[A-Za-z]:", path):
+            continue
+        out.setdefault(path.removeprefix("./"), []).append(Edit(path, old, new))
+    return out, notes
+
+
+def _clean_path(raw: str) -> str:
+    path = re.sub(r"\s+\(.*\)$", "", raw.strip()).strip().strip("`\"'*").strip().replace("\\", "/")
+    return "" if not path or (" " in path and "." not in path) else path
+
+
+def _path_before(lines: list[str], i: int) -> str:
+    """The file named just above a block that has no path (``src/app.py`` then ```, then ``<<<<<<< SEARCH``)."""
+    for line in reversed(lines[max(0, i - 3):i]):
+        if line.strip().startswith("```"):
+            continue
+        text = line.strip().strip("`*#:").strip()
+        if text and " " not in text and ("." in text or "/" in text):
+            return _clean_path(text)
+        if text:
+            break
+    return ""
+
+
+def _read_block(lines: list[str], start: int, texts: list[str]) -> tuple[str, str, int] | None:
+    """``(old, new, next line)`` for the block whose header is ``lines[start]``, or None if none fits."""
+    n = len(lines)
+    marks = [0] * (n + 1)  # marks[x]: marker lines before line x
+    for x, line in enumerate(lines):
+        marks[x + 1] = marks[x] + bool(MARKER.match(line))
+    seps = [j for j in range(start + 1, n) if _SEP.match(lines[j])][:MAX_SPLITS]
+    ends = [(k, k + 1) for k in range(start + 1, n) if _END.match(lines[k])][:MAX_SPLITS]
+    # No END: a closing ``` fence, the next block's header or the end of the answer closes it (and isn't used up).
+    # An END is tried first, so new text that holds ``` (a Markdown file) is kept whole.
+    others = [(k, k) for k in range(start + 1, n) if _HEAD.match(lines[k]) or lines[k].strip() == "```"]
+    closes = sorted(ends) + sorted({*others[:MAX_SPLITS], (_trim_end(lines, n), n)})
+    plain: list[tuple[int, int, int]] = []
+    marked: list[tuple[int, int, int]] = []
+    for k, after in closes:
+        for j in seps:
+            if j >= k:
+                break
+            if marks[k] - marks[j + 1]:
+                continue  # new text with a marker line: never
+            (marked if marks[j] - marks[start + 1] else plain).append((j, k, after))
+
+    def block(j: int, k: int, after: int) -> tuple[str, str, int]:
+        return _join(lines[start + 1:j]), _join(lines[j + 1:k]), after
+
+    for candidate in plain:  # the usual block: the first that reads cleanly
+        found = block(*candidate)
+        if not texts or not found[0].strip() or any(_holds(t, found[0]) for t in texts):
+            return found
+    for candidate in reversed(marked):  # it quotes markers: the longest that is really in a file
+        found = block(*candidate)
+        if any(_holds(t, found[0]) for t in texts):
+            return found
+    return block(*plain[0]) if plain else None
+
+
+def _trim_end(lines: list[str], end: int) -> int:
+    """The end of an answer without its closing ``` fence and blank lines."""
+    while end > 0 and (not lines[end - 1].strip() or lines[end - 1].strip().startswith("```")):
+        end -= 1
+    return end
+
+
+def _join(lines: list[str]) -> str:
+    return "".join(line + "\n" for line in lines)
 
 
 PLACEHOLDER = re.compile(r"^(?:path/to/|your[_-]?|some[_-]?|example/|<)|^(?:file|filename|script)\.\w+$", re.I)
@@ -79,12 +182,16 @@ PLACEHOLDER = re.compile(r"^(?:path/to/|your[_-]?|some[_-]?|example/|<)|^(?:file
 
 def resolve_paths(edits: dict[str, list[Edit]], known: list[str],
                   shown: dict[str, str]) -> tuple[dict[str, list[Edit]], list[str]]:
-    """Edit blocks moved to the file they mean, and notes. A path the service doesn't have is taken as the one
-    file of that name, or as the one file shown to the model that holds every text to replace (a model often
-    writes ``path/to/file.py``). A placeholder that matches nothing is dropped: it would create that file. Text to
-    replace that differs from the file only in trailing spaces or line ends is replaced by the file's own text, so
-    Pythonator, which only replaces exact text, finds it."""
-    out: dict[str, list[Edit]] = {}
+    """Edit blocks moved to the file they mean, checked against that file, and notes.
+
+    A path the service doesn't have is taken as the one file of that name, or as the one file shown to the model
+    that holds every text to replace (a model often writes ``path/to/file.py``). A placeholder that matches nothing
+    is dropped: it would create that file. Text to replace that differs from the file only in trailing spaces,
+    line ends or indentation is replaced by the file's own text (and the new text is indented to match), so
+    Pythonator, which only replaces exact text, finds it. Then every edit of a file that was shown is tried on it,
+    in order, as Pythonator will: if one can't be done, the file's change isn't offered and a note says why (a
+    Review button for a change that can only be refused helps no one)."""
+    merged: dict[str, list[Edit]] = {}
     notes: list[str] = []
     for path, items in edits.items():
         real = _real_path(path, items, known, shown)
@@ -94,15 +201,92 @@ def resolve_paths(edits: dict[str, list[Edit]], known: list[str],
             continue
         if real != path:
             notes.append(f"The edit for {path} is for {real}: the text it replaces is there.")
-        text = shown.get(real, "").replace("\r\n", "\n")
         for edit in items:
-            fixed = edit
-            if text and edit.old.strip() and text.count(edit.old.replace("\r\n", "\n")) != 1 \
-                    and (span := loose_span(text, edit.old)):
-                end = span[1] + (1 if edit.old.endswith("\n") and span[1] < len(text) else 0)
-                fixed = Edit(edit.path, text[span[0]:end], edit.new)
-            out.setdefault(real, []).append(fixed)
+            if not any(e.old == edit.old and e.new == edit.new for e in merged.get(real, [])):  # said twice
+                merged.setdefault(real, []).append(edit)
+    out: dict[str, list[Edit]] = {}
+    for real, items in merged.items():
+        if real not in shown:
+            out[real] = items  # not shown to the model: Pythonator checks it when you review it
+            continue
+        fitted, why = _fit_all(real, shown[real], items)
+        if why:
+            notes.append(f"The change to {real} isn't offered: {why}. Ask again; the assistant then sees the file "
+                         "as it is now.")
+        else:
+            out[real] = fitted
     return out, notes
+
+
+CUT = "\n… (cut at 256 KB)"
+STAND_IN = re.compile(r"\[secret removed\]|\[[A-Za-z_][A-Za-z0-9_]* hidden\]")
+
+
+def _fit_all(path: str, shown: str, items: list[Edit]) -> tuple[list[Edit], str]:
+    """The edits made to fit the file, tried in order as Pythonator applies them, or why one doesn't fit."""
+    text = shown.replace("\r\n", "\n")
+    cut = text.endswith(CUT)
+    if cut:
+        text = text[:-len(CUT)]
+    out: list[Edit] = []
+    for n, edit in enumerate(items, 1):
+        which = f"edit {n} of {len(items)}" if len(items) > 1 else "the edit"
+        old = edit.old.replace("\r\n", "\n")
+        if not old.strip():
+            if len(items) == 1 and not cut and edit.new.strip():
+                out.append(Edit(edit.path, text, edit.new))  # the whole file, written again
+                text = edit.new
+                continue
+            return [], f"{which} doesn't say which text of {path} it replaces"
+        fitted = fit(text, Edit(edit.path, old, edit.new))
+        if isinstance(fitted, str):
+            if cut:  # it may be in the part the assistant didn't see: Pythonator checks it on review
+                return items, ""
+            hidden = " (it holds a value that was hidden from the assistant)" if STAND_IN.search(old) else ""
+            return [], f"{which}: {fitted}{hidden}"
+        if len(STAND_IN.findall(fitted.new)) > len(STAND_IN.findall(fitted.old)):
+            return [], f"{which} would write a stand-in for a hidden value over the real one"
+        out.append(fitted)
+        text = text.replace(fitted.old, fitted.new, 1)
+    return out, ""
+
+
+def fit(text: str, edit: Edit) -> Edit | str:
+    """``edit`` with its text to replace exactly as ``text`` (``\\n`` line ends) has it, or why it can't be."""
+    old = edit.old
+    count = text.count(old)
+    if count == 1:
+        return edit
+    if count > 1:
+        return "the text it replaces is in the file more than once"
+    span = loose_span(text, old)
+    new = edit.new
+    if span is None:
+        span = loose_span(text, old, indent=True)
+        if span is not None:
+            new = _reindent(edit.new, old, text[span[0]:span[1]])
+    if span is None:
+        return "the text it replaces isn't in the file"
+    end = span[1] + (1 if old.endswith("\n") and span[1] < len(text) else 0)
+    return Edit(edit.path, text[span[0]:end], new)
+
+
+def _reindent(new: str, old: str, real: str) -> str:
+    """``new`` with the indentation the file uses where the model's (re-indented) ``old`` is."""
+    def first(text: str) -> str:
+        line = next((x for x in text.split("\n") if x.strip()), "")
+        return line[:len(line) - len(line.lstrip())]
+
+    have, want = first(old), first(real)
+    if have == want:
+        return new
+    lines = new.split("\n")
+    if want.startswith(have):
+        return "\n".join(want[len(have):] + x if x.strip() else x for x in lines)
+    if have.startswith(want):
+        cut = have[len(want):]
+        return "\n".join(x[len(cut):] if x.startswith(cut) else x for x in lines)
+    return new
 
 
 def _real_path(path: str, items: list[Edit], known: list[str], shown: dict[str, str]) -> str | None:
@@ -123,17 +307,20 @@ def _real_path(path: str, items: list[Edit], known: list[str], shown: dict[str, 
 
 def _holds(text: str, old: str) -> bool:
     flat = text.replace("\r\n", "\n")
-    return flat.count(old.replace("\r\n", "\n")) == 1 or loose_span(flat, old) is not None
+    return (flat.count(old.replace("\r\n", "\n")) == 1 or loose_span(flat, old) is not None
+            or loose_span(flat, old, indent=True) is not None)
 
 
-def loose_span(text: str, old: str) -> tuple[int, int] | None:
-    """Where ``old`` is in ``text`` (``\\n`` line ends) once trailing spaces are ignored, if exactly once: the
-    ``(start, end)`` of those whole lines, without the last line end. None otherwise."""
-    want = [line.rstrip() for line in old.replace("\r\n", "\n").strip("\n").split("\n")]
+def loose_span(text: str, old: str, indent: bool = False) -> tuple[int, int] | None:
+    """Where ``old`` is in ``text`` (``\\n`` line ends) once trailing spaces (and with ``indent``, leading ones)
+    are ignored, if exactly once: the ``(start, end)`` of those whole lines, without the last line end. None
+    otherwise."""
+    tidy = str.strip if indent else str.rstrip
+    want = [tidy(line) for line in old.replace("\r\n", "\n").strip("\n").split("\n")]
     if not any(want):
         return None
     lines = text.split("\n")
-    flat = [line.rstrip() for line in lines]
+    flat = [tidy(line) for line in lines]
     found = [i for i in range(len(lines) - len(want) + 1) if flat[i:i + len(want)] == want]
     if len(found) != 1:
         return None
@@ -145,14 +332,14 @@ def loose_span(text: str, old: str) -> tuple[int, int] | None:
 def split_answer(answer: str) -> list[tuple[str, str]]:
     """``[("text"|"code"|"edit", text)]`` for showing an answer: edit blocks and ``` fences become code."""
     parts: list[tuple[str, str]] = []
-    pattern = re.compile(r"(^<<<<<<< EDIT.*?^>>>>>>> END[ \t]*$|^```[^\n]*\n.*?^```[ \t]*$)",
+    pattern = re.compile(r"(^[ \t]*<{7}[ \t]*\S[^\n]*\n.*?(?:^[ \t]*>{7}[^\n]*$|\Z)|^```[^\n]*\n.*?^```[ \t]*$)",
                          re.MULTILINE | re.DOTALL)
     last = 0
     for m in pattern.finditer(answer):
         if m.start() > last:
             parts.append(("text", answer[last:m.start()]))
         block = m.group(0)
-        if block.startswith("<<<<<<<"):
+        if block.lstrip().startswith("<<<<<<<"):
             parts.append(("edit", block))
         else:
             parts.append(("code", "\n".join(block.splitlines()[1:-1])))

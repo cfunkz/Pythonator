@@ -421,7 +421,7 @@ class ServiceDialog(QDialog):
         from ..isolation.base import read_env_file
 
         have = {k for k, _ in self.env.pairs()}
-        added = [(k, v) for k, v in read_env_file(path).items() if k not in have]
+        added = [(k, v) for k, v in read_env_file(path.parent, path.name).items() if k not in have]
         for key, value in added:
             self.env.add(key, value)
         self.error.setText("")

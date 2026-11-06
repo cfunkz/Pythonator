@@ -36,7 +36,14 @@ _NET_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,62}")
 # Variables that change how every program loads code: refused in a service's environment, because a
 # sandbox would still apply them to the runtime itself and they are a common way to hijack a process.
 DANGEROUS_ENV = frozenset({"LD_PRELOAD", "LD_AUDIT", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH",
-                           "DYLD_FRAMEWORK_PATH", "PYTHONINSPECT", "NODE_OPTIONS_PRELOAD"})
+                           "DYLD_FRAMEWORK_PATH", "PYTHONINSPECT"})
+# Variables an env file may not set. The file is in the project folder, which the service can write, and these
+# change which program or library runs outside the sandbox: the sandbox launcher and bubblewrap start with the
+# service's environment, and the docker / podman CLI with a container's.
+HOST_ENV = frozenset({"PATH", "PATHEXT", "COMSPEC", "SYSTEMROOT", "WINDIR", "HOME", "USERPROFILE", "GCONV_PATH",
+                      "LOCPATH", "NLSPATH", "PYTHONHOME", "PYTHONPATH"})
+HOST_ENV_PREFIXES = ("LD_", "DYLD_", "DOCKER_", "BUILDKIT_", "CONTAINER_", "CONTAINERS_", "PODMAN_", "XDG_",
+                     "PYTHONATOR")
 
 
 def _no_controls(text: str, what: str, *, newlines: bool = False) -> str:
@@ -72,6 +79,14 @@ def env_key(value: str) -> str:
         raise ValueError(f"Not a variable name: {value!r} (letters, digits and _, not starting with a digit)")
     if value.upper() in DANGEROUS_ENV:
         raise ValueError(f"{value} changes how programs load code and isn't allowed")
+    return value
+
+
+def env_file_key(value: str) -> str:
+    """A variable an env file may set (:data:`HOST_ENV`)."""
+    key = env_key(value).upper()
+    if key in HOST_ENV or key.startswith(HOST_ENV_PREFIXES):
+        raise ValueError(f"{value} in an env file could change programs that run outside the sandbox")
     return value
 
 

@@ -52,13 +52,11 @@ class Job:
         if sys.platform != "win32":
             return
         handle = int(proc._handle)
-        try:
-            if not _kernel32().AssignProcessToJobObject(self.handle, handle):
-                raise _error("AssignProcessToJobObject")
-        finally:
-            ntdll = ctypes.WinDLL("ntdll")
-            ntdll.NtResumeProcess.argtypes = (ctypes.c_void_p,)
-            ntdll.NtResumeProcess(handle)
+        if not _kernel32().AssignProcessToJobObject(self.handle, handle):
+            raise _error("AssignProcessToJobObject")  # still suspended: the caller ends it, it never runs outside
+        ntdll = ctypes.WinDLL("ntdll")
+        ntdll.NtResumeProcess.argtypes = (ctypes.c_void_p,)
+        ntdll.NtResumeProcess(handle)
 
     def terminate(self) -> None:
         if sys.platform == "win32" and self.handle:

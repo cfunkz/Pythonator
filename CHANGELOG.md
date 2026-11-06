@@ -2,6 +2,94 @@
 
 Pythonator follows [semantic versioning](https://semver.org/). Each release lists what changed for users.
 
+## 0.0.16
+
+A full audit of security, speed and use. Each finding was checked against the code, most reproduced, then fixed.
+
+**Sandbox: nothing a service writes in its own folder gets it out**
+
+- A pull (Pull from Git, or *pull before every start*) runs git as you, in a folder the sandboxed service can write.
+  The service could put `core.sshCommand` or a filter driver in `.git/config` and have it run outside the sandbox.
+  Now a pull refuses a checkout whose own config holds anything but plain settings, and says which ones. Git's
+  empty hooks folder moved from the shared temp folder into Pythonator's private one. A sandboxed service must be
+  stopped to pull.
+- The version check before a start ran the project's `.venv` Python with `--version`, outside the sandbox. It now
+  reads the version from `pyvenv.cfg`.
+- `pyvenv.cfg`'s `home` (or a link in `.venv`) could point the sandbox at any of your folders, which it could then
+  read. Only a real Python installation is given to it now.
+- An env file is read only inside the project folder: a `.env` link to `~/.aws/credentials` put your keys in the
+  service's variables. An env file also can't set `PATH`, `LD_*`, `DOCKER_*`, `HOME`, `XDG_*` and the like, which
+  changed the programs that run outside the sandbox (the launcher, bubblewrap, the docker CLI).
+- Variables you started Pythonator with that are named like secrets (`GITHUB_TOKEN`, `AWS_SECRET_ACCESS_KEY`,
+  `*_API_KEY`) no longer reach sandboxed services or plugins. Set them on the service when it needs them. Masking in
+  the console is built from what a start really passes, so a changed `.env` is masked too.
+- A folder that holds keys (`~/.config` holds `gh` and `gcloud`) can't be given to a sandbox.
+- Linux: a sandbox reads only the device files it needs (not cameras, microphones or your terminals); without
+  bubblewrap, or before Linux 6.12 with the network on, it can't open Unix sockets that reach your desktop session
+  (X11). A program that leaves the service's process group (`setsid`) is still ended by Stop: it leaked before.
+- macOS: a sandbox can no longer open your Terminal tabs (`/dev/ttys*`).
+- Compose: a named volume that bind-mounts a folder of your computer (`driver_opts: device`) and the host network
+  by name are refused like a bind mount and `network_mode: host`. Container mode refuses a folder with a comma in
+  its path (it would have read as a second mount source).
+- Windows: a process that couldn't be put in its job object is never resumed.
+
+**Plugins**
+
+- A plugin that stopped reading could freeze the background service: messages to it were written on the main
+  thread. Each plugin now has its own writer; one that falls 2,000 messages behind is stopped.
+- Limits by size as well as count (2 MB a second), on stderr (50 lines a second shown), on log lines (2,000
+  characters), and an unchanged panel isn't sent to the window again.
+- Grants and live mode belong to the code they were given for: removing a plugin clears them, and installing new
+  code over an id, or files that change on disk, start it again off, in test mode, with nothing granted.
+- `read_files` and `propose_changes` refuse a path through a link (`readme.md -> .env`). An edit that touches a
+  hidden value gets the same answer as one that isn't in the file, so a value can't be guessed a character at a
+  time. Proposals can't add CI workflows or npm install scripts, nor `from os import system` and other renamed calls.
+- Notify 1.1.1: a `Retry-After` date no longer stops alerts, and a webhook can't redirect an alert to plain http.
+
+**Background service**
+
+- Typing into a service that doesn't read its input could block the background service; input now has its own
+  thread.
+- Container services start off the main thread: a slow `docker` (Docker Desktop still starting) no longer holds up
+  every other service and the window.
+- Stopping or removing a service while its pull runs no longer starts it anyway.
+- Stats look at the process table once per round instead of once per service, and at the open ports with one call:
+  much less work with many services. `running.json` is written when the set of running services changes,
+  not on every state change.
+- A background service that is shutting down stops listening first; a new one waits for it instead of leaving the
+  window "connecting".
+
+**Window**
+
+- Text from programs, plugins and git is shown as text everywhere: a plugin path like `<img src=/dev/zero>` hung the
+  window.
+- Closing a tab with **Save** whose save fails keeps the tab and says why (the edits were lost). Saving over a file
+  that changed on disk since it was opened (a pull, a plugin) asks first.
+- Console search marks what is on screen and counts the rest: typing in it no longer freezes the window on a long
+  log. A hidden console checks for output 4 times a second instead of 60. White text stays readable on the light
+  theme.
+- Opening a large file reads only its start to check it. **F5** only starts (Ctrl+R restarts).
+- Removed code nobody called.
+
+**AI assistant 1.3.1 and plugin settings**
+
+- AI assistant 1.3.1: a suggested change can no longer write the edit block's own markers (`<<<<<<< EDIT`,
+  `=======`, `>>>>>>> END`) into your file. That happened when a model left out one `>>>>>>> END`: the next block,
+  markers and all, became the new text. Blocks are now read the way models really write them (a missing END,
+  `>>>>>>> REPLACE`, blocks inside ``` fences, `<<<<<<< SEARCH` under the file name), new text that holds a marker
+  is never used, and Pythonator itself refuses any change that adds one (or a stand-in for a hidden secret).
+- AI assistant: each change is tried on the file before it is offered. Text that differs only in trailing spaces,
+  line ends or indentation is matched (the new lines take the file's indentation); a change that could only be
+  refused isn't offered, and the chat says which edit doesn't fit and why. A file whose stray markers broke it can
+  be fixed by asking the assistant: it may quote the markers in the text it replaces. A file gets one **Review**
+  button, from the latest answer that changes it.
+- Plugin settings: long labels wrap onto as many lines as they need. Notify's three-line labels were cut off at
+  the top and bottom; yes/no settings are now a check box with its words beside it.
+
+**From the builder-cleanup patch** (if it isn't in 0.0.15): Pythonator runs once, starting it again brings the window
+to the front; right-click Remove on a builder project can delete its folder too; Project builder 1.4 is smoother and
+can find leftover project folders.
+
 ## 0.0.15
 
 - The plugin dock stays smooth while you resize or move it, even with a long AI chat or a busy Notify panel. A panel

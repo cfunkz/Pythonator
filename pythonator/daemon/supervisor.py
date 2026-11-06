@@ -60,6 +60,7 @@ VENV_LAUNCHER = {101: "it couldn't start the real Python", 103: "the Python the 
                  106: "it couldn't find the venv's pyvenv.cfg", 107: "the venv's pyvenv.cfg is unreadable or wrong"}
 QUEUED = "Starting in turn"  # the note of a service waiting in the start queue
 MAKING_ENV = "Setting up its environment"  # the task that makes a project's own environment
+DISCARDED = "discarded"  # the key suffix of a runner nobody waits for any more (stopped while it started)
 CREATING = "Creating the project"
 # A task's words when it ends well, and when it fails; anything else installs packages.
 TASK_DONE = {"Building images": "Images built", "Pulling images": "Images pulled", "Taking it down": "Taken down",
@@ -79,6 +80,7 @@ class Stats:
     processes: int = 0
     ports: list[int] = field(default_factory=list)
     remote: list[str] = field(default_factory=list)  # outgoing connections, "host:port"
+    procs: list[psutil.Process] = field(default_factory=list)  # the process tree it was measured on
 
 
 @dataclass
@@ -110,6 +112,9 @@ class Slot:
     shell_partial: str = ""
     shell_decoder: codecs.IncrementalDecoder = field(
         default_factory=lambda: codecs.getincrementaldecoder("utf-8")(errors="replace"))
+    removing: bool = False  # on its way out: a second Remove or Delete does nothing
+    pulling: bool = False  # a git pull is running for it
+    after_pull: Callable[[], None] | None = None  # start it once the pull worked (pull on start)
 
 
 class Supervisor:
@@ -118,11 +123,12 @@ class Supervisor:
         self.store = store
         self.settings: Settings = store.load_settings()
         self.slots: dict[str, Slot] = {}
+        self.deleting: set[str] = set()  # folders being deleted in the background (_key): never leftovers
         self.listeners: list[Listener] = []
         self.gate: Callable[[Service, Callable[[str], None]], None] | None = None  # policy plugins
         self.queue: queue.SimpleQueue[Event | Callable[[], None]] = queue.SimpleQueue()
-        self._pids: dict[str, int] = {}  # read by the stats thread (a copy is swapped in, never mutated)
         self._last_second = 0.0
+        self._running_saved: dict[str, list[float]] | None = None  # what running.json holds
         self._launches: list[tuple[str, bool]] = []  # services waiting their turn to start: (id, automatic)
         self._launching: dict[str, float] = {}  # started from the queue and still starting: id -> when
         self._env_waits: set[str] = set()  # waiting for another service to make their shared folder's environment
@@ -136,9 +142,7 @@ class Supervisor:
     def _new_log(self, service: Service) -> ServiceLog:
         log_ = ServiceLog(self.dirs.logs / f"{service.id}.log", max_bytes=self.settings.log_max_mb * 1024 * 1024,
                           backups=self.settings.log_backups)
-        env = dict(service.env)
-        if service.env_file:
-            env.update(isolation.base.read_env_file(Path(service.folder) / service.env_file))
+        env = {**isolation.base.env_file_values(service), **service.env}
         log_.mask = Masker(secrets_of(env))
         return log_
 
@@ -245,7 +249,7 @@ class Supervisor:
         data = item.source.take()  # always: the program may be waiting for it
         sid, _, kind = item.key.partition(":")
         slot = self.slots.get(sid)
-        if slot is None or not data:
+        if slot is None or not data or kind == DISCARDED:
             return
         shell = kind == "shell"  # its own line buffer: its lines and the program's don't cut into each other
         text = (slot.shell_partial if shell else slot.partial) + \
@@ -273,7 +277,7 @@ class Supervisor:
     def _on_exit(self, item: Exited) -> None:
         sid, _, kind = item.key.partition(":")
         slot = self.slots.get(sid)
-        if slot is None:
+        if slot is None or kind == DISCARDED:
             return
         runner = slot.task if kind == "task" else slot.shell if kind == "shell" else slot.runner
         if runner is not None:  # the last of its output, before the exit is reported
@@ -371,8 +375,14 @@ class Supervisor:
 
     def remove(self, sid: str, *, then: Callable[[], None] | None = None, deleted: Path | None = None) -> None:
         """Remove a service (stopped first). Its clean-up (on Windows, taking its sandbox's permissions back file
-        by file) runs in the background, then ``then``: the window and the other services never wait for it."""
+        by file) runs in the background, then ``then``: the window and the other services never wait for it.
+        A service already being removed is left to that removal: asking twice never kills it or errors."""
         slot = self.slot(sid)
+        if slot.removing:
+            return
+        slot.removing = True
+        if slot.service.made_by is not None and deleted is None:  # its folder stays: Refresh can find it later
+            self._remember_made(Path(slot.service.made_by.folder))
         if slot.shell:
             slot.shell.kill()
 
@@ -412,17 +422,133 @@ class Supervisor:
 
     def delete_project(self, sid: str) -> None:
         """Remove a project the Project builder made, and delete its folder (stopped first). Raises ValueError."""
+        if self.slot(sid).removing:  # asked twice (two clicks, two windows): the first one is under way
+            return
         folder = self.project_folder(sid)
         name = self.slot(sid).service.name
+        self._remember_made(folder)  # until it's gone: if a file is held, Refresh finds what's left
+        self.deleting.add(_key(folder))
 
         def delete() -> None:  # in remove's background thread
             error = _delete_tree(folder)
-            self.post(lambda: self.emit({"ev": "notice", "level": "error" if error else "ok",
-                                         "text": f"{name}: couldn't delete {folder}: {error}" if error
-                                         else f"{name}: deleted, with {folder}"}))
+            self.post(lambda: self._deleted(name, [folder], [error] if error else []))
 
         self.emit({"ev": "notice", "level": "info", "text": f"{name}: deleting {folder} in the background…"})
         self.remove(sid, then=delete, deleted=folder)
+
+    def _deleted(self, what: str, folders: list[Path], errors: list[str]) -> None:
+        """After a delete in the background: forget the folders that went, and say how it went. A folder that
+        couldn't go is a warning in the status bar, not a second pop-up: the Project builder's Refresh finds it."""
+        self.deleting.difference_update(_key(f) for f in folders)
+        self._forget_made([f for f in folders if not f.exists()])
+        if errors:
+            self.emit({"ev": "notice", "level": "warn",
+                       "text": f"{what}: couldn't delete {'; '.join(errors[:3])}"
+                               f"{f' and {len(errors) - 3} more' if len(errors) > 3 else ''}. "
+                               "The Project builder's Refresh offers to clean up what's left."})
+        else:
+            gone = str(folders[0]) if len(folders) == 1 else f"{len(folders)} folders"
+            self.emit({"ev": "notice", "level": "ok", "text": f"{what}: deleted, with {gone}"})
+
+    # -- leftovers: project folders no service uses any more ----------------------------------------------
+
+    @property
+    def _made_file(self) -> Path:
+        return self.dirs.root / "made-projects.json"
+
+    def _made(self) -> set[str]:
+        """The folders the Project builder made (normalised), whether or not a service still uses them."""
+        try:
+            data = json.loads(self._made_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return set()
+        return {str(x) for x in data if isinstance(x, str)} if isinstance(data, list) else set()
+
+    def _save_made(self, made: set[str]) -> None:
+        with contextlib.suppress(OSError):
+            write_atomic(self._made_file, json.dumps(sorted(made), indent=1))
+
+    def _remember_made(self, folder: Path) -> None:
+        made = self._made()
+        key = _key(folder)
+        if key and key not in made:
+            self._save_made(made | {key})
+
+    def _forget_made(self, folders: Iterable[Path]) -> None:
+        made = self._made()
+        left = made - {_key(f) for f in folders}
+        if left != made:
+            self._save_made(left)
+
+    def leftover_projects(self, parent: Path) -> list[dict[str, Any]]:
+        """The folders in a projects folder that no service uses any more: ones the Project builder made (a
+        project removed with its folder kept, or a delete a held file stopped halfway), and, in Pythonator's own
+        default projects folder, any. Never a link, a hidden folder, or a folder Pythonator protects. Quick: one
+        listing of ``parent``, nothing inside the folders is read."""
+        from ..core import templates
+
+        try:
+            if not parent.is_absolute() or not parent.is_dir():
+                return []
+            root = parent.resolve()
+            children = sorted(root.iterdir(), key=lambda c: c.name.lower())
+        except OSError:
+            return []
+        used: list[Path] = []
+        for slot in self.slots.values():
+            with contextlib.suppress(OSError, ValueError):
+                used.append(Path(slot.service.folder).resolve())
+        if root in used:  # a service uses the projects folder itself: everything in it is its own
+            return []
+        made = self._made()
+        own = _key(root) == _key(templates.default_parent())
+        out: list[dict[str, Any]] = []
+        for child in children:
+            try:
+                if child.name.startswith(".") or child.is_symlink() or child.is_junction() or not child.is_dir():
+                    continue
+                real = child.resolve()
+            except OSError:
+                continue
+            if any(u == real or u.is_relative_to(real) for u in used) or _key(real) in self.deleting:
+                continue
+            recorded = _key(real) in made
+            if not (recorded or own) or isolation.base.forbidden_write(real, self.dirs):
+                continue
+            out.append({"folder": str(real), "name": child.name, "made": recorded})
+            if len(out) >= 200:
+                break
+        return out
+
+    def delete_leftovers(self, folders: list[str]) -> None:
+        """Delete leftover project folders the user picked, in the background. Each must still be a leftover
+        (:meth:`leftover_projects`), checked again here; nothing is deleted if one isn't. Raises ValueError."""
+        found: dict[str, dict[str, Path]] = {}
+        targets: list[Path] = []
+        for raw in folders:
+            path = Path(raw)
+            if not path.is_absolute():
+                raise ValueError(f"{raw} isn't a full path")
+            listed = found.setdefault(_key(path.parent), {
+                _key(Path(x["folder"])): Path(x["folder"]) for x in self.leftover_projects(path.parent)})
+            target = listed.get(_key(path))
+            if target is None:
+                raise ValueError(f"{raw} isn't a leftover project folder (any more): press Refresh")
+            if target not in targets:
+                targets.append(target)
+        if not targets:
+            return
+        what = "Leftover projects"
+        self.deleting.update(_key(t) for t in targets)
+
+        def delete() -> None:
+            errors = [f"{t}: {e}" for t in targets if (e := _delete_tree(t))]
+            self.post(lambda: self._deleted(what, targets, errors))
+
+        self.emit({"ev": "notice", "level": "info",
+                   "text": f"{what}: deleting {len(targets)} folder{'s' if len(targets) > 1 else ''} in the "
+                           "background…"})
+        threading.Thread(target=delete, name="delete-leftovers", daemon=True).start()
 
     def start(self, sid: str, *, confirmed: bool = False, auto: bool = False) -> None:
         slot = self.slot(sid)
@@ -449,6 +575,9 @@ class Supervisor:
         if verdict:
             self.note(slot, f"Not started: {verdict}")
             self._set(slot, State.FAILED, "blocked", verdict)
+            return
+        if slot.pulling:  # started while git pulls its folder: it starts once the pull is done
+            slot.after_pull = lambda: self._prepare_env(slot)
             return
         if slot.service.git and slot.service.git.pull_on_start:
             self._pull(slot, then=lambda: self._prepare_env(slot))
@@ -512,25 +641,51 @@ class Supervisor:
         service = slot.service
         if not set_up and self._set_up_first(slot, None, lambda: self._launch_after_set_up(slot)):
             return
-        for level, text in envcheck.service_report(service):
-            if level != "ok":
-                self.note(slot, f"{'Problem' if level == 'error' else 'Note'}: {text}")
-        for text in envcheck.port_problems(service):
-            self.note(slot, f"Problem: {text}")
+        if service.mode is not Mode.CONTAINER:
+            self._started(slot, *self._start(service))
+            return
+
+        state = slot.state
+
+        def work() -> None:  # the engine's CLI can take many seconds (Docker Desktop still starting): not here
+            result = self._start(service)
+            self.post(lambda: self._started(slot, *result, state=state))
+
+        threading.Thread(target=work, name=f"start-{service.id}", daemon=True).start()
+
+    def _start(self, service: Service) -> tuple[list[str], Runner | None, str]:
+        """Check, prepare and start ``service`` (any thread): (notes, the runner or None, why it didn't start)."""
+        notes = [f"{'Problem' if level == 'error' else 'Note'}: {text}"
+                 for level, text in envcheck.service_report(service) if level != "ok"]
+        notes += [f"Problem: {text}" for text in envcheck.port_problems(service)]
         try:
             cmd = isolation.prepare(service, self.dirs)
         except (isolation.IsolationError, OSError) as exc:
-            self.note(slot, f"Not started: {exc}")
-            self._set(slot, State.FAILED, "crashed", str(exc))
-            return
+            return [*notes, f"Not started: {exc}"], None, str(exc)
         runner = Runner(service.id, cmd, self.queue, memory_mb=service.memory_mb,  # type: ignore[arg-type]
                         cpu_percent=service.cpu_percent)
         try:
             runner.start()
         except OSError as exc:
-            self.note(slot, f"Couldn't start: {exc}")
-            self._set(slot, State.FAILED, "crashed", str(exc))
+            return [*notes, f"Couldn't start: {exc}"], None, str(exc)
+        return notes, runner, ""
+
+    def _started(self, slot: Slot, notes: list[str], runner: Runner | None, error: str, *,
+                 state: State | None = None) -> None:
+        """``state``: the slot's state when the start began on another thread; it must not have changed since."""
+        if state is not None and (self.slots.get(slot.service.id) is not slot or slot.state is not state
+                                  or slot.runner):
+            if runner is not None:  # stopped or removed while a container started: its exit is no news
+                runner.key = f"{runner.key}:{DISCARDED}"
+                runner.kill()
             return
+        for text in notes:
+            self.note(slot, text)
+        if runner is None:
+            self._set(slot, State.FAILED, "crashed", error)
+            return
+        service, cmd = slot.service, runner.cmd
+        slot.log.mask = Masker(secrets_of({**cmd.env, **isolation.base.env_file_values(service)}))  # as it is now
         slot.runner = runner
         slot.exit_code = None
         slot.started_wall = time.time()
@@ -818,6 +973,7 @@ class Supervisor:
         service = Service.model_validate({**plan.service, "made_by": {"template": key, "folder": str(folder)}})
         parent.mkdir(parents=True, exist_ok=True)
         templates.write_files(folder, plan.files)
+        self._remember_made(folder)
         self.add(service)
         slot = self.slots[service.id]
         self.note(slot, f"New {templates.TEMPLATES[key].label} project in {folder}, made by "
@@ -897,14 +1053,18 @@ class Supervisor:
 
     def pull(self, sid: str) -> None:
         slot = self.slot(sid)
-        if slot.task:
+        if slot.task or slot.pulling:
             raise ValueError("Busy")
         if not (Path(slot.service.folder) / ".git").exists():
             raise ValueError("This service's folder isn't a git checkout")
+        if slot.service.mode is not Mode.FULL and (slot.runner or slot.shell):
+            # git runs as you, outside the sandbox: nothing sandboxed may change the checkout while it does
+            raise ValueError("Stop it first: a sandboxed service can't run while git pulls its folder")
         self._pull(slot, then=None)
 
     def _pull(self, slot: Slot, then: Callable[[], None] | None) -> None:
         self.note(slot, "git pull (fast-forward only)")
+        slot.pulling, slot.after_pull = True, then
         if then is None:
             slot.task_name = "Pulling"
             self.emit(self.state_event(slot, "pulling"))
@@ -915,12 +1075,16 @@ class Supervisor:
                                    on_line=lambda line: self.post(lambda: slot.pending.append(slot.log.write(line))))
                 result = f"Updated {changed}" if changed else "Already up to date"
                 ok = True
-            except git.GitError as exc:
+            except (git.GitError, OSError) as exc:
                 result, ok = f"git pull failed: {exc}", False
 
             def done() -> None:
-                slot.task_name = ""
+                then, slot.after_pull = slot.after_pull, None
+                slot.task_name, slot.pulling = "", False
                 self.note(slot, result)
+                if then is not None and (self.slots.get(slot.service.id) is not slot
+                                         or slot.state is not State.STARTING):
+                    return  # stopped or removed while it pulled
                 if then is not None and ok:
                     then()
                 elif then is not None:
@@ -956,15 +1120,19 @@ class Supervisor:
         n = 0
         while not self._stop.wait(2.0):
             n += 1
-            pids = {s.service.id: s.runner.pid for s in list(self.slots.values()) if s.runner and s.runner.pid}
+            runners = {s.service.id: s.runner for s in list(self.slots.values()) if s.runner and s.runner.pid}
+            pids = {sid: r.pid for sid, r in runners.items()}
+            kids = _children()
+            conns = _connections() if n % 3 == 1 else None
             out: dict[str, Stats] = {}
-            for sid, pid in pids.items():
-                out[sid] = _tree_stats(pid, procs, ports=n % 3 == 1)
+            for sid, runner in runners.items():
+                out[sid] = st = _tree_stats(runner.pid, procs, ports=n % 3 == 1, kids=kids, conns=conns)
+                runner.seen = tuple(st.procs)  # Stop ends these too, even ones that left its process group
             if n % 30 == 0:  # forget processes that ended (cpu_percent needs the same object each time)
                 procs = {k: v for k, v in procs.items() if v.is_running()}
             system = _system_stats()
             if system:
-                system["pythonator"] = _own_stats(procs, set(pids.values()), out.values())
+                system["pythonator"] = _own_stats(procs, set(pids.values()), out.values(), kids)
             self.post(lambda out=out, system=system: self._on_stats(out, system))  # type: ignore[misc]
 
     def _on_stats(self, stats: dict[str, Stats], system: dict[str, Any] | None = None) -> None:
@@ -1003,13 +1171,20 @@ class Supervisor:
     # -- crash safety -------------------------------------------------------------------------------------
 
     def _save_running(self) -> None:
+        """running.json, when the set of running services changed (not on every state change)."""
         running: dict[str, list[float]] = {}
         for sid, slot in self.slots.items():
             if slot.runner and slot.runner.pid:
-                with contextlib.suppress(psutil.Error):
-                    running[sid] = [slot.runner.pid, psutil.Process(slot.runner.pid).create_time()]
+                if not slot.runner.created:
+                    with contextlib.suppress(psutil.Error):
+                        slot.runner.created = psutil.Process(slot.runner.pid).create_time()
+                if slot.runner.created:
+                    running[sid] = [slot.runner.pid, slot.runner.created]
+        if running == self._running_saved:
+            return
         with contextlib.suppress(OSError):
             write_atomic(self.dirs.state_file, json.dumps(running))
+            self._running_saved = running
 
     def reap_orphans(self) -> int:
         """Kill what a crashed earlier daemon left running (same pid *and* start time, so never a reused pid)."""
@@ -1073,7 +1248,8 @@ def _system_stats() -> dict[str, Any]:
         return {}
 
 
-def _own_stats(cache: dict[int, psutil.Process], services: set[int], measured: Iterable[Stats]) -> dict[str, float]:
+def _own_stats(cache: dict[int, psutil.Process], services: set[int], measured: Iterable[Stats],
+               kids: dict[int, list[int]] | None = None) -> dict[str, float]:
     """What Pythonator uses: this background service, its plugins (and anything else it started) and every
     service's process tree, already measured in ``measured``. CPU in percent of one core, memory in bytes."""
     cpu = sum(st.cpu for st in measured)
@@ -1088,27 +1264,58 @@ def _own_stats(cache: dict[int, psutil.Process], services: set[int], measured: I
         children = []
     for child in children:
         if child.pid not in services:
-            st = _tree_stats(child.pid, cache, ports=False)
+            st = _tree_stats(child.pid, cache, ports=False, kids=kids)
             cpu, memory = cpu + st.cpu, memory + st.memory
     return {"cpu": round(cpu, 1), "memory": memory}
 
 
-def _tree_stats(pid: int, cache: dict[int, psutil.Process], *, ports: bool) -> Stats:
-    st = Stats()
+def _children() -> dict[int, list[int]]:
+    """Every process's children, from one pass over the process table (each ``children(recursive=True)`` would
+    make its own)."""
+    kids: dict[int, list[int]] = {}
+    for p in psutil.process_iter(["ppid"]):
+        if (ppid := p.info.get("ppid")) is not None:
+            kids.setdefault(ppid, []).append(p.pid)
+    return kids
+
+
+def _connections() -> dict[int, list[Any]] | None:
+    """Every process's TCP/UDP connections from one call, or None where only each process may be asked (macOS
+    lists other processes' only to root)."""
+    if sys.platform == "darwin":
+        return None
     try:
-        root = cache.get(pid) or cache.setdefault(pid, psutil.Process(pid))
-        tree = [root, *root.children(recursive=True)]
-    except psutil.Error:
-        return st
-    for p in tree:
-        proc = cache.setdefault(p.pid, p)
+        conns = psutil.net_connections(kind="inet")
+    except (psutil.Error, OSError):
+        return None
+    out: dict[int, list[Any]] = {}
+    for c in conns:
+        if c.pid:
+            out.setdefault(c.pid, []).append(c)
+    return out
+
+
+def _tree_stats(pid: int, cache: dict[int, psutil.Process], *, ports: bool,
+                kids: dict[int, list[int]] | None = None, conns: dict[int, list[Any]] | None = None) -> Stats:
+    st = Stats()
+    if kids is None:
+        kids = _children()
+    order, seen = [pid], {pid}
+    for parent in order:  # grows while it is walked: the whole tree, breadth first
+        for child in kids.get(parent, ()):
+            if child not in seen:
+                seen.add(child)
+                order.append(child)
+    for p in order:
         try:
+            proc = cache.get(p) or cache.setdefault(p, psutil.Process(p))
             with proc.oneshot():
                 st.cpu += proc.cpu_percent(None)
                 st.memory += proc.memory_info().rss
             st.processes += 1
+            st.procs.append(proc)
             if ports:
-                for c in proc.net_connections(kind="inet"):
+                for c in conns.get(p, []) if conns is not None else proc.net_connections(kind="inet"):
                     if c.status == psutil.CONN_LISTEN and c.laddr and c.laddr.port not in st.ports:
                         st.ports.append(c.laddr.port)
                     elif c.raddr and c.status == psutil.CONN_ESTABLISHED:
@@ -1221,6 +1428,14 @@ def _remove_env(path: Path, allowed: list[Path]) -> None:
             if attempt == 3:
                 raise
             time.sleep(0.5 * (attempt + 1))
+
+
+def _key(folder: Path) -> str:
+    """A folder as one string, whatever its spelling: resolved, and on Windows without case."""
+    try:
+        return os.path.normcase(str(folder.resolve()))
+    except (OSError, ValueError):
+        return ""
 
 
 def _delete_tree(folder: Path) -> str:

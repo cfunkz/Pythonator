@@ -95,7 +95,3 @@ class Parser:
         if pos < len(text):
             runs.append((text[pos:], self.style.copy()))
         return runs
-
-
-def strip(text: str) -> str:
-    return _ESC.sub("", text)

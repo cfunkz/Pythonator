@@ -54,10 +54,10 @@ def profile(policy: Policy, grants: list[Grant], *, base: str = "") -> tuple[str
         # macOS 13+ checks mapping code separately from reading it: without this dyld can't map any library.
         f"(allow file-map-executable {system})",
         '(deny file-read* file-write* (subpath "/System/Volumes/Data"))',
+        # Not /dev/ttys*: those are your Terminal tabs (their keystrokes). A pty it opens itself is pseudo-tty's.
         '(allow file-read* file-write* (literal "/dev/null") (literal "/dev/zero") (literal "/dev/tty") '
-        '(literal "/dev/dtracehelper") (literal "/dev/ptmx") (regex #"^/dev/ttys[0-9]+$") (regex #"^/dev/fd/"))',
-        '(allow file-ioctl (literal "/dev/dtracehelper") (literal "/dev/ptmx") (literal "/dev/tty") '
-        '(regex #"^/dev/ttys[0-9]+$"))',
+        '(literal "/dev/dtracehelper") (literal "/dev/ptmx") (regex #"^/dev/fd/"))',
+        '(allow file-ioctl (literal "/dev/dtracehelper") (literal "/dev/ptmx") (literal "/dev/tty"))',
     ]
     for g in grants:
         if g.write:

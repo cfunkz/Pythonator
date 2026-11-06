@@ -17,7 +17,7 @@ from pathlib import Path, PurePosixPath
 from ..core import runtimes
 from ..core.models import Mode, Service
 from ..paths import IS_LINUX, quiet_start
-from .base import Command, IsolationError, read_env_file
+from .base import Command, IsolationError, env_file_values
 
 APP = "/app"
 _engine_cache: dict[str, tuple[float, str]] = {}
@@ -113,6 +113,8 @@ def wrap(service: Service, *, task: list[str] | None = None) -> Command:
         return compose.wrap(service, prog, task=task)
     name = container_name(service.id) + ("-task" if task is not None else "")
     folder = Path(service.folder)
+    if "," in str(folder) or '"' in str(folder):  # --mount is comma-separated: ",source=/" would mount another
+        raise IsolationError("Container mode can't use a folder whose path has a comma or a quote in it")
     writable = task is not None or service.sandbox.write_project
     argv = [prog, "run", "--rm", "-i", "--init", "--name", name, "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges", "--pids-limit", "1024",
@@ -145,8 +147,7 @@ def wrap(service: Service, *, task: list[str] | None = None) -> Command:
            "DOCKER_HOST": os.environ.get("DOCKER_HOST", ""), "XDG_RUNTIME_DIR": os.environ.get("XDG_RUNTIME_DIR", "")}
     env = {k: v for k, v in env.items() if v}
     passed = {"PYTHONUNBUFFERED": "1", "FORCE_COLOR": "1"}
-    if service.env_file:
-        passed.update(read_env_file(folder / service.env_file))
+    passed.update(env_file_values(service))
     passed.update(service.env)
     if net.ports:
         passed.setdefault("PORT", str(net.ports[0]))

@@ -224,7 +224,6 @@ def test_ansi_keeps_colours_and_drops_everything_else() -> None:
     runs = ansi.Parser().feed("\x1b[1;31merror\x1b[0m plain\x1b]0;evil title\x07\x1b[2J!")
     assert [t for t, _ in runs] == ["error", " plain", "!"]
     assert runs[0][1].bold and runs[0][1].fg
-    assert ansi.strip("\x1b[32mok\x1b[0m") == "ok"  # noqa: B005 - ansi.strip, not str.strip
 
 
 def test_ansi_across_chunks() -> None:

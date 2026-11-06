@@ -33,11 +33,13 @@ shows the range of commits it moved over, `old..new`.
 | --- | --- |
 | Only `https` and `ssh` | `file://`, `ext::` and the other transports that can run commands are off (`protocol.allow=never`) |
 | Addresses checked first | An address can't start with `-` (no smuggled options) and must look like one of the three forms above; `--` always separates options from the address |
-| Hooks off | `core.hooksPath` points to an empty folder, so a repository can't run its own code on clone or pull |
+| Hooks off | `core.hooksPath` points to an empty folder in Pythonator's private data folder, so a repository can't run its own code on clone or pull |
 | No submodules | `--no-recurse-submodules`: a submodule could point anywhere |
 | No fsmonitor | `core.fsmonitor=false`: a repository's config can't name a program to run |
 | No prompts | `GIT_TERMINAL_PROMPT=0` and no interactive credential helper: a background pull can't hang on a password |
 | No system config | `GIT_CONFIG_NOSYSTEM=1` |
+| The checkout's own config checked | A pull runs as you, in a folder a sandboxed service can write. So its `.git/config` may hold only what git writes itself (remotes, branches, `core.*` basics, `user.name`); anything else, such as `core.sshCommand`, a filter driver or `credential.helper`, stops the pull with its name. Put such settings in your own `~/.gitconfig` |
+| Nothing runs during a pull | A sandboxed service is stopped first (**Stop it first**), so it can't change the checkout while git works in it |
 
 The clone itself runs as you, as git always does. Its code doesn't run until you start the service, in the mode
 you choose.

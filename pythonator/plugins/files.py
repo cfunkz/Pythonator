@@ -86,7 +86,14 @@ _BLOCK = [(re.compile(p, re.IGNORECASE), why) for p, why in [
     (r"(?<![\w.])(eval|exec)\s*\(|\b__import__\s*\(|\bcompile\s*\([^)]*['\"]exec['\"]|\bnew\s+Function\s*\(|"
      r"\bvm\.runIn\w*", "evaluates code from text"),
     (r"\bctypes\b|\bcffi\b|\bwinreg\b|\b_winapi\b|\bmsvcrt\b", "calls the operating system directly"),
+    (r"\bfrom\s+(os|shutil|pty)\s+import\b", "imports process or file-deleting calls under another name"),
+    (r"\bgetattr\s*\([^)]*['\"]\s*\+|\b__builtins__\b|\bbuiltins\.", "looks up a function by a built-up name"),
+    (r"['\"](pre|post)?(install|prepare|prepublish)['\"]\s*:", "adds a script npm runs on Install"),
 ]]
+# Never in an added line: an edit block's own markers (a model that gets the format wrong would otherwise write
+# them into the file and break it), or the stand-in for a hidden value (it would overwrite the real secret).
+_LEFTOVER = re.compile(r"^[ \t]*(?:<{7}[ \t]+(?:EDIT|SEARCH)\b.*|={7}[ \t]*|>{7}[ \t]+(?:END|REPLACE)\b.*)$"
+                       r"|\[secret removed\]|\[[A-Za-z_][A-Za-z0-9_]* hidden\]", re.MULTILINE)
 # Added lines matching these are allowed, with a warning in the review window.
 _WARN = [(re.compile(p, re.IGNORECASE), why) for p, why in [
     (r"https?://", "adds a web address"),
@@ -155,9 +162,15 @@ def clean_rel(raw: str) -> str:
 
 
 def resolve(folder: Path, rel: str) -> Path:
+    """``rel`` in the folder. No part of it may be a link: the service can make links in its folder, and the
+    rules here (secrets, scripts) are about the name asked for, not where a link leads (readme.md -> .env)."""
     root = folder.resolve()
-    target = (root / rel).resolve()
-    if not target.is_relative_to(root):
+    target = root
+    for part in PurePosixPath(rel).parts:
+        target = target / part
+        if target.is_symlink():
+            raise FileRefused(f"{rel} goes through a link, so plugins can't use it")
+    if not target.resolve().is_relative_to(root):
         raise FileRefused("That path leads outside the service's folder")
     return target
 
@@ -171,6 +184,16 @@ class ServiceFiles:
         # Longest first, so a value that contains another is blanked whole.
         self.values = sorted(((k, v) for k, v in (env_values or {}).items() if len(v) >= 6),
                              key=lambda kv: -len(kv[1]))
+
+    def _touches_hidden(self, text: str, start: int, length: int) -> bool:
+        """Whether text[start:start + length] overlaps a hidden value in ``text``."""
+        for _name, value in self.values:
+            at = text.find(value)
+            while at != -1:
+                if at < start + length and start < at + len(value):
+                    return True
+                at = text.find(value, at + 1)
+        return False
 
     def blank(self, text: str) -> str:
         for name, value in self.values:
@@ -243,10 +266,8 @@ class ServiceFiles:
         if is_secret(rel, self.env_file):
             raise FileRefused(f"{rel} may hold secrets; the assistant can't change it")
         suffix = "".join(PurePosixPath(rel).suffixes[-1:]).lower()
-        if suffix in BLOCKED_SUFFIXES or name in BLOCKED_NAMES:
+        if suffix in BLOCKED_SUFFIXES or name in BLOCKED_NAMES or rel.startswith((".github/", ".gitlab-ci")):
             raise FileRefused(f"{rel} is a script or program; the assistant can't change those")
-        if resolve(self.folder, rel).is_symlink():
-            raise FileRefused(f"{rel} is a link")
         if not isinstance(edits, list) or not 1 <= len(edits) <= MAX_EDITS:
             raise FileRefused(f"A change has 1 to {MAX_EDITS} edits")
         before = self.current(rel)
@@ -269,9 +290,10 @@ class ServiceFiles:
             if count == 0 and "\r\n" in text and "\r\n" not in old:  # the model saw the file with \n line ends
                 old, new = old.replace("\n", "\r\n"), new.replace("\n", "\r\n")
                 count = text.count(old)
-            if count != 1:
-                raise FileRefused(f"Edit {i}: the text to replace is {'not in' if count == 0 else 'more than once in'} "
-                                  f"{rel} (it may have changed, or hold a hidden value)")
+            if count != 1 or self._touches_hidden(text, text.index(old), len(old)):
+                # One answer for all three: else a plugin could guess a hidden value a character at a time
+                raise FileRefused(f"Edit {i}: the text to replace isn't in {rel} exactly once, or it touches a "
+                                  "hidden value (the file may have changed)")
             text = text.replace(old, new, 1)
         if text is None or text == before:
             raise FileRefused("The change doesn't change anything")
@@ -321,6 +343,9 @@ def check_added(old_lines: list[str], new_lines: list[str]) -> list[str]:
     added = [line[1:] for line in difflib.unified_diff(old_lines, new_lines, lineterm="", n=0)
              if line.startswith("+") and not line.startswith("+++")]
     body = "\n".join(added)
+    if match := _LEFTOVER.search(body):
+        raise FileRefused(f"The change would write {match.group(0).strip()[:40]!r} into the file: an edit marker or a "
+                          "stand-in for a hidden value, not code. The suggestion is malformed; ask again")
     for pattern, why in _BLOCK:
         if match := pattern.search(body):
             raise FileRefused(f"Blocked: the change {why} ({match.group(0).strip()[:40]}). Pythonator doesn't let "

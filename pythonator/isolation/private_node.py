@@ -174,16 +174,29 @@ def _copy(folder: Path, target: Path) -> Path:
     shutil.copytree(folder, partial, symlinks=False)
     fix_pipe_names(partial / EXE)
     (partial / DONE).write_text(str(folder), encoding="utf-8")
+    if target.exists():
+        _remove(target)  # half of one, from a removal that stopped at a file in use
     try:
         partial.replace(target)
     except OSError:  # another start made it at the same moment
         shutil.rmtree(partial, ignore_errors=True)
         if not (target / DONE).is_file():
             raise
-    for old in base.glob("node-*"):  # earlier versions; one still running stays until next time
-        if old != target and old.is_dir():
-            shutil.rmtree(old, ignore_errors=True)
+    for old in base.glob("node-*"):  # earlier versions
+        if old != target and old.is_dir() and ".partial-" not in old.name:
+            _remove(old)
     return target
+
+
+def _remove(folder: Path) -> None:
+    """Delete a copy unless a service still runs from it: Windows won't rename a folder with a running program
+    in it, so it stays whole (and usable) until next time instead of losing every file but the busy ones."""
+    trash = folder.with_name(f"{folder.name}.partial-old-{os.getpid()}")
+    try:
+        folder.rename(trash)
+    except OSError:
+        return
+    shutil.rmtree(trash, ignore_errors=True)
 
 
 def prepare_ahead(dirs: DataDirs) -> None:

@@ -104,8 +104,8 @@ def test_a_file_changed_since_is_not_overwritten(folder: Path, tmp_path: Path) -
     ("run.sh", [{"old": "echo hi", "new": "echo bye"}], "script"),
     (".env", [{"old": "TOKEN", "new": "X"}], "secrets"),
     ("../evil.py", [{"old": "", "new": "x"}], "inside"),
-    ("src/app.py", [{"old": "not there", "new": "x"}], "not in"),
-    ("src/app.py", [{"old": "x = 1\n", "new": ""}], "more than once"),
+    ("src/app.py", [{"old": "not there", "new": "x"}], "exactly once"),
+    ("src/app.py", [{"old": "x = 1\n", "new": ""}], "exactly once"),
     ("new.py", [{"old": "", "new": "   "}], "empty"),
 ])
 def test_dangerous_or_broken_changes_are_refused(folder: Path, path: str, edits: list[dict[str, str]],

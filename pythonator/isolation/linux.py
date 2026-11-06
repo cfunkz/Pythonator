@@ -100,7 +100,8 @@ def _system_links() -> list[str]:
     return out
 
 
-def bwrap_args(bwrap: str, *, network: bool, grants: list[Grant], cwd: str, tmp: Path) -> list[str]:
+def bwrap_args(bwrap: str, *, network: bool, grants: list[Grant], cwd: str, tmp: Path,
+               links: list[str] | None = None) -> list[str]:
     """The bubblewrap command line: only the system folders and the service's own folders exist inside."""
     args = [bwrap, "--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-uts", "--unshare-cgroup-try",
             "--die-with-parent", "--cap-drop", "ALL"]
@@ -115,7 +116,7 @@ def bwrap_args(bwrap: str, *, network: bool, grants: list[Grant], cwd: str, tmp:
         elif path.is_dir():
             args += ["--ro-bind", folder, folder]
     args += ["--dev", "/dev", "--proc", "/proc", "--bind", str(tmp), "/tmp"]
-    for folder in _system_links():
+    for folder in _system_links() if links is None else links:
         args += ["--ro-bind-try", folder, folder]
     for g in merge([*(Grant(f, False) for f in launcher_files()), *grants]):
         args += ["--bind-try" if g.write else "--ro-bind-try", str(g.path), str(g.path)]
@@ -130,19 +131,27 @@ def wrap(argv: list[str], cwd: Path, env: dict[str, str], policy: Policy, home: 
     if not policy.network and not (sup.bwrap or sup.seccomp):
         raise IsolationError("Can't turn the network off here: install bubblewrap or libseccomp2")
     grants = merge([*policy.grants, Grant(home, True), Grant(tmp, True)])
+    links = _system_links()
     plan: dict[str, object] = {"argv": argv}
     if sup.landlock:
-        read = [*SYSTEM, *_system_links(), *(str(f) for f in launcher_files()),
+        # Only the device files in DEVICES, not all of /dev (cameras, microphones). Without bubblewrap /dev/pts
+        # holds your own terminals, so a service may not open them; with it, /dev/pts is the sandbox's own.
+        read = [*(p for p in SYSTEM if p != "/dev"), *links, *(str(f) for f in launcher_files()),
                 *(str(g.path) for g in grants if not g.write)]
-        write = [*DEVICES, *(["/tmp"] if sup.bwrap else []), *(str(g.path) for g in grants if g.write)]
+        devices = [d for d in DEVICES if sup.bwrap or d != "/dev/pts"]
+        write = [*devices, *(["/tmp"] if sup.bwrap else []), *(str(g.path) for g in grants if g.write)]
         # Port 0 too: one the system picks. Dev tools talk to their own workers that way (Next.js's Turbopack,
         # Nuxt), and listen() without bind() gets one anyway, so it opens nothing new.
         plan["landlock"] = {"ro": read, "rw": write, "net": not policy.network, "scope": True,
                             "ports": [*policy.ports, 0] if policy.ports else []}
     if sup.seccomp:
-        plan["seccomp"] = {"net": not policy.network, "unix": not sup.bwrap, "lib": sup.seccomp}
+        # Unix sockets: without bubblewrap they reach your desktop session's (X11, D-Bus, the agent sockets). With
+        # it and the network on, abstract ones (X11's @/tmp/.X11-unix) stay reachable unless Landlock 6+ scopes them.
+        unix = not sup.bwrap or (policy.network and sup.landlock < 6)
+        plan["seccomp"] = {"net": not policy.network, "unix": unix, "lib": sup.seccomp}
     if sup.bwrap:
-        plan["bwrap"] = bwrap_args(sup.bwrap, network=policy.network, grants=grants, cwd=str(cwd), tmp=tmp)
+        plan["bwrap"] = bwrap_args(sup.bwrap, network=policy.network, grants=grants, cwd=str(cwd), tmp=tmp,
+                                   links=links)
         plan["self"] = launcher_argv()
     env = {**env, "HOME": str(home), "TMPDIR": "/tmp" if sup.bwrap else str(tmp), "PYTHONATOR_SANDBOX": "1"}
     layers = ["Landlock" if sup.landlock else "", "seccomp" if sup.seccomp else "", "bubblewrap" if sup.bwrap else ""]

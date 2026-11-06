@@ -9,12 +9,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QTextCharFormat, QTextCursor
 from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QLabel,
-    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QVBoxLayout,
@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
 )
 
 from . import theme
-from .widgets import label
+from .widgets import info, label, warn
 
 Send = Callable[..., None]
 
@@ -39,6 +39,7 @@ class ProposalDialog(QDialog):
         head = QLabel(f"{proposal.get('plugin_name', 'A plugin')} suggests "
                       f"{'a new file' if proposal.get('new_file') else 'a change to'} {proposal.get('path', '')} "
                       f"in {proposal.get('service_name', '')}")
+        head.setTextFormat(Qt.TextFormat.PlainText)  # the path and names come from the plugin
         head.setProperty("heading", True)
         head.setWordWrap(True)
         layout.addWidget(head)
@@ -89,9 +90,9 @@ class ProposalDialog(QDialog):
         def done(ok: bool, data: Any, error: str) -> None:
             self.done_ = True
             if not ok:
-                QMessageBox.warning(self, "Not applied", error)
+                warn(self, "Not applied", error)
             elif apply:
-                QMessageBox.information(self, "Applied", str(data or "Saved"))
+                info(self, "Applied", str(data or "Saved"))
             self.accept()
 
         self.send({"op": "plugin_proposal", "plugin": self.proposal["plugin"], "proposal": self.proposal["id"],

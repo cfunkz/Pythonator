@@ -66,8 +66,8 @@ def load(folder: Path) -> Manifest:
     meta = data.get("plugin", data)
     api = meta.get("api", API) if isinstance(meta, dict) else API
     if isinstance(api, int) and api > API:  # before validating: a newer plugin may ask for permissions we don't know
-        raise ValueError(f"{meta.get('name', folder.name)} needs a newer Pythonator (plugin API {api}, this one has "
-                         f"{API})")
+        name = str(meta.get("name", folder.name))[:64]
+        raise ValueError(f"{name} needs a newer Pythonator (plugin API {api}, this one has {API})")
     try:
         manifest = Manifest.model_validate(meta)
     except ValidationError as exc:

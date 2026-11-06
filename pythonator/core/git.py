@@ -3,23 +3,32 @@
 Your git keeps your credentials, SSH agent and credential manager working. Every call is pinned down: only https
 and ssh transports, no hooks, no submodules, no fsmonitor, no prompts, ``--`` before every URL or path, and pulls are
 fast-forward only, so a pull never merges or rewrites anything.
+
+A pull runs outside the sandbox, in a folder the sandboxed service can write. So before it, the checkout's own
+``.git/config`` may hold only plain settings (:data:`SAFE_KEYS`): anything else could name a program for git to run
+as you (``core.sshCommand``, a filter driver, ``credential.helper``, an ``include.path``...).
 """
 
 from __future__ import annotations
 
 import os
+import re
 import subprocess
-import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
-from ..paths import quiet_start
+from ..paths import DataDirs, quiet_start
 from . import validate
 from .runtimes import which
 
 HARDENING = ["-c", "protocol.allow=never", "-c", "protocol.https.allow=always", "-c", "protocol.ssh.allow=always",
              "-c", "core.fsmonitor=false", "-c", "submodule.recurse=false", "-c", "credential.interactive=never"]
-MIN_VERSION = (2, 40)
+# The settings a checkout's own config may hold for Pythonator to pull it (section.key, or section.*.key for
+# named sections such as a remote or a branch). What git and git-lfs write themselves, and nothing that runs.
+SAFE_KEYS = re.compile(
+    r"core\.(repositoryformatversion|filemode|bare|logallrefupdates|ignorecase|precomposeunicode|symlinks|autocrlf|eol"
+    r"|safecrlf)|extensions\.(objectformat|refstorage)|lfs\.repositoryformatversion|user\.(name|email)"
+    r"|pull\.(rebase|ff)|fetch\.prune|remote\..+\.(url|pushurl|fetch|tagopt|prune)|branch\..+\.(remote|merge|rebase)")
 
 
 class GitError(Exception):
@@ -41,8 +50,9 @@ def _env() -> dict[str, str]:
 
 
 def _hooks_off() -> list[str]:
-    empty = Path(tempfile.gettempdir()) / "pythonator-no-hooks"
-    empty.mkdir(exist_ok=True)
+    """An empty hooks folder in Pythonator's private data folder (a shared temp folder could be someone else's)."""
+    empty = DataDirs().root / "git-no-hooks"
+    empty.mkdir(parents=True, exist_ok=True)
     return ["-c", f"core.hooksPath={empty}"]
 
 
@@ -72,15 +82,6 @@ def run(args: list[str], cwd: Path | None = None, *, timeout: float = 300,
     return out
 
 
-def version() -> tuple[int, int]:
-    text = run(["--version"], timeout=20)  # "git version 2.47.1"
-    try:
-        major, minor = text.split()[2].split(".")[:2]
-        return int(major), int(minor)
-    except (IndexError, ValueError):
-        return (0, 0)
-
-
 def clone(url: str, dest: Path, branch: str = "", *, on_line: Callable[[str], None] | None = None) -> None:
     url, branch = validate.git_url(url), validate.git_ref(branch)
     if dest.exists() and any(dest.iterdir()):
@@ -93,10 +94,23 @@ def clone(url: str, dest: Path, branch: str = "", *, on_line: Callable[[str], No
 
 def pull(folder: Path, *, on_line: Callable[[str], None] | None = None) -> str:
     """Fetch and fast-forward. Returns ``"old..new"`` or "" when nothing changed."""
-    if not (folder / ".git").exists():
-        raise GitError(f"{folder} isn't a git checkout")
+    check_checkout(folder)
     before = run(["rev-parse", "--short", "HEAD"], folder, timeout=30).strip()
     run(["fetch", "--no-recurse-submodules", "--prune", "origin"], folder, on_line=on_line)
     run(["merge", "--ff-only", "@{upstream}"], folder, on_line=on_line)
     after = run(["rev-parse", "--short", "HEAD"], folder, timeout=30).strip()
     return "" if before == after else f"{before}..{after}"
+
+
+def check_checkout(folder: Path) -> None:
+    """Raise GitError unless ``folder`` is a plain checkout whose own config names nothing for git to run."""
+    dot_git = folder / ".git"
+    if dot_git.is_symlink() or not dot_git.is_dir() or (dot_git / "commondir").exists():
+        raise GitError(f"{folder} isn't a plain git checkout (its .git must be a folder of its own)")
+    out = run(["config", "--file", str(dot_git / "config"), "--no-includes", "--null", "--list"], folder, timeout=30)
+    unsafe = [key for entry in out.split("\0") if (key := entry.partition("\n")[0])
+              and not SAFE_KEYS.fullmatch(key.lower())]
+    if unsafe:
+        raise GitError(f"{dot_git / 'config'} has settings Pythonator won't pull with, because they can run programs "
+                       f"outside the sandbox: {', '.join(sorted(set(unsafe)))}. Remove them, or set them in your own "
+                       "~/.gitconfig, which no sandbox can change")

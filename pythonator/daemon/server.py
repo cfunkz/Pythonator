@@ -17,6 +17,7 @@ import signal
 import stat
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,7 @@ from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 from .. import __version__, isolation
 from ..core.envcheck import app_report
 from ..core.store import Store, write_atomic
+from ..instance import InstanceLock
 from ..isolation import private_node
 from ..paths import IS_WINDOWS, DataDirs
 from ..plugins.host import PluginHost
@@ -91,8 +93,7 @@ class Daemon:
         os.environ["NoDefaultCurrentDirectoryInExePath"] = "1"  # noqa: SIM112 - Windows: never run a program from the cwd
         with contextlib.suppress(OSError):
             os.chdir(dirs.root)
-        self.token = secrets.token_urlsafe(32)
-        write_atomic(dirs.token_file, self.token)
+        self.token = secrets.token_urlsafe(32)  # written once this daemon listens: never over a live one's
         self.store = Store(dirs)
         self.sup = Supervisor(dirs, self.store)
         private_node.prepare_ahead(dirs)  # Windows: Node.js for sandboxes, before the first start
@@ -107,15 +108,13 @@ class Daemon:
 
     def listen(self) -> bool:
         name = socket_name(self.dirs)
-        probe = QLocalSocket()
-        probe.connectToServer(name)
-        if probe.waitForConnected(500):
-            probe.abort()
+        if serving(self.dirs):
             return False  # another daemon serves this data folder
         QLocalServer.removeServer(name)
         if not self.server.listen(name):
             log.error("can't listen on %s: %s", name, self.server.errorString())
             return False
+        write_atomic(self.dirs.token_file, self.token)
         return True
 
     def run(self) -> None:
@@ -153,8 +152,8 @@ class Daemon:
         if len(client.buf) > p.MAX_FRAME and b"\n" not in client.buf:
             self._drop(client)
             return
-        while b"\n" in client.buf:
-            line, client.buf = client.buf.split(b"\n", 1)
+        *lines, client.buf = client.buf.split(b"\n")  # one split, however many lines arrived
+        for line in lines:
             if line.strip():
                 self._handle(client, line)
             if client not in self.clients:
@@ -242,6 +241,8 @@ class Daemon:
                 s.delete_project(sid)
             case p.Remove(id=sid):
                 s.remove(sid)
+            case p.DeleteLeftovers(folders=folders):
+                s.delete_leftovers(list(folders))
             case p.Start(id=sid, confirmed=confirmed):
                 s.start(sid, confirmed=confirmed)
             case p.Stop(id=sid):
@@ -315,18 +316,30 @@ class Daemon:
         """Stop serving and let go of every Qt object and thread, so nothing calls back into this object later."""
         self.timer.stop()
         _disconnect(self.timer.timeout)
+        # Stop serving first: a window that starts a new background service meanwhile finds nobody listening, and
+        # that one waits for this one to finish instead of leaving the window waiting for a service that is going.
+        _disconnect(self.server.newConnection)
+        self.server.close()
+        for client in self.clients:
+            _release(client.sock)
+        self.clients.clear()
         self.plugins.shutdown()
         if stop_services:
             self.sup.shutdown()
         self.sup.close()
         self.sup.listeners.clear()
-        for client in self.clients:
-            _release(client.sock)
-        self.clients.clear()
-        _disconnect(self.server.newConnection)
-        self.server.close()
         with contextlib.suppress(OSError):
             self.dirs.token_file.unlink()
+
+
+def serving(dirs: DataDirs) -> bool:
+    """Whether a background service answers on this data folder's socket."""
+    probe = QLocalSocket()
+    probe.connectToServer(socket_name(dirs))
+    if probe.waitForConnected(500):
+        probe.abort()
+        return True
+    return False
 
 
 def _disconnect(sig: Any) -> None:
@@ -363,6 +376,14 @@ def main() -> int:
                         handlers=handlers)
     app = QCoreApplication(sys.argv[:1])
     app.setApplicationName("Pythonator")
+    lock = InstanceLock(dirs.root / "daemon.lock")
+    deadline = time.monotonic() + 30
+    while not lock.acquire():
+        # Another background service has this data folder. Serving: it is the one (two windows started one each).
+        # Not serving: it is shutting down (stopping services takes a while), so this one takes over after it.
+        if serving(dirs) or time.monotonic() > deadline:
+            return 0
+        time.sleep(0.25)
     daemon = Daemon(dirs)
     if not daemon.listen():
         return 0

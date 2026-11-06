@@ -291,6 +291,21 @@ class Plugin:
         is deleted unless the user says so there."""
         _request({"op": "delete", "id": sid}, timeout)
 
+    # Leftovers in the projects folder (create_services).
+
+    def leftover_projects(self, folder: str = "", timeout: float = 15.0) -> dict[str, Any]:
+        """Folders in the projects folder (``folder``; empty: the default one) that no service uses any more:
+        ``{"folder", "leftovers": [{"folder", "name", "made"}]}``. ``made``: the Project builder made it (a project
+        removed with its folder kept, or a delete a held file stopped). In the default projects folder every
+        unused folder is listed; elsewhere only the ones the builder made. Nothing inside them is read."""
+        return dict(_request({"op": "leftovers", "folder": folder}, timeout))
+
+    def delete_leftovers(self, folders: list[str], folder: str = "", timeout: float = 15.0) -> int:
+        """Ask the user, in Pythonator's window, to delete some of :meth:`leftover_projects`; they pick which.
+        Returns how many were asked about. Nothing is deleted unless the user says so there."""
+        data = _request({"op": "delete_leftovers", "folder": folder, "folders": list(folders)}, timeout)
+        return int(data.get("asked", 0))
+
 
 _out_lock = threading.Lock()
 _out: Any = None  # the protocol stream; set by the worker (print() goes to the plugin's log instead)

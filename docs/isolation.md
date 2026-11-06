@@ -129,7 +129,9 @@ Every container starts with:
 | `--memory` | When a memory limit is set |
 
 Pythonator never adds `--privileged`, `--cap-add`, `--device`, `--network host` or another mount. Variables reach the
-container through the engine's environment (`-e NAME`), so their values don't show in a process list.
+container through the engine's environment (`-e NAME`), so their values don't show in a process list. An env file
+in the project can't set the engine's own variables (`DOCKER_*`, `PATH`, `HOME`, `XDG_*`): those would change which
+engine, or which program, the CLI on your computer talks to.
 
 The **image** defaults to the language's official slim image (`python:3.13-slim`, `node:22-slim`, `golang:1.24`...)
 and can be any image you name, pinned by digest if you like (`python:3.13-slim@sha256:...`). For Python, Install
@@ -153,7 +155,9 @@ asks for:
 
 * `privileged`, a host or another container's namespace (`network_mode: host`, `pid: host`, ...), devices, powerful
   capabilities (`SYS_ADMIN`, `NET_ADMIN`, ...) or `security_opt` that turns a protection off;
-* a bind mount, build context, env file, secret or config outside the project folder, or the engine's socket;
+* a bind mount, build context, env file, secret or config outside the project folder, or the engine's socket; a
+  named volume that is a bind mount by another name (`driver_opts: {o: bind, device: /…}`) counts too;
+* the host network, also by name (`networks: {x: {name: host, external: true}}`);
 * a port published on every network while the service is for this computer only (write `127.0.0.1:8000:8000`, or
   allow other computers in Network).
 

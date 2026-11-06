@@ -255,16 +255,22 @@ def venv_has_pip(venv: Path) -> bool:
     return (venv / "Lib" / "site-packages" / "pip").is_dir() or any(venv.glob("lib/python*/site-packages/pip"))
 
 
-def venv_home(venv: Path) -> Path | None:
-    """The Python installation a venv was made from (``home =`` in pyvenv.cfg)."""
+def venv_config(venv: Path, name: str) -> str:
+    """A setting of a venv's pyvenv.cfg (``home``, ``version``), "" when it has none."""
     try:
         for line in (venv / "pyvenv.cfg").read_text(encoding="utf-8").splitlines():
             key, _, value = line.partition("=")
-            if key.strip() == "home" and value.strip():
-                return Path(value.strip())
-    except OSError:
+            if key.strip().lower() == name and value.strip():
+                return value.strip()
+    except (OSError, UnicodeDecodeError):
         pass
-    return None
+    return ""
+
+
+def venv_home(venv: Path) -> Path | None:
+    """The Python installation a venv was made from (``home =`` in pyvenv.cfg)."""
+    home = venv_config(venv, "home")
+    return Path(home) if home else None
 
 
 def program(runtime: Runtime, folder: Path) -> str | None:
@@ -325,9 +331,8 @@ def env_missing(runtime: str, folder: Path) -> str:
     elif runtime == "ruby":
         if (folder / "Gemfile").is_file() and not (folder / "vendor" / "bundle").is_dir():
             return "vendor/bundle is missing"
-    elif runtime == "php":
-        if (folder / "composer.json").is_file() and not (folder / "vendor").is_dir():
-            return "vendor is missing"
+    elif runtime == "php" and (folder / "composer.json").is_file() and not (folder / "vendor").is_dir():
+        return "vendor is missing"
     return ""
 
 

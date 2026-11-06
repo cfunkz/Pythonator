@@ -2,14 +2,28 @@
 
 from __future__ import annotations
 
+import html
+
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QDoubleSpinBox, QLabel, QLineEdit, QPlainTextEdit, QScrollArea, QSpinBox, QTabWidget
+from PyQt6.QtWidgets import (
+    QDoubleSpinBox,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPlainTextEdit,
+    QScrollArea,
+    QSpinBox,
+    QTabWidget,
+    QWidget,
+)
 
 
-def label(text: str = "", *, wrap: bool = True, plain: bool = False, muted: bool = False) -> QLabel:
+def label(text: str = "", *, wrap: bool = True, plain: bool = True, muted: bool = False) -> QLabel:
+    """``plain``: never read as HTML. Most labels show something a program, plugin or git wrote, and Qt would
+    otherwise guess, so ``<img src=/dev/zero>`` in a name could hang the window."""
     w = QLabel(text)
     w.setWordWrap(wrap)
-    if plain:  # anything a program or plugin wrote: never interpreted as HTML
+    if plain:
         w.setTextFormat(Qt.TextFormat.PlainText)
     if muted:
         w.setProperty("muted", True)
@@ -60,3 +74,35 @@ def tabs(*, closable: bool = False, movable: bool = False) -> QTabWidget:
     w.setTabsClosable(closable)
     w.setMovable(movable)
     return w
+
+
+_OK, _NONE = QMessageBox.StandardButton.Ok, QMessageBox.StandardButton.NoButton
+_YES_NO = QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+
+
+def warn(parent: QWidget | None, title: str, text: str, buttons: QMessageBox.StandardButton = _OK,
+            default: QMessageBox.StandardButton = _NONE, *,
+            icon: QMessageBox.Icon = QMessageBox.Icon.Warning) -> QMessageBox.StandardButton:
+    """QMessageBox.warning, with the text shown as plain text (it often holds an error from git, a plugin or the
+    container engine)."""
+    box = QMessageBox(icon, title, text, buttons, parent)
+    box.setTextFormat(Qt.TextFormat.PlainText)
+    if default != _NONE:
+        box.setDefaultButton(default)
+    return QMessageBox.StandardButton(box.exec())
+
+
+def info(parent: QWidget | None, title: str, text: str) -> QMessageBox.StandardButton:
+    return warn(parent, title, text, icon=QMessageBox.Icon.Information)
+
+
+def ask(parent: QWidget | None, title: str, text: str, buttons: QMessageBox.StandardButton = _YES_NO,
+        default: QMessageBox.StandardButton = _NONE) -> QMessageBox.StandardButton:
+    return warn(parent, title, text, buttons, default, icon=QMessageBox.Icon.Question)
+
+
+def tip(text: str) -> str:
+    """A tooltip for text from a plugin or a program: Qt reads tooltips as HTML when they look like it."""
+    if "<" not in text and "&" not in text:
+        return text  # nothing Qt could read as HTML
+    return "<qt>" + html.escape(text).replace("\n", "<br>") + "</qt>"

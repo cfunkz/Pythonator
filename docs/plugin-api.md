@@ -1,7 +1,7 @@
 # Plugin API
 
-Everything a plugin can declare, receive and do, in plugin API version **2** (Pythonator 0.0.1 and later; API 1
-plugins run unchanged). For a walk-through, read
+Everything a plugin can declare, receive and do, in plugin API version **5** (Pythonator 0.0.13 and later; plugins
+written for an older API run unchanged). For a walk-through, read
 [Writing a plugin](plugin-development.md) first.
 
 ## How a plugin runs
@@ -60,7 +60,7 @@ plugin is imported to read it.
 | `ui` | `show` displays a panel |
 | `read_files` | `list_files` and `read_file` on a service's folder, read-only (API 2) |
 | `propose_changes` | `propose_change` opens a review window for the user (API 2) |
-| `create_services` | `project_templates`, `create_project`, `list_projects` and `delete_project`: services from built-in templates (API 4) |
+| `create_services` | `project_templates`, `create_project`, `list_projects` and `delete_project`: services from built-in templates (API 4); `leftover_projects` and `delete_leftovers` |
 
 Official plugins get what they declare. Third-party plugins get only what the user grants, which can be less.
 `self.permissions` holds what this run was granted, and `self.test_mode` whether it is in test mode.
@@ -116,6 +116,8 @@ An exception in any of them is reported in the plugin's Activity with its traceb
 | `create_project(template, name, folder="", start=False)` | `{"id", "folder", "port"}`: the new service; it is made in its own sandbox, its progress shows in its console and as events | `create_services` |
 | `list_projects()` | `[{"id", "name", "template", "folder", "state", "port"}]`: the services made from templates | `create_services` |
 | `delete_project(id)` | Asks the user, in Pythonator's window, whether to delete that project and its folder; nothing is deleted unless they say so | `create_services` |
+| `leftover_projects(folder="")` | `{"folder", "leftovers": [{"folder", "name", "made"}]}`: folders in the projects folder no service uses any more. In the default projects folder every unused folder; elsewhere only ones the Project builder made. Nothing inside them is read | `create_services` |
+| `delete_leftovers(folders, folder="")` | Asks the user, in Pythonator's window, which of those folders to delete (one window for all of them); returns how many were asked about. Nothing is deleted unless they say so | `create_services` |
 
 They are safe to call from any thread. The last seven wait for Pythonator's answer (15 s at most) and raise
 `PluginError` with the reason when refused, so call them from a thread of your own.
@@ -139,9 +141,12 @@ empty `old` creates a new file of up to 48 KB). Pythonator applies them to the f
 window with the diff and its warnings. **Nothing is written unless the user presses Apply there**; Apply refuses
 if the file changed in the meantime, and keeps a copy of the old file in Pythonator's `backups` folder.
 
-Some changes are refused outright, whatever the user would click: scripts and programs (`.sh`, `.bat`, `.ps1`,
-`.exe`, `Makefile`...), secret files, emptying a file or removing most of it, and added code that runs programs or
-shell commands, deletes files, evaluates strings or calls the operating system directly. Changes that add web
+Some changes are refused, whatever the user would click: scripts and programs (`.sh`, `.bat`, `.ps1`, `.exe`,
+`Makefile`...), CI workflows (`.github/`), secret files, any path through a link, emptying a file or removing most of
+it, and added code that matches what runs programs or shell commands, deletes files, evaluates strings, calls the
+operating system directly or adds an npm install script. These are patterns, not a proof: the review window's diff
+is what to read. An edit that touches a hidden value is refused with the same words as one that isn't in the file,
+so a plugin can't guess the value. Changes that add web
 addresses, network use or dependencies are allowed with a warning. One proposal per plugin waits at a time; an
 unanswered one expires after 30 minutes. In test mode a proposal is only recorded.
 
