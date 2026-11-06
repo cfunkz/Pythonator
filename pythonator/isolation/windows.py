@@ -348,6 +348,30 @@ def reach_script(sid: str, container: str, ports: Sequence[int], *, lan: bool, u
     return "\n".join(lines)
 
 
+def loopback_exempt(ident: str) -> bool | None:
+    """Whether **Make reachable** was done for this service: its AppContainer is in Windows' list of loopback
+    exemptions (``CheckNetIsolation LoopbackExempt -s``, which needs no administrator). None when Windows can't
+    say."""
+    if not IS_WINDOWS:
+        return None
+    tool = Path(os.environ.get("SYSTEMROOT", r"C:\Windows")) / "System32" / "CheckNetIsolation.exe"
+    try:
+        sid, _folder = launcher.windows_profile(container_name(ident))
+        done = subprocess.run([str(tool), "LoopbackExempt", "-s"], capture_output=True, text=True,
+                              errors="replace", timeout=20, check=False, creationflags=0x08000000,
+                              startupinfo=quiet_start())
+    except (OSError, subprocess.SubprocessError, launcher.SandboxError):
+        return None
+    if done.returncode != 0:
+        return None
+    return sid.lower() in {m.group(0).lower() for m in SID.finditer(done.stdout)}
+
+
+REACH_NOTE = ("Windows keeps a sandboxed server out of reach, even of the browser on this PC, until you allow it "
+              "once for this service: press Open (the browser button) or Configure → Network → Make reachable…, "
+              "and accept the administrator prompt.")
+
+
 def encoded(command: str) -> str:
     return base64.b64encode(command.encode("utf-16-le")).decode("ascii")
 

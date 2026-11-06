@@ -540,7 +540,22 @@ class Supervisor:
         self.note(slot, cmd.describe)
         if service.cpu_percent or service.memory_mb:
             self.note(slot, _limits_note(service, runner))
+        if sys.platform == "win32" and service.mode is Mode.SANDBOX and service.network.enabled \
+                and service.network.ports:
+            self._reach_note(slot)
         self._set(slot, State.RUNNING, "started", "")
+
+    def _reach_note(self, slot: Slot) -> None:
+        """Windows: a sandboxed server nobody may reach yet says so, with what to press (checked off the
+        supervisor's thread: it starts CheckNetIsolation)."""
+        from ..isolation import windows
+
+        def check() -> None:
+            if windows.loopback_exempt(slot.service.id) is False:
+                self.post(lambda: self.note(slot, f"Note: {windows.REACH_NOTE}")
+                          if self.slots.get(slot.service.id) is slot else None)
+
+        threading.Thread(target=check, name=f"reach-{slot.service.id}", daemon=True).start()
 
     def _launch_after_set_up(self, slot: Slot) -> None:
         if self.slots.get(slot.service.id) is slot and slot.state is State.STARTING and slot.runner is None:

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import socket
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -421,3 +422,28 @@ def test_a_realpath_windows_refuses_in_the_sandbox_is_the_path_itself(tmp_path: 
     done = run_node(node, project, site, ["real.js"], shim=True)
     assert done.returncode == 0, done.stderr
     assert done.stdout.split() == ["true", "true", "true", "ENOENT", "true", "true", "ENOENT", "true"]
+
+
+def test_windows_says_whether_a_sandbox_was_made_reachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``CheckNetIsolation LoopbackExempt -s`` lists the exempted AppContainers: Make reachable was done for a
+    service when its sandbox's SID is among them."""
+    import subprocess
+
+    from pythonator import launcher
+    from pythonator.isolation import windows
+
+    if sys.platform != "win32":
+        assert windows.loopback_exempt("x") is None  # elsewhere there's nothing to check
+    listed = ("List Loopback Exempted AppContainers\n\n[1] -----\n    Name: pythonator.svc-a\n"
+              "    SID:  S-1-15-2-11-22-33-44-55-66-77\n\nOK.\n")
+    sids = {"svc-a": "S-1-15-2-11-22-33-44-55-66-77", "svc-b": "S-1-15-2-11-22-33-44-55-66-7"}
+    monkeypatch.setattr(windows, "IS_WINDOWS", True)
+    monkeypatch.setattr(windows, "quiet_start", lambda: None)
+    monkeypatch.setattr(launcher, "windows_profile", lambda name: (sids[name.rsplit(".", 1)[-1]], "folder"))
+    monkeypatch.setattr(windows, "container_name", lambda ident: f"Pythonator.{ident}")
+    code = [0]
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, code[0], listed, ""))
+    assert windows.loopback_exempt("svc-a") is True
+    assert windows.loopback_exempt("svc-b") is False  # a SID that only starts the same isn't it
+    code[0] = 5
+    assert windows.loopback_exempt("svc-a") is None  # Windows couldn't say: no note, no question

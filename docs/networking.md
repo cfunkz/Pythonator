@@ -68,6 +68,11 @@ apply to anything; press Undo first if you'd like them gone from the firewall li
 
 Run it again after you change the ports. Without it, the service runs and listens, but connections time out.
 
+You don't have to look for it. A sandboxed server's start says when Windows still keeps it out of reach, and the
+**Open** button (open in your browser) offers Make reachable first, then opens the page. That is the same single
+administrator prompt. Pythonator reads the list of exemptions with `CheckNetIsolation LoopbackExempt -s`, which
+needs no administrator rights.
+
 ## Connecting to other containers
 
 A service in Container mode can join a container network, to reach a database or a cache running in another

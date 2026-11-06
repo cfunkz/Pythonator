@@ -487,7 +487,7 @@ class MainWindow(QMainWindow):
         if url:
             tip = f"Open {url} in your browser"
             if IS_WINDOWS and service is not None and service.mode.value == "sandbox":
-                tip += "\nSandboxed on Windows: the browser reaches it after Configure → Make reachable…"
+                tip += "\nSandboxed on Windows: the first time, this offers Make reachable (one administrator prompt)"
             theme.set_tooltip(self.b_open, tip)
         if service is None:
             self.h_name.set("No service selected" if self.services else "Add your first service")
@@ -817,8 +817,52 @@ class MainWindow(QMainWindow):
         self.client.request({"op": "capabilities"}, show)
 
     def open_in_browser(self) -> None:
-        if url := self.web_url():
+        url = self.web_url()
+        service = self.services.get(self.current)
+        if not url or service is None:
+            return
+        if IS_WINDOWS and service.mode is Mode.SANDBOX:
+            self._reach_then_open(service, url)
+            return
+        QDesktopServices.openUrl(QUrl(url))
+
+    def _reach_then_open(self, service: Service, url: str) -> None:
+        """Windows: a sandboxed server the browser may not reach yet is made reachable first, with the user's
+        yes and one administrator prompt (see windows.make_reachable), then opened."""
+        import threading
+
+        from ..isolation import windows
+        from .service_dialog import _Bridge
+
+        bridge = _Bridge(self)
+        ports = list(service.network.ports) or [int(url.rstrip("/").rsplit(":", 1)[1])]
+        lan = service.network.expose == "lan"
+
+        def check() -> None:
+            bridge.text.emit("ask" if windows.loopback_exempt(service.id) is False else "open")
+
+        def reach() -> None:
+            ok, message = windows.make_reachable(service.id, ports, lan=lan)
+            bridge.text.emit("open" if ok else f"error:{message}")
+
+        def step(what: str) -> None:
+            if what == "ask":
+                if QMessageBox.question(
+                        self, "Make reachable",
+                        f"Windows keeps sandboxed servers out of reach, even of the browser on this PC, until you "
+                        f"allow it once. Let this PC reach {service.name} on port {', '.join(map(str, ports))}? "
+                        "Windows asks for administrator rights.",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.Yes) == QMessageBox.StandardButton.Yes:
+                    threading.Thread(target=reach, name="make-reachable", daemon=True).start()
+                    return
+            elif what.startswith("error:"):
+                self._notice("error", what.removeprefix("error:"))
+            bridge.deleteLater()
             QDesktopServices.openUrl(QUrl(url))
+
+        bridge.text.connect(step)
+        threading.Thread(target=check, name="reachable", daemon=True).start()
 
     def open_log(self) -> None:
         log = self.dirs.logs / f"{self.current}.log"

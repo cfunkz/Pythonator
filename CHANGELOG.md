@@ -35,7 +35,10 @@ Pythonator follows [semantic versioning](https://semver.org/). Each release list
   `LOCAL\`, as Node's next libuv does in a sandbox. See "Windows: Node.js programs that start other programs" in
   the isolation docs. Then Vite stopped at *EPERM: operation not permitted, realpath*: Windows refuses its own
   realpath in a sandbox too, so Pythonator's Node.js preload answers with the path itself when it exists. CI starts
-  a Vite app in the Windows sandbox on every push.
+  a Vite app in the Windows sandbox on every push, makes it reachable and loads its page.
+- Windows: a sandboxed server's start says when Windows still keeps it out of reach of this PC's browser, and the
+  **Open** button offers **Make reachable** first (one administrator prompt), then opens the page. Before, the page
+  just timed out until you found Make reachable on the Network tab.
 
 ## 0.0.14
 

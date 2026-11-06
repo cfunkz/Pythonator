@@ -61,8 +61,9 @@ The operating system refused part of the sandbox. The line above it in the conso
 * On **Windows**, a Node.js app in the sandbox that used a whole core and printed nothing (Vite, React, Vue) was
   stuck making a pipe for a program it starts. Fixed in 0.0.15: see
   [Node.js programs that start other programs](isolation.md#windows-nodejs-programs-that-start-other-programs).
-* On **Windows**, press **Make reachable…** once: Windows keeps sandboxed servers unreachable, even from the same
-  computer, until an administrator allows it. See [Ports and APIs](networking.md#windows-make-reachable).
+* On **Windows**, allow it once: press **Open** and accept **Make reachable** (or Configure → Network → **Make
+  reachable…**). Windows keeps sandboxed servers unreachable, even from the same computer, until an
+  administrator allows it. See [Ports and APIs](networking.md#windows-make-reachable).
 * On **Linux 6.7+** and **macOS**, a sandboxed program may only listen on the listed ports. A framework that picks
   its own port (`3000` instead of `$PORT`) is refused: list that port, or make it use `PORT`. On Linux it may also
   listen on a port the system picks for it (port 0), which dev tools such as Next.js use to talk to their own

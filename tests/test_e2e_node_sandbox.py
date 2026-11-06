@@ -122,6 +122,29 @@ def native_stacks(root_pid: int) -> str:
     return "\n".join(out)
 
 
+def make_reachable(h: Any, sup: Any, sid: str, port: int) -> str:
+    """Windows: what Make reachable does, without the administrator prompt (CI runners are administrators). A
+    sandboxed server is out of reach of this PC until then, and its start says so."""
+    from pythonator import launcher
+    from pythonator.isolation import windows
+
+    before = windows.loopback_exempt(sid)
+    h.wait(lambda: "Make reachable" in sup.tail(sid) or sup.slots[sid].state.value in ("failed", "stopped"),
+           timeout=60_000)
+    noted = "Make reachable" in sup.tail(sid)
+    container = windows.container_name(sid)
+    sandbox_sid, _folder = launcher.windows_profile(container)
+    script = windows.reach_script(sandbox_sid, container, [port], lan=False)
+    done = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                           "-EncodedCommand", windows.encoded(script)], capture_output=True, text=True,
+                          errors="replace", timeout=180, check=False)
+    say(f"===== make reachable: exit {done.returncode} =====\n{done.stdout}{done.stderr}")
+    after = windows.loopback_exempt(sid)
+    if before is not False or after is not True or done.returncode != 0:
+        return f"exempt before {before}, after {after}, script exit {done.returncode}"
+    return "noted, made reachable" if noted else "made reachable, but the start didn't say it was needed"
+
+
 def test_a_vite_app_answers_in_the_sandbox(dirs: Any, qtbot: Any, tmp_path: Path) -> None:
     from pythonator.core import runtimes
     from tests.conftest import DaemonHarness
@@ -131,6 +154,7 @@ def test_a_vite_app_answers_in_the_sandbox(dirs: Any, qtbot: Any, tmp_path: Path
     sup = h.daemon.sup
     answers: dict[str, str] = {}
     logs: dict[str, str] = {}
+    reached: dict[str, str] = {}
     try:
         parent = tmp_path / "projects"
         made = sup.create_project("react", "e2e-react", parent, start=False)
@@ -149,6 +173,8 @@ def test_a_vite_app_answers_in_the_sandbox(dirs: Any, qtbot: Any, tmp_path: Path
                         mode="sandbox", own_env=True, restart="never", env={"NODE_OPTIONS": diag},
                         network={"ports": [port] if web else []})
             sup.start(sid, confirmed=True)
+            if web and os.name == "nt":
+                reached[name] = make_reachable(h, sup, sid, port)
             started = time.monotonic()
             answer = ""
             stacks = ""
@@ -188,6 +214,7 @@ def test_a_vite_app_answers_in_the_sandbox(dirs: Any, qtbot: Any, tmp_path: Path
         assert answers["vite"].startswith("HTTP 200"), "the Vite app didn't answer in the sandbox: see above"
         if os.name == "nt":  # the fixed copy of Node.js ran, not the one in C:\\Program Files
             assert "runtimes" in logs["vite"].split("Started", 1)[1].splitlines()[0]
+            assert reached["vite"] == "noted, made reachable", reached
     finally:
         for sid in list(sup.slots):
             sup.stop(sid)
