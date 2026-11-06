@@ -33,7 +33,9 @@ Pythonator follows [semantic versioning](https://semver.org/). Each release list
   sandbox, and Node tries the next name forever. Vite starts one at once (`net use`); Next.js, Angular and npm
   install scripts do too. Sandboxes now run Pythonator's private copy of Node.js, with that one name moved under
   `LOCAL\`, as Node's next libuv does in a sandbox. See "Windows: Node.js programs that start other programs" in
-  the isolation docs. CI starts a Vite app in the Windows sandbox on every push.
+  the isolation docs. Then Vite stopped at *EPERM: operation not permitted, realpath*: Windows refuses its own
+  realpath in a sandbox too, so Pythonator's Node.js preload answers with the path itself when it exists. CI starts
+  a Vite app in the Windows sandbox on every push.
 
 ## 0.0.14
 

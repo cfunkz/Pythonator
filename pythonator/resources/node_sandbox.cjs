@@ -6,8 +6,10 @@
 // the way down with lstat, so they stop at "EPERM: operation not permitted, lstat 'C:\'". Here, and only for
 // the folders *above* the ones this sandbox was given (PYTHONATOR_NODE_ROOTS), a refused stat is answered with
 // "a plain folder": true, since they lead to a folder that exists, and it reveals nothing (no name, size or
-// date of anything). A refused realpath falls back to Windows' own (fs.realpath.native), which needs access
-// to the file itself only. Nothing else changes, and nothing here grants any access.
+// date of anything). A refused realpath falls back to Windows' own (fs.realpath.native), and when that is
+// refused too (it names the drive, which a sandbox may not ask: "EPERM: operation not permitted, realpath"),
+// to the path itself, made absolute, once a stat shows it exists: what --preserve-symlinks already does for
+// modules (a link isn't followed). Nothing else changes, and nothing here grants any access.
 
 const fs = require('fs');
 const path = require('path');
@@ -83,27 +85,67 @@ if (process.env.PYTHONATOR_SANDBOX === '1' && !fs.__pythonatorSandbox) {
     };
   }
 
+  // The path made absolute, if it exists (a stat says ENOENT and the like, as realpath would).
+  const plain = (p, options) => {
+    fs.statSync(p);
+    const resolved = path.resolve(text(p));
+    const encoding = typeof options === 'string' ? options : options && options.encoding;
+    return encoding === 'buffer' ? Buffer.from(resolved) : resolved;
+  };
+
   const realSync = fs.realpathSync;
   const nativeSync = realSync.native;
+  const nativeOrPlainSync = function (p, options) {
+    try {
+      return nativeSync(p, options);
+    } catch (e) {
+      if (denied(e)) return plain(p, options);
+      throw e;
+    }
+  };
   fs.realpathSync = function realpathSync(p, options) {
     try {
       return realSync.call(this, p, options);
     } catch (e) {
-      if (denied(e)) return nativeSync(p, options);
+      if (denied(e)) return nativeOrPlainSync(p, options);
       throw e;
     }
   };
-  fs.realpathSync.native = nativeSync;
+  fs.realpathSync.native = nativeOrPlainSync;
 
   const real = fs.realpath;
   const nativeAsync = real.native;
+  const nativeOrPlain = function (p, options, callback) {
+    if (typeof options === 'function') {
+      callback = options;
+      options = undefined;
+    }
+    return nativeAsync(p, options, (e, resolved) => {
+      if (!denied(e)) return callback(e, resolved);
+      let out;
+      try {
+        out = plain(p, options);
+      } catch (e2) {
+        return callback(e2);
+      }
+      return callback(null, out);
+    });
+  };
   fs.realpath = function realpath(p, options, callback) {
     if (typeof options === 'function') {
       callback = options;
       options = undefined;
     }
     return real.call(this, p, options, (e, resolved) =>
-      denied(e) ? nativeAsync(p, options, callback) : callback(e, resolved));
+      denied(e) ? nativeOrPlain(p, options, callback) : callback(e, resolved));
   };
-  fs.realpath.native = nativeAsync;
+  fs.realpath.native = nativeOrPlain;
+
+  const promised = fs.promises.realpath;  // Windows' own, like fs.realpath.native
+  fs.promises.realpath = function realpath(p, options) {
+    return promised.call(this, p, options).catch((e) => {
+      if (denied(e)) return plain(p, options);
+      throw e;
+    });
+  };
 }

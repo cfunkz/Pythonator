@@ -88,8 +88,10 @@ there) therefore starts with:
 - `--preserve-symlinks --preserve-symlinks-main`: modules are loaded by the path they were found at, without that
   walk. A package linked from elsewhere (`npm link`, pnpm's layout) is then loaded from where the link is.
 - a small preload, `pythonator-node.cjs` in the sandbox's own folder: when a look at a folder *above* the
-  sandbox's own folders is refused, it answers "a folder" (no name, size or date of anything), and a refused
-  `realpath` uses Windows' own, which needs access to the file only. It grants nothing.
+  sandbox's own folders is refused, it answers "a folder" (no name, size or date of anything). A refused
+  `realpath` uses Windows' own. When that is refused too (it names the drive, which a sandbox may not ask), the
+  answer is the path itself, made absolute, once a look at the file shows it exists. That's what
+  `--preserve-symlinks` already does for modules. It grants nothing.
 
 Both come through `NODE_OPTIONS`; a service's own `NODE_OPTIONS` are kept, after them.
 

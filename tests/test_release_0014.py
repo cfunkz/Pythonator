@@ -22,7 +22,8 @@ from pythonator.paths import DataDirs
 # -- Node.js in the Windows sandbox ----------------------------------------------------------------------------
 
 # What an AppContainer does to Node.js, on any OS: every folder above the sandbox's own refuses a stat with EPERM,
-# and Node's JavaScript realpath (which stats each of them, from C:\ down) fails; the OS's own realpath works.
+# and Node's JavaScript realpath (which stats each of them, from C:\ down) fails. So does Windows' own realpath
+# (fs.realpath.native and fs.promises.realpath: it names the drive), as CI showed with Vite in 0.0.15.
 APPCONTAINER = r"""
 const fs = require('fs'); const path = require('path');
 const roots = process.env.PYTHONATOR_NODE_ROOTS.split(path.delimiter).map((r) => path.resolve(r));
@@ -37,12 +38,13 @@ for (const n of ['lstat', 'stat']) { const o = fs[n];
     if (above(p)) return process.nextTick(cb, eperm(p)); return o.call(this, p, opt, cb); };
   const po = fs.promises[n];
   fs.promises[n] = function (p, ...a) { return above(p) ? Promise.reject(eperm(p)) : po.call(this, p, ...a); }; }
-const rn = fs.realpathSync.native;
+const refused = (p) => Object.assign(new Error(`EPERM: operation not permitted, realpath '${p}'`),
+  { code: 'EPERM', syscall: 'realpath', path: String(p) });
 fs.realpathSync = function (p) { throw eperm(path.parse(path.resolve(String(p))).root); };
-fs.realpathSync.native = rn;
-const ran = fs.realpath.native;
+fs.realpathSync.native = function (p) { throw refused(p); };
 fs.realpath = function (p, o, cb) { if (typeof o === 'function') cb = o; process.nextTick(cb, eperm('/')); };
-fs.realpath.native = ran;
+fs.realpath.native = function (p, o, cb) { if (typeof o === 'function') cb = o; process.nextTick(cb, refused(p)); };
+fs.promises.realpath = (p) => Promise.reject(refused(p));
 """
 
 MAIN = """

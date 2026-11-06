@@ -398,3 +398,26 @@ def test_a_node_whose_pipes_hang_runs_from_the_fixed_copy(tmp_path: Path, monkey
     (node / private_node.EXE).write_bytes(fake_pe(b"\\\\?\\pipe\\%suv\\%llu-%lu\x00 and a newer Node.js"))
     same = [str(node / private_node.EXE), "vite.js"]
     assert private_node.for_sandbox(same, {"PATH": ""}, dirs) == (same, {"PATH": ""}, None)
+
+
+REALPATH = """
+const fs = require('fs'); const path = require('path');
+const me = path.join(__dirname, 'main.js');
+const out = [fs.realpathSync(me) === me, fs.realpathSync.native(me) === me,
+             fs.realpathSync.native(me, 'buffer').toString() === me];
+try { fs.realpathSync.native(path.join(__dirname, 'missing.js')); } catch (e) { out.push(e.code); }
+fs.realpath(me, (e, a) => fs.realpath.native(me, (e2, b) => fs.realpath(path.join(__dirname, 'nope'), (e3) =>
+  fs.promises.realpath(me).then((c) => console.log(...out, a === me, b === me, e3.code, c === me)))));
+"""
+
+
+def test_a_realpath_windows_refuses_in_the_sandbox_is_the_path_itself(tmp_path: Path) -> None:
+    """Vite asks Windows' own realpath for each file it loads (once ``net use`` has run, which it now can), and an
+    AppContainer refuses it: the shim answers with the path, made absolute, when it exists."""
+    from tests.test_release_0014 import node_app, run_node
+
+    node, project, site = node_app.__wrapped__(tmp_path)  # type: ignore[attr-defined]
+    (project / "real.js").write_text(REALPATH, encoding="utf-8")
+    done = run_node(node, project, site, ["real.js"], shim=True)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.split() == ["true", "true", "true", "ENOENT", "true", "true", "ENOENT", "true"]
