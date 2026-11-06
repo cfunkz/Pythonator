@@ -54,10 +54,16 @@ The operating system refused part of the sandbox. The line above it in the conso
 
 * Check its port is listed on the **Network** tab, and the program listens on that port (the header shows the ports
   it actually listens on).
+* Read the console. A start notes when the port is already in use (and by which program) or, on Windows, reserved
+  by Windows itself: Hyper-V, WSL and Docker reserve ranges of ports, which can change at each restart, and
+  `netsh interface ipv4 show excludedportrange protocol=tcp` lists them. Choose another port on the Network tab.
+  When the service runs but still doesn't listen 30 seconds in, a note says so, with what its processes are doing.
 * On **Windows**, press **Make reachable…** once: Windows keeps sandboxed servers unreachable, even from the same
   computer, until an administrator allows it. See [Ports and APIs](networking.md#windows-make-reachable).
 * On **Linux 6.7+** and **macOS**, a sandboxed program may only listen on the listed ports. A framework that picks
-  its own port (`3000` instead of `$PORT`) is refused: list that port, or make it use `PORT`.
+  its own port (`3000` instead of `$PORT`) is refused: list that port, or make it use `PORT`. On Linux it may also
+  listen on a port the system picks for it (port 0), which dev tools such as Next.js use to talk to their own
+  workers.
 
 ### Other computers can't reach my server
 
@@ -86,6 +92,14 @@ Each service has its own environment by default (**Own environment** on the Gene
 never runs on your global packages. Node.js and Bun get `node_modules`, Ruby `vendor/bundle`, PHP `vendor`, and Deno,
 Go, .NET and Rust a package cache of their own. **Packages ▾ → Recreate environment** deletes it and installs again
 from scratch. Turn **Own environment** off to run on the runtime as it is installed.
+
+### "This project needs Node.js 22.22.3 or newer"
+
+Before a start, Pythonator compares the runtime on this computer with the versions the project asks for in its own
+files: `package.json`'s `engines`, `pyproject.toml`'s `requires-python`, `go.mod`'s `go` line, `Cargo.toml`'s
+`rust-version` and `composer.json`'s `php`. The Project builder does the same for each template before it makes
+anything. Install the version the note names (it says where from), then press Start again. The note doesn't stop
+the start, since a project's own range can be stricter than it needs.
 
 ### My language isn't in the list
 

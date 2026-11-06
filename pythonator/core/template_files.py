@@ -6,9 +6,19 @@ from __future__ import annotations
 import json
 
 
-def package_json(name: str, dependencies: dict[str, str], main: str = "index.js") -> str:
+def package_json(name: str, dependencies: dict[str, str], main: str = "index.js", *, bun: bool = False,
+                 engines: str = ">=20", scripts: dict[str, str] | None = None) -> str:
+    """``scripts`` given: a framework's project (``type: module``, its own scripts, no ``main``)."""
+    if bun:
+        return json.dumps({"name": name, "version": "0.1.0", "private": True, "module": main, "type": "module",
+                           "scripts": {"start": f"bun run {main}", "dev": f"bun run --watch {main}"},
+                           "dependencies": dependencies}, indent=2) + "\n"
+    if scripts:
+        return json.dumps({"name": name, "version": "0.1.0", "private": True, "type": "module",
+                           "scripts": scripts, "engines": {"node": engines},
+                           "dependencies": dependencies}, indent=2) + "\n"
     return json.dumps({"name": name, "version": "0.1.0", "private": True, "main": main,
-                       "scripts": {"start": f"node {main}"}, "engines": {"node": ">=20"},
+                       "scripts": {"start": f"node {main}"}, "engines": {"node": engines},
                        "dependencies": dependencies}, indent=2) + "\n"
 
 
@@ -318,3 +328,357 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 '''
+
+# -- 0.0.15: more web apps, for every runtime Pythonator runs -------------------------------------------------
+
+FASTIFY_JS = '''// A Fastify app (fastify.dev): a JSON API to build on.
+const Fastify = require("fastify");
+
+const app = Fastify({ logger: true });
+
+app.get("/", async () => ({ message: "Hello World" }));
+app.get("/health", async () => ({ ok: true }));
+
+const listenOn = Number(process.env.PORT || {port});
+app.listen({ port: listenOn, host: "127.0.0.1" }).catch((err) => {
+  app.log.error(err);
+  process.exit(1);
+});
+'''
+
+HONO_JS = '''// A Hono app on Node.js (hono.dev, with @hono/node-server): a small, fast web framework.
+const { Hono } = require("hono");
+const { serve } = require("@hono/node-server");
+
+const app = new Hono();
+app.get("/", (c) => c.json({ message: "Hello World" }));
+app.get("/health", (c) => c.json({ ok: true }));
+
+const listenOn = Number(process.env.PORT || {port});
+serve({ fetch: app.fetch, port: listenOn, hostname: "127.0.0.1" }, (info) =>
+  console.log(`Listening on http://127.0.0.1:${info.port}/`));
+'''
+
+KOA_JS = '''// A Koa app (koajs.com): middleware in a small core.
+const Koa = require("koa");
+
+const app = new Koa();
+app.use(async (ctx) => {
+  ctx.body = ctx.path === "/health" ? { ok: true } : { message: "Hello World" };
+});
+
+const listenOn = Number(process.env.PORT || {port});
+app.listen(listenOn, "127.0.0.1", () => console.log(`Listening on http://127.0.0.1:${listenOn}/`));
+'''
+
+WORKER_JS = '''// A long-running Node.js worker: it does one job every INTERVAL seconds (60 unless set in Configure →
+// Environment) and stops cleanly when you press Stop. Put your own work in doWork().
+const interval = Number(process.env.INTERVAL || 60) * 1000;
+
+async function doWork() {
+  console.log(new Date().toISOString(), "Working…");
+}
+
+let timer;
+async function tick() {
+  try {
+    await doWork();
+  } catch (err) {
+    console.error("The job failed; trying again next time:", err);
+  }
+  timer = setTimeout(tick, interval);
+}
+
+for (const signal of ["SIGTERM", "SIGINT", "SIGBREAK"]) {
+  process.on(signal, () => {
+    clearTimeout(timer);
+    console.log("Stopped");
+    process.exit(0);
+  });
+}
+console.log(`Started: one job every ${interval / 1000} s`);
+tick();
+'''
+
+STREAMLIT_PY = '''"""A Streamlit app (docs.streamlit.io): a data app in plain Python. Pythonator runs it with
+``python app.py``, which starts ``streamlit run`` on this computer only; ``streamlit run app.py`` works too."""
+
+import os
+import sys
+
+import streamlit as st
+
+st.title("Hello, Streamlit")
+name = st.text_input("Your name", "World")
+st.write(f"Hello, {name}!")
+st.line_chart([1, 3, 2, 4, 3, 5])
+
+if __name__ == "__main__":
+    from streamlit import runtime
+
+    if not runtime.exists():  # started as a script, not by Streamlit: start Streamlit with this file
+        from streamlit.web import cli
+
+        sys.argv = ["streamlit", "run", __file__, "--server.address", "127.0.0.1",
+                    "--server.port", os.environ.get("PORT", "{port}"), "--server.headless", "true",
+                    "--browser.gatherUsageStats", "false"]
+        sys.exit(cli.main())
+'''
+
+GRADIO_PY = '''"""A Gradio app (gradio.app): a web UI for a Python function, often a machine-learning model."""
+
+import os
+
+import gradio as gr
+
+
+def greet(name: str) -> str:
+    return f"Hello, {name}!"
+
+
+demo = gr.Interface(fn=greet, inputs="text", outputs="text", title="Hello, Gradio")
+
+if __name__ == "__main__":
+    demo.launch(server_name="127.0.0.1", server_port=int(os.environ.get("PORT", "{port}")))
+'''
+
+LITESTAR_PY = '''"""A Litestar app (litestar.dev): a typed ASGI API. Pythonator runs it with ``python app.py``
+(Uvicorn)."""
+
+import os
+
+import uvicorn
+from litestar import Litestar, get
+
+
+@get("/")
+async def index() -> dict[str, str]:
+    return {"message": "Hello World"}
+
+
+@get("/health")
+async def health() -> dict[str, bool]:
+    return {"ok": True}
+
+
+app = Litestar(route_handlers=[index, health])
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("PORT", "{port}")))
+'''
+
+GO_MOD = "module {module}\n\ngo 1.22\n"
+
+GO_HTTP = '''// A Go web server with the standard library (pkg.go.dev/net/http): nothing to install.
+package main
+
+import (
+	"encoding/json"
+	"log"
+	"net/http"
+	"os"
+)
+
+func main() {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "{port}"
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"message": "Hello World"})
+	})
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"ok":true}`))
+	})
+	log.Printf("Listening on http://127.0.0.1:%s/", port)
+	log.Fatal(http.ListenAndServe("127.0.0.1:"+port, mux))
+}
+'''
+
+GIN_GO = '''// A Gin web server (gin-gonic.com): a fast HTTP framework for Go.
+package main
+
+import (
+	"net/http"
+	"os"
+
+	"github.com/gin-gonic/gin"
+)
+
+func main() {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "{port}"
+	}
+	r := gin.Default()
+	r.GET("/", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"message": "Hello World"}) })
+	r.GET("/health", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+	r.Run("127.0.0.1:" + port)
+}
+'''
+
+AXUM_TOML = '''[package]
+name = "{name}"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = "0.8"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"] }
+serde_json = "1"
+'''
+
+AXUM_RS = '''// An Axum web server (docs.rs/axum): Rust's async web framework, on Tokio.
+use axum::{routing::get, Json, Router};
+use serde_json::{json, Value};
+
+async fn index() -> Json<Value> {
+    Json(json!({ "message": "Hello World" }))
+}
+
+#[tokio::main]
+async fn main() {
+    let port = std::env::var("PORT").unwrap_or_else(|_| "{port}".to_string());
+    let app = Router::new()
+        .route("/", get(index))
+        .route("/health", get(|| async { Json(json!({ "ok": true })) }));
+    let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{}", port)).await.unwrap();
+    println!("Listening on http://127.0.0.1:{}/", port);
+    axum::serve(listener, app).await.unwrap();
+}
+'''
+
+ELYSIA_TS = '''// An Elysia app on Bun (elysiajs.com): a fast, typed web framework made for Bun.
+import { Elysia } from "elysia";
+
+const port = Number(process.env.PORT || {port});
+new Elysia()
+  .get("/", () => ({ message: "Hello World" }))
+  .get("/health", () => ({ ok: true }))
+  .listen({ hostname: "127.0.0.1", port });
+
+console.log(`Listening on http://127.0.0.1:${port}/`);
+'''
+
+HONO_BUN_TS = '''// A Hono app on Bun (hono.dev): a small, fast web framework.
+import { Hono } from "hono";
+
+const app = new Hono();
+app.get("/", (c) => c.json({ message: "Hello World" }));
+app.get("/health", (c) => c.json({ ok: true }));
+
+const port = Number(process.env.PORT || {port});
+Bun.serve({ fetch: app.fetch, hostname: "127.0.0.1", port });
+console.log(`Listening on http://127.0.0.1:${port}/`);
+'''
+
+DENO_TS = '''// A Deno web server (docs.deno.com): Deno.serve, nothing to install.
+const port = Number(Deno.env.get("PORT") ?? "{port}");
+
+Deno.serve({ hostname: "127.0.0.1", port }, (req) => {
+  const path = new URL(req.url).pathname;
+  return Response.json(path === "/health" ? { ok: true } : { message: "Hello World" });
+});
+'''
+
+DENO_JSON = '''{
+  "tasks": {
+    "dev": "deno run --allow-net --allow-env --watch main.ts"
+  }
+}
+'''
+
+JAVA_MAIN = '''// A Java web server with the JDK's own HttpServer (JDK 11+ runs this file as is: java Main.java).
+import com.sun.net.httpserver.HttpServer;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+
+public class Main {
+    public static void main(String[] args) throws Exception {
+        int port = Integer.parseInt(System.getenv().getOrDefault("PORT", "{port}"));
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
+        server.createContext("/", exchange -> {
+            String path = exchange.getRequestURI().getPath();
+            byte[] body = (path.equals("/health") ? "{\\"ok\\":true}" : "{\\"message\\":\\"Hello World\\"}")
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(body);
+            }
+        });
+        server.start();
+        System.out.println("Listening on http://127.0.0.1:" + port + "/");
+    }
+}
+'''
+
+PHP_INDEX = '''<?php
+// A PHP app on PHP's built-in web server (php.net/features.commandline.webserver), for development.
+header('Content-Type: application/json');
+$path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+echo json_encode($path === '/health' ? ['ok' => true] : ['message' => 'Hello World']);
+'''
+
+SINATRA_GEMFILE = '''source "https://rubygems.org"
+
+gem "sinatra", "~> 4.1"
+gem "rackup", "~> 2.2"
+gem "puma", ">= 6"
+'''
+
+SINATRA_RB = '''# A Sinatra app (sinatrarb.com): a small Ruby web framework. Pythonator runs it with ``ruby app.rb``.
+require "bundler/setup"
+require "sinatra"
+require "json"
+
+set :bind, "127.0.0.1"
+set :port, Integer(ENV.fetch("PORT", "{port}"))
+
+get "/" do
+  content_type :json
+  { message: "Hello World" }.to_json
+end
+
+get "/health" do
+  content_type :json
+  { ok: true }.to_json
+end
+'''
+
+
+# Astro's minimal starter (github.com/withastro/astro, examples/minimal), written here: create-astro fetches it
+# from GitHub, which a firewall or GitHub's rate limit for anonymous downloads can refuse.
+ASTRO_CONFIG = """// @ts-check
+import { defineConfig } from 'astro/config';
+
+// https://astro.build/config
+export default defineConfig({});
+"""
+
+ASTRO_INDEX = """---
+---
+
+<html lang="en">
+\t<head>
+\t\t<meta charset="utf-8" />
+\t\t<meta name="viewport" content="width=device-width" />
+\t\t<meta name="generator" content={Astro.generator} />
+\t\t<title>Astro</title>
+\t</head>
+\t<body>
+\t\t<h1>Astro</h1>
+\t</body>
+</html>
+"""
+
+ASTRO_TSCONFIG = """{
+  "extends": "astro/tsconfigs/strict",
+  "include": [".astro/types.d.ts", "**/*"],
+  "exclude": ["dist"]
+}
+"""

@@ -201,10 +201,22 @@ def runtime_folders(argv0: str) -> list[Path]:
         out.append(root)
         if venv and (home := runtimes.venv_home(venv)):
             out.append(runtimes.install_root(str(home / "python")))
+    if (rustup := rustup_home(prog)) is not None:  # cargo / rustc there are rustup's proxies: the toolchains
+        out.append(rustup)
     if IS_WINDOWS:
         return out
     # On macOS and Linux most runtimes live in system folders the sandbox reads anyway.
     return [p for p in out if p.parts[1:2] and p.parts[1] not in ("usr", "bin", "lib", "System")]
+
+
+def rustup_home(prog: Path) -> Path | None:
+    """Where rustup keeps the Rust toolchains when ``prog`` is one of its proxies (in ``~/.cargo/bin``), else None.
+    A sandbox must read it (cargo there is only a proxy), and is told where it is (``RUSTUP_HOME``): its own home
+    folder isn't yours."""
+    if prog.parent.name.lower() != "bin" or prog.parent.parent.name.lower() != ".cargo":
+        return None
+    home = Path(os.environ.get("RUSTUP_HOME") or Path.home() / ".rustup")
+    return home if (home / "toolchains").is_dir() else None
 
 
 def launcher_argv() -> list[str]:

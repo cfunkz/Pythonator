@@ -138,19 +138,26 @@ and what it did.
 
 A new web app, API, bot or worker in one click, added as a service that is ready to start. Off until you enable it.
 
-| Template | Made by | Runs |
+The **Runtime** list narrows the templates to one runtime. Each template says which versions of its runtime it
+supports: when this computer's is missing or too old, the template says what to install (for example *Nuxt needs
+Node.js 22.22.3 or newer (this computer has 22.13.0): install the current LTS from nodejs.org*) instead of failing
+halfway through.
+
+| Runtime | Templates | Made by |
 | --- | --- | --- |
-| React | `npm create vite@9 <name> -- --template react` | Vite's dev server |
-| Vue | `npm create vue@3 <name> -- --default` | Vite's dev server |
-| Nuxt | `npm create nuxt@4 <name> -- --template minimal` | `nuxt dev` |
-| Express API (Node.js) | Express 5 and its hello-world app | `node index.js` |
-| FastAPI | a `.venv`, `pip install fastapi[standard]` and FastAPI's first-steps app | `python main.py` (Uvicorn) |
-| Flask | a `.venv`, `pip install Flask` and Flask's quickstart app | `python app.py` |
-| Django | a `.venv`, `pip install Django` (5.2 LTS), then `django-admin startproject` | `manage.py runserver` |
-| Discord bot (Python or Node.js) | discord.py or discord.js, and a bot that answers `/ping` | the bot |
-| Telegram bot (Python or Node.js) | python-telegram-bot or grammY, and an echo bot (long polling: no public address) | the bot |
-| WhatsApp bot (Python or Node.js) | Flask or Express, and a webhook for Meta's official WhatsApp Cloud API that checks each call's signature | the webhook, on this computer |
-| Python worker | a `.venv` and a script that does a job every minute and stops cleanly | `python worker.py` |
+| Node.js, front end | React, React + TypeScript, Vue, Svelte, Solid, Preact, Vanilla JS (all on Vite) | `npm create vite@9` (`create vue@3` for Vue) |
+| Node.js, full stack | Nuxt, Next.js, Angular, Astro | `npm create nuxt@4`, `npm create next-app@16`, `@angular/cli@22 new`; Astro's minimal starter (astro 7) |
+| Node.js, API | Express, Fastify, Hono, Koa | the framework's hello-world app |
+| Python | FastAPI, Flask, Django, Litestar, Streamlit, Gradio | a `.venv`, pip and the documented first app (`django-admin startproject` for Django) |
+| Go | net/http (nothing to install), Gin | `go.mod` and the app; `go mod tidy` for Gin |
+| Rust | Axum on Tokio | `Cargo.toml` and the app; the first start compiles it |
+| Bun | Hono, Elysia | the app; `bun install` on the first start |
+| Deno | `Deno.serve` | the app, nothing to install |
+| Java | the JDK's own HttpServer | one `Main.java`, run as it is (Java 11+) |
+| PHP | PHP's built-in server | `public/index.php`, served by `php -S` |
+| Ruby | Sinatra on Puma | a `Gemfile` and the app; `bundle install` on the first start |
+| Bots | Discord, Telegram, WhatsApp, each in Python or Node.js | discord.py / discord.js, python-telegram-bot / grammY, a webhook for Meta's WhatsApp Cloud API that checks each call's signature |
+| Workers | Python, Node.js | a script that does a job every minute and stops cleanly |
 
 Only each framework's own tool or the library's documented example is used, pinned to a major version. The
 plugin can only pick a template and a name: Pythonator builds the command, makes a new folder (it never writes
@@ -170,7 +177,8 @@ itself can't delete anything, and a project whose folder was changed since it wa
 | Projects folder | Where new projects go; empty means `Pythonator Projects` in your home folder |
 | Start a new project once it is made | Start it straight away |
 
-Permissions: `create_services`, `ui`. Node.js templates need Node.js (npm); the others need Python 3.
+Permissions: `create_services`, `ui`. Each template needs its runtime installed (Node.js with npm, Python 3, Go,
+Rust with cargo, Bun, Deno, a JDK, PHP, or Ruby with Bundler).
 
 ## Writing your own
 

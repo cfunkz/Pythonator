@@ -2,6 +2,33 @@
 
 Pythonator follows [semantic versioning](https://semver.org/). Each release lists what changed for users.
 
+## 0.0.15
+
+- The plugin dock stays smooth while you resize or move it, even with a long AI chat or a busy Notify panel. A panel
+  is laid out again once the dock rests, not at every step of the drag (97 ms to 5 ms per step with a long chat),
+  each label remembers its height for a width, and a plugin's updates are drawn at most every 60 ms, a hidden tab's
+  only when it is shown (a streamed AI answer: 91 ms to 13 ms per piece).
+- The Project builder (1.3) has 38 templates and a **Runtime** filter. New: React + TypeScript, Svelte, Solid,
+  Preact and Vanilla JS on Vite; Next.js, Angular and Astro; Fastify, Hono and Koa APIs; Litestar, Streamlit and
+  Gradio; Go (net/http and Gin), Rust (Axum), Bun (Hono and Elysia), Deno, Java, PHP and Ruby (Sinatra); a Node.js
+  worker. Each one was made and started in the Linux sandbox and answered over HTTP.
+- Runtime versions are checked before anything runs, for every runtime. Each template says which versions its
+  framework supports, and a project's own files are read too (`package.json` engines, `requires-python`, `go.mod`,
+  `rust-version`, composer's `php`). A Node.js that is too old is named with what to install, for example *Nuxt
+  needs Node.js 22.22.3 or newer (this computer has 22.13.0)*. That was why Nuxt failed: Nuxt 4 and its packages
+  need a newer Node.js 22 than 22.13, not the sandbox.
+- A start notes a listed port that is already in use (and by which program) or, on Windows, reserved by Windows
+  for Hyper-V, WSL or Docker. A service that runs but still doesn't listen on its port 30 seconds in gets a note
+  with what its processes are doing, for every runtime.
+- The console shows the command that really runs: in the Windows sandbox, the private copy of Node.js (since
+  0.0.13), not `C:\Program Files\nodejs`.
+- Linux sandbox: a service with listed ports may also listen on a port the system picks (port 0). Next.js's
+  Turbopack and Nuxt talk to their own workers that way and failed without it; `listen()` without `bind()` got
+  such a port already. Rust installed with rustup works in the sandbox (its toolchains folder is readable, and
+  `RUSTUP_HOME` points at it).
+- Nuxt runs as one process (`--no-fork`), Astro's dev server stays in the foreground, and Astro's starter is
+  written by Pythonator instead of being downloaded from GitHub.
+
 ## 0.0.14
 
 - Windows: sandboxed npm and Node.js get past *EPERM: operation not permitted, lstat 'C:\'* (npm create vue,

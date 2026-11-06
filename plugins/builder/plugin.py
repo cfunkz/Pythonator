@@ -17,6 +17,8 @@ from pythonator.sdk import Plugin, PluginError, ServiceEvent, ui
 NAME = re.compile(r"^[a-z][a-z0-9-]{0,39}$")
 PICK = "Choose a template…"
 ORDER = {"web": 0, "bot": 1, "worker": 2}  # web apps and APIs first, then bots, then workers
+ALL = "All runtimes"
+GROUPS = ("Node.js", "Python", "Go", "Rust", "Bun", "Deno", "Java", "PHP", "Ruby")  # the runtime filter's order
 NEW, MADE = "New project", "Projects"  # the panel's two views
 
 
@@ -35,6 +37,7 @@ class Builder(Plugin):
         self.projects: list[dict[str, object]] = []
         self.default_folder = ""
         self.chosen = ""
+        self.group = ALL
         self.picked = ""  # a project, by name, for Delete
         self.status = ("", "")
         self.busy = False
@@ -70,6 +73,10 @@ class Builder(Plugin):
     def on_action(self, action: str, value: str) -> None:
         if action == "page":
             self.page = MADE if value.startswith(MADE) else NEW
+        elif action == "group":
+            self.group = value if value in GROUPS else ALL
+            if self.chosen and self.group != ALL and self.labels().get(self.chosen, {}).get("group") != self.group:
+                self.chosen = ""
         elif action == "template":
             self.chosen = value if value in self.labels() else ""
             self.status = ("", "")
@@ -98,7 +105,8 @@ class Builder(Plugin):
             self.status = ("Choose a template first.", "warn")
             return
         if not template.get("ready"):
-            self.status = (f"{self.chosen} needs {template.get('needs')} on this computer.", "warn")
+            how = f" ({template.get('how')})" if template.get("how") else ""
+            self.status = (f"{self.chosen} needs {template.get('needs')}{how}.", "warn")
             return
         name = name or suggest(f"my-{template['key']}", {s.name for s in self.services.values()})
         if not NAME.match(name):
@@ -151,13 +159,17 @@ class Builder(Plugin):
         self.show(ui.panel("Project builder", *items))
 
     def _new(self) -> list[dict[str, object]]:
-        ordered = sorted(self.templates, key=lambda t: ORDER.get(str(t.get("kind")), 9))
+        rank = {g: i for i, g in enumerate(GROUPS)}
+        shown = [t for t in self.templates if self.group == ALL or t.get("group") == self.group]
+        ordered = sorted(shown, key=lambda t: (ORDER.get(str(t.get("kind")), 9), rank.get(str(t.get("group")), 99)))
         options = [PICK, *(str(t["label"]) for t in ordered)]
+        groups = [g for g in GROUPS if any(t.get("group") == g for t in self.templates)]
         items: list[dict[str, object]] = [
             ui.text("A new project, made by the framework's own tool and added as a service. It runs sandboxed, "
                     "on this computer only.", "muted"),
-            ui.row(ui.select("template", options, self.chosen or PICK, "Template"),
+            ui.row(ui.select("group", [ALL, *groups], self.group, "Runtime"),
                    ui.button("Refresh: look for templates and installed tools again", "refresh", icon="refresh")),
+            ui.row(ui.select("template", options, self.chosen or PICK, "Template")),
         ]
         template = self.labels().get(self.chosen)
         if template is not None:
@@ -166,7 +178,8 @@ class Builder(Plugin):
                                  + (f" Port {port} (or the next free one)." if port else " It serves no port."),
                                  "" if template.get("ready") else "warn"))
             if not template.get("ready"):
-                items.append(ui.text(f"Install {template.get('needs')} first, then press Refresh.", "warn"))
+                how = f" ({template.get('how')})" if template.get("how") else ""
+                items.append(ui.text(f"It needs {template.get('needs')}{how}. Then press Refresh.", "warn"))
             elif not self.busy:
                 folder = str(self.settings.get("folder", "") or "") or self.default_folder
                 suggested = suggest(f"my-{template.get('key')}", {s.name for s in self.services.values()})

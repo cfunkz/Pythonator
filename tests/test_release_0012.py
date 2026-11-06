@@ -31,10 +31,13 @@ def test_every_written_template_is_valid_code(key: str, tmp_path: Path, monkeypa
     ports = plan.service["network"]["ports"]
     assert (ports == []) == (t.port == 0) and plan.service["mode"] == "sandbox"
     assert plan.service["network"]["expose"] == "local" and set(plan.service["env"]) == set(t.env)
-    if t.needs == "npm":
+    if t.needs in ("npm", "bun"):
         assert plan.steps == [] and '"private": true' in plan.files["package.json"]  # npm install on first Start
-    else:
+    elif t.needs == "python":
         assert plan.steps[0][1:3] == ["-m", "venv"] and "requirements.txt" in plan.files
+    else:  # Go, Rust, Deno, Java, PHP, Ruby: their own files, and their own tool fetches what they use
+        assert ".gitignore" in plan.files and all(step[0] == f"/bin/{step[0].rsplit('/', 1)[-1]}"
+                                                  for step in plan.steps)
 
 
 @pytest.mark.skipif(not runtimes.which("node"), reason="Node.js isn't installed")

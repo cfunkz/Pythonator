@@ -41,6 +41,7 @@ Listener = Callable[[dict[str, Any]], None]
 RESTART_WINDOW = 600.0  # seconds in which max_restarts counts
 WARMUP = 2.0  # seconds a service counts as still starting once running: imports and first connections
 LAUNCH_WAIT = 60.0  # the longest one slow start (its environment being made) holds its place in the queue
+LISTEN_AFTER = 30  # seconds after a start: a service not listening on its port yet gets a note
 LIVE_LIMIT = 128 * 1024  # characters of output per service per tick sent to windows; the log gets everything
 
 
@@ -95,6 +96,7 @@ class Slot:
     note: str = ""
     exit_code: int | None = None
     started_wall: float = 0.0
+    listen_checked: bool = False  # this start's "not listening yet" check is done
     stats: Stats = field(default_factory=Stats)
     pending: list[str] = field(default_factory=list)
     partial: str = ""
@@ -513,6 +515,8 @@ class Supervisor:
         for level, text in envcheck.service_report(service):
             if level != "ok":
                 self.note(slot, f"{'Problem' if level == 'error' else 'Note'}: {text}")
+        for text in envcheck.port_problems(service):
+            self.note(slot, f"Problem: {text}")
         try:
             cmd = isolation.prepare(service, self.dirs)
         except (isolation.IsolationError, OSError) as exc:
@@ -530,6 +534,7 @@ class Supervisor:
         slot.runner = runner
         slot.exit_code = None
         slot.started_wall = time.time()
+        slot.listen_checked = False
         slot.next_run = 0.0
         self.note(slot, f"Started {_shown(cmd.shown or cmd.argv)} · pid {runner.pid}")
         self.note(slot, cmd.describe)
@@ -849,7 +854,8 @@ class Supervisor:
         except (isolation.IsolationError, OSError) as exc:
             self._task_failed(slot, str(exc))
             return
-        self.note(slot, f"$ {_shown(step)}")
+        # As it runs (Windows: node.exe npm-cli.js of the private Node copy, not npm.cmd); a container's as typed.
+        self.note(slot, f"$ {_shown(cmd.shown if cmd.shown and slot.service.mode is not Mode.CONTAINER else step)}")
         runner = Runner(f"{slot.service.id}:task", cmd, self.queue)  # type: ignore[arg-type]
         try:
             runner.start()
@@ -955,6 +961,7 @@ class Supervisor:
             if not st.ports and slot.stats.ports and st.processes:
                 st.ports, st.remote = slot.stats.ports, slot.stats.remote  # ports are sampled every third time
             slot.stats = st
+            self._check_listening(slot)
             limit = slot.service.memory_mb
             if limit and st.memory > limit * 1024 * 1024 and slot.service.mode is not Mode.CONTAINER:
                 self.note(slot, f"Over its {limit} MB memory limit ({st.memory // (1024 * 1024)} MB): stopping it")
@@ -962,6 +969,21 @@ class Supervisor:
             items[sid] = {"cpu": round(st.cpu, 1), "memory": st.memory, "processes": st.processes,
                           "ports": st.ports, "remote": st.remote[:50]}
         self.emit({"ev": "stats", "items": items, "system": system or {}})
+
+    def _check_listening(self, slot: Slot) -> None:
+        """Once per start, LISTEN_AFTER seconds in: a service that should serve a port but doesn't listen on it
+        yet gets a note saying so, with what its processes are doing, for any runtime. A start that hangs without
+        a word (a dev server stuck on something) is then visible, with where it is stuck."""
+        port = slot.service.network.ports[0] if slot.service.network.enabled and slot.service.network.ports else 0
+        if slot.listen_checked or not port or slot.state is not State.RUNNING or slot.runner is None \
+                or time.time() - slot.started_wall < LISTEN_AFTER:
+            return
+        slot.listen_checked = True
+        if port in slot.stats.ports or slot.service.mode is Mode.CONTAINER:  # a container's port is the engine's
+            return
+        others = f" (it listens on {', '.join(map(str, slot.stats.ports))})" if slot.stats.ports else ""
+        self.note(slot, f"Not listening on port {port} after {LISTEN_AFTER} s{others}. If it is still starting, "
+                        f"wait; else its output above says why. Its processes now: {_process_tree(slot.runner.pid)}")
 
     # -- crash safety -------------------------------------------------------------------------------------
 
@@ -1080,6 +1102,30 @@ def _tree_stats(pid: int, cache: dict[int, psutil.Process], *, ports: bool) -> S
             continue
     st.ports.sort()
     return st
+
+
+def _process_tree(pid: int | None) -> str:
+    """``node.exe (pid 12, 3% CPU) → cmd.exe /d /s /c "net use" (pid 15, 0% CPU)``: what a service runs now."""
+    if not pid:
+        return "none"
+    try:
+        root = psutil.Process(pid)
+        tree = [root, *root.children(recursive=True)]
+    except psutil.Error:
+        return "none"
+    parts = []
+    for proc in tree[:10]:
+        try:
+            with proc.oneshot():
+                argv = proc.cmdline()
+                if proc.name().lower().startswith("bwrap") or any(
+                        "launcher import main" in a or a == "--sandbox-exec" for a in argv):
+                    continue  # Pythonator's own sandbox launcher
+                line = " ".join(Path(argv[0]).name if i == 0 else a for i, a in enumerate(argv[:5])) or proc.name()
+                parts.append(f"{line[:120]} (pid {proc.pid}, {sum(proc.cpu_times()[:2]):.1f} s of CPU)")
+        except (psutil.Error, IndexError):
+            continue
+    return " → ".join(parts) or "none"
 
 
 def _describe_exit(code: int | None) -> str:

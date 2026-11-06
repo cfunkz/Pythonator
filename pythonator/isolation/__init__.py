@@ -25,6 +25,7 @@ from .base import (
     forbidden_write,
     own_env_vars,
     private_dirs,
+    rustup_home,
 )
 from .base import runtime_folders as runtime_folders
 
@@ -155,6 +156,8 @@ def prepare(service: Service, dirs: DataDirs, *, task: list[str] | None = None, 
                        cmdline=cmdline if run is argv else None)
     shown = argv
     name = f"svc-{service.id}"
+    if (rustup := rustup_home(Path(runtimes.which(argv[0]) or argv[0]))) is not None:
+        env.setdefault("RUSTUP_HOME", str(rustup))  # the sandbox's home isn't yours: tell rustup where it is
     if IS_WINDOWS:
         from . import private_node, windows
 
@@ -166,7 +169,7 @@ def prepare(service: Service, dirs: DataDirs, *, task: list[str] | None = None, 
         if runtime is not None:
             cmd.describe = f"AppContainer, Node.js from Pythonator's private copy in {runtime}"
         cmd.describe = f"Sandbox ({cmd.describe}): {_summary(service, policy, task is not None)}"
-        cmd.shown = shown
+        cmd.shown = argv if runtime is not None else shown  # what really runs: node.exe npm-cli.js, not npm.cmd
         return cmd
     policy = policy_for(service, argv, dirs, task=task is not None)
     home, tmp = private_dirs(dirs, name)

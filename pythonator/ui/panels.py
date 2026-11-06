@@ -11,7 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from PyQt6.QtCore import QEvent, QObject, QPoint, QRect, QSize, Qt, QUrl
+from PyQt6.QtCore import QEvent, QObject, QPoint, QRect, QSize, Qt, QTimer, QUrl
 from PyQt6.QtGui import QColor, QDesktopServices, QKeyEvent, QTextCursor, QTextDocument
 from PyQt6.QtWidgets import (
     QAbstractScrollArea,
@@ -46,6 +46,8 @@ MAX_INPUT = 16_000
 # element fits in it (labels wrap, buttons and options end in "…", rows wrap, tables scroll inside themselves),
 # and the page is exactly as wide as the dock, so nothing can reach past its edge.
 PANEL_MIN_WIDTH = 240
+REFLOW_MS = 90  # a panel is laid out again this long after the dock stops changing size
+REDRAW_MS = 60  # a plugin's redraws are drawn at most this often (an AI answer streams in many pieces)
 BUTTON_MIN = 56
 _LONG_WORD = 28
 _SEPARATORS = "/\\_-.,:;=&?"
@@ -98,8 +100,39 @@ def breakable(text: str) -> str:
     return " ".join(out)
 
 
+class WrapLabel(QLabel):
+    """A label wrapped to its width that remembers its height per width: laying out text is slow, and Qt asks
+    every label of a panel again each time anything in it changes (a streamed piece of an AI answer) or the dock
+    is resized."""
+
+    def __init__(self, text: str = "", *, plain: bool = True) -> None:
+        super().__init__()
+        self._heights: dict[int, int] = {}
+        self.setWordWrap(True)
+        if plain:  # anything a plugin wrote: never interpreted as HTML
+            self.setTextFormat(Qt.TextFormat.PlainText)
+        if text:
+            self.setText(text)
+
+    def setText(self, text: str | None) -> None:
+        self._heights.clear()
+        super().setText(text)
+
+    def heightForWidth(self, width: int) -> int:
+        if (height := self._heights.get(width)) is None:
+            if len(self._heights) > 32:
+                self._heights.clear()
+            height = self._heights[width] = super().heightForWidth(width)
+        return height
+
+    def changeEvent(self, event: QEvent | None) -> None:
+        if event is not None and event.type() in (QEvent.Type.FontChange, QEvent.Type.StyleChange):
+            self._heights.clear()
+        super().changeEvent(event)
+
+
 def _plain(text: str) -> QLabel:
-    out = label(breakable(text), plain=True)
+    out = WrapLabel(breakable(text))
     out.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)  # wraps to the panel's width
     out.setMinimumWidth(1)
     return out
@@ -199,16 +232,16 @@ def _open_link(url: QUrl) -> None:
         QDesktopServices.openUrl(url)
 
 
-class ChatText(QLabel):
+class ChatText(WrapLabel):
     """A message's text, wrapped to the chat's width (a label is always as tall as its text). An answer asked as
     Markdown shows formatted, through :func:`markdown_html`; a link opens in the browser on a click, http(s) only."""
 
     def __init__(self, *, markdown: bool = False) -> None:
-        super().__init__()
+        super().__init__(plain=not markdown)
         self.markdown = markdown
         self.source = ""
-        self.setWordWrap(True)
-        self.setTextFormat(Qt.TextFormat.RichText if markdown else Qt.TextFormat.PlainText)
+        if markdown:
+            self.setTextFormat(Qt.TextFormat.RichText)
         self.setOpenExternalLinks(False)
         self.linkActivated.connect(lambda url: _open_link(QUrl(url)))
         self.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse
@@ -723,6 +756,11 @@ class PanelPage(QScrollArea):
         self.items: list[_Item] = []
         self.last = ""
         self.title = plugin
+        self._place_at = (False, 0)
+        self._reflow = QTimer(self)
+        self._reflow.setSingleShot(True)
+        self._reflow.setInterval(REFLOW_MS)
+        self._reflow.timeout.connect(self._fit_width)
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)  # a panel fits its dock's width
@@ -736,8 +774,17 @@ class PanelPage(QScrollArea):
 
     def resizeEvent(self, event: Any) -> None:
         """The page is exactly as wide as the dock: whatever a panel holds is laid out in that width, so it
-        can't reach past the edge (the contract above)."""
+        can't reach past the edge (the contract above). While the dock is being resized or moved, the panel is
+        laid out again once it rests (REFLOW_MS), not at every step: a big panel (a long AI chat) takes tens of
+        milliseconds to lay out, which made dragging the dock stutter."""
         super().resizeEvent(event)
+        body = self.widget()
+        if body is not None and body.minimumWidth() == 0:  # the first time: at once
+            self._fit_width()
+        else:
+            self._reflow.start()
+
+    def _fit_width(self) -> None:
         body, port = self.widget(), self.viewport()
         if body is not None and port is not None and body.minimumWidth() != port.width():
             body.setFixedWidth(port.width())
@@ -764,36 +811,74 @@ class PanelPage(QScrollArea):
                 layout.addStretch(1)
         finally:
             body.setUpdatesEnabled(True)
-        if bar is not None:  # a redraw keeps the place; at the end (a chat), it follows new lines
-            body.adjustSize()
-            bar.setValue(bar.maximum() if at_end else position)
+        if bar is not None:  # a redraw keeps the place; at the end, it follows new lines
+            # Once the new layout is in (Qt lays out on its next pass). Not body.adjustSize(): that measures every
+            # widget's preferred size (every chat message), ~70 ms per streamed piece of an answer.
+            self._place_at = (at_end, position)
+            QTimer.singleShot(0, self._restore_place)
         return True
+
+    def _restore_place(self) -> None:
+        bar = self.verticalScrollBar()
+        if bar is not None:
+            at_end, position = self._place_at
+            bar.setValue(bar.maximum() if at_end else position)
 
 
 class PanelDock(QTabWidget):
-    """One tab per plugin panel, in the window's Plugins dock."""
+    """One tab per plugin panel, in the window's Plugins dock. A plugin's redraws are drawn at most every
+    REDRAW_MS (the latest one wins), and a hidden tab's only when it is shown: the window stays smooth while the AI
+    streams an answer or a plugin updates its figures."""
 
     def __init__(self, on_action: Action, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.on_action = on_action
         self.pages: dict[str, PanelPage] = {}
+        self.pending: dict[str, tuple[str, dict[str, Any]]] = {}
         self.drafts = Drafts()
         self.setDocumentMode(True)
         self.setMinimumWidth(PANEL_MIN_WIDTH)
         self.setUsesScrollButtons(True)
         self.setElideMode(Qt.TextElideMode.ElideRight)
+        self._redraw = QTimer(self)
+        self._redraw.setSingleShot(True)
+        self._redraw.setInterval(REDRAW_MS)
+        self._redraw.timeout.connect(self.flush)
+        self.currentChanged.connect(lambda _i: self.flush())
 
     def update_panel(self, plugin: str, name: str, panel: dict[str, Any] | None) -> None:
         page = self.pages.get(plugin)
         if panel is None:
+            self.pending.pop(plugin, None)
             if page is not None:
                 del self.pages[plugin]
                 self.removeTab(self.indexOf(page))
                 page.deleteLater()
             return
-        if page is None:
+        if page is None:  # a new tab: drawn at once
             page = self.pages[plugin] = PanelPage(plugin, self.on_action, self.drafts)
             self.addTab(page, plugin)
+            self._draw(page, name, panel)
+            return
+        self.pending[plugin] = (name, panel)
+        title = str(panel.get("title") or name or plugin)
+        index = self.indexOf(page)
+        if self.tabText(index) != title:
+            self.setTabText(index, title)
+        if not self._redraw.isActive():
+            self._redraw.start()
+
+    def flush(self) -> None:
+        """Draw what's waiting for the tab on show (the others wait until they are shown)."""
+        for plugin, (name, panel) in list(self.pending.items()):
+            page = self.pages.get(plugin)
+            if page is None:
+                self.pending.pop(plugin, None)
+            elif page is self.currentWidget():
+                self.pending.pop(plugin, None)
+                self._draw(page, name, panel)
+
+    def _draw(self, page: PanelPage, name: str, panel: dict[str, Any]) -> None:
         page.show_panel(panel, name)
         index = self.indexOf(page)
         if self.tabText(index) != page.title:

@@ -1,6 +1,6 @@
 {
   "plugins": {
-    "builder": "2bf3e1e23cd78a031bb62edabc7d572b7147d6f82157950522fc1836a0dd76ec",
+    "builder": "2a6854b6c7465a87eda93765e6dfb78da632576e3446dc606f259a3e79705863",
     "guard": "67d91ac41e5d81629ab039675b048ef7dfd4492c3ff9bfecc009934a7aef872c",
     "notify": "1f1f6e02b3f80aa6a43a0a256aca49fa6f503527bab41359e17f785b3cf4fbed",
     "pythonator-ai": "3833baf4734cdf27f4e1ece25bd01a8aedcf6dda7b56c47b5b826882329c23c6"

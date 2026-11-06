@@ -135,8 +135,10 @@ def wrap(argv: list[str], cwd: Path, env: dict[str, str], policy: Policy, home: 
         read = [*SYSTEM, *_system_links(), *(str(f) for f in launcher_files()),
                 *(str(g.path) for g in grants if not g.write)]
         write = [*DEVICES, *(["/tmp"] if sup.bwrap else []), *(str(g.path) for g in grants if g.write)]
+        # Port 0 too: one the system picks. Dev tools talk to their own workers that way (Next.js's Turbopack,
+        # Nuxt), and listen() without bind() gets one anyway, so it opens nothing new.
         plan["landlock"] = {"ro": read, "rw": write, "net": not policy.network, "scope": True,
-                            "ports": list(policy.ports)}
+                            "ports": [*policy.ports, 0] if policy.ports else []}
     if sup.seccomp:
         plan["seccomp"] = {"net": not policy.network, "unix": not sup.bwrap, "lib": sup.seccomp}
     if sup.bwrap:
