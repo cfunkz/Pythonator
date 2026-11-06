@@ -66,6 +66,32 @@ jobs:
         name: What Seatbelt denied
         run: /usr/bin/log show --last 15m --style compact --predicate 'sender == "Sandbox"' | tail -n 200
 
+  node-sandbox:
+    # End to end on Windows, with Node.js installed for all users in C:\Program Files as on most PCs: a React
+    # (Vite) project from the Project builder starts in the sandbox and answers on its port. When it doesn't, the
+    # log says where it is stuck (the JavaScript stack, and checks from the console's shell). It downloads
+    # packages and takes minutes, so it doesn't hold up the rest of CI.
+    runs-on: windows-latest
+    continue-on-error: true
+    timeout-minutes: 30
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHONATOR_E2E: "1"
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: "3.13"
+      - run: python -m pip install --require-hashes -r requirements-dev.lock && python -m pip install --no-deps -e .
+      - name: The Node.js the sandbox will use
+        run: |
+          node -v
+          where.exe node
+          icacls (Split-Path (Get-Command node).Source)
+      - run: python -m pytest -q -s -rs tests/test_e2e_node_sandbox.py
+
   build:
     # The installers and downloads as a release ships them, each installed and started once.
     needs: test

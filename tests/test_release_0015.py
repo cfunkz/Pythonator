@@ -279,7 +279,7 @@ def _panel(n: int, text: str = "word ") -> dict[str, Any]:
     return {"title": f"P{n}", "items": [{"type": "text", "text": text * 40} for _ in range(10)]}
 
 
-def test_redraws_are_coalesced_and_hidden_tabs_wait(qtbot: Any) -> None:
+def test_redraws_are_coalesced_and_hidden_tabs_wait(qtbot: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     from pythonator.ui.panels import REDRAW_MS, PanelDock
 
     dock = PanelDock(lambda *a: None)
@@ -288,10 +288,13 @@ def test_redraws_are_coalesced_and_hidden_tabs_wait(qtbot: Any) -> None:
     drawn: list[str] = []
     dock.update_panel("a", "A", _panel(0))
     dock.update_panel("b", "B", _panel(0))
-    for page in dock.pages.values():
-        original = page.show_panel
-        page.show_panel = (lambda o, p: lambda panel, name="": (drawn.append(p), o(panel, name))[1])(  # type: ignore[method-assign]
-            original, page.plugin)
+    original = PanelDock._draw
+
+    def counted(self: PanelDock, page: Any, name: str, panel: dict[str, Any]) -> None:
+        drawn.append(page.plugin)
+        original(self, page, name, panel)
+
+    monkeypatch.setattr(PanelDock, "_draw", counted)
     for i in range(1, 20):  # a streamed answer: twenty updates
         dock.update_panel("a", "A", _panel(i))
         dock.update_panel("b", "B", _panel(i))
@@ -313,14 +316,16 @@ def test_a_resize_lays_the_panel_out_once_it_rests(qtbot: Any) -> None:
     page.resize(400, 300)
     page.show()
     page.show_panel(_panel(1))
-    qtbot.waitUntil(lambda: page.widget().width() == page.viewport().width())
-    first = page.widget().width()
+    body, port = page.widget(), page.viewport()
+    assert body is not None and port is not None
+    qtbot.waitUntil(lambda: body.width() == port.width())
+    first = body.width()
     for width in range(400, 600, 10):  # a drag
         page.resize(width, 300)
         qtbot.wait(5)
-    assert page.widget().width() == first  # not at every step
+    assert body.width() == first  # not at every step
     qtbot.wait(REFLOW_MS * 3)
-    assert page.widget().width() == page.viewport().width() != first
+    assert body.width() == port.width() != first
 
 
 def test_a_label_remembers_its_height_per_width(qtbot: Any) -> None:
