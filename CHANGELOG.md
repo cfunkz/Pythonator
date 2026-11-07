@@ -7,6 +7,8 @@ All notable changes to Pythonator are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.0.17] - 2026-11-07
+
 ## [0.0.16] - 2026-11-07
 
 Bundled plugins: Project builder 1.4.0, Notify 1.1.1, AI assistant 1.3.1.
@@ -576,7 +578,8 @@ First public release.
   Webhooks, Guard and the AI assistant (Claude, OpenAI, Gemini, DeepSeek, Ollama).
 - A website with guides, a glossary, a dependency list and an API reference.
 
-[Unreleased]: https://github.com/cfunkz/Pythonator/compare/v0.0.16...HEAD
+[Unreleased]: https://github.com/cfunkz/Pythonator/compare/v0.0.17...HEAD
+[0.0.17]: https://github.com/cfunkz/Pythonator/compare/v0.0.16...v0.0.17
 [0.0.16]: https://github.com/cfunkz/Pythonator/compare/v0.0.15...v0.0.16
 [0.0.15]: https://github.com/cfunkz/Pythonator/compare/v0.0.14...v0.0.15
 [0.0.14]: https://github.com/cfunkz/Pythonator/compare/v0.0.13...v0.0.14
