@@ -285,7 +285,12 @@ class ServiceFiles:
                 text = new
                 continue
             if not old:
-                raise FileRefused(f"Edit {i}: {rel} exists, so say which text to replace")
+                if text.strip() or len(edits) != 1:  # an empty file is written like a new one
+                    raise FileRefused(f"Edit {i}: {rel} isn't empty, so say which text to replace")
+                if len(new.encode()) > MAX_NEW_FILE:
+                    raise FileRefused("A new file from the assistant is at most 48 KB")
+                text = new
+                continue
             count = text.count(old)
             if count == 0 and "\r\n" in text and "\r\n" not in old:  # the model saw the file with \n line ends
                 old, new = old.replace("\n", "\r\n"), new.replace("\n", "\r\n")

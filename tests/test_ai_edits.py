@@ -176,3 +176,40 @@ def test_one_review_button_per_file_from_the_latest_answer(tmp_path: Path) -> No
     turns[1].proposals["src/App.jsx"] = "Refused: something"  # refused: asking again is the way, not a retry
     a.render(force=True)
     assert "Review change" not in json.dumps(a.panels[-1])
+
+
+SCRIPT = """import math
+
+def calculate():
+    number = 16
+    print(math.sqrt(number))
+
+if __name__ == "__main__":
+    calculate()
+"""
+
+
+@pytest.mark.parametrize("before", ["", "\n", "print('hi')\n", "print('hi')\r\nx = 1\r\n"])
+def test_a_whole_file_answer_is_applied_to_an_existing_file(tmp_path: Path, before: str) -> None:
+    """0.0.17: a model asked to write main.py writes it whole, with nothing before =======. For a main.py that is
+    there, even empty, Pythonator refused it ("main.py exists, so say which text to replace")."""
+    (tmp_path / "main.py").write_bytes(before.encode())
+    shown = {"main.py": before}
+    answer = f"Here is the script.\n\n<<<<<<< EDIT main.py\n=======\n{SCRIPT}>>>>>>> END\n"
+    edits, notes = context.resolve_paths(context.parse_edits(answer, shown), ["main.py"], shown)
+    assert notes == []
+    proposal = ServiceFiles(tmp_path).propose("p", "s", "main.py", [{"old": e.old, "new": e.new}
+                                                                     for e in edits["main.py"]], "")
+    assert proposal.after.replace("\r\n", "\n") == SCRIPT
+
+
+def test_a_whole_file_answer_for_a_file_the_assistant_never_saw_is_not_offered() -> None:
+    answer = f"<<<<<<< EDIT main.py\n=======\n{SCRIPT}>>>>>>> END\n"
+    edits, notes = context.resolve_paths(context.parse_edits(answer), ["main.py"], {})
+    assert edits == {} and "didn't see main.py" in notes[0]
+
+
+def test_pythonator_still_wants_the_text_to_replace_in_a_file_with_content(tmp_path: Path) -> None:
+    (tmp_path / "main.py").write_text("print('hi')\n", encoding="utf-8")
+    with pytest.raises(FileRefused, match="isn't empty"):
+        ServiceFiles(tmp_path).propose("p", "s", "main.py", [{"old": "", "new": SCRIPT}], "")

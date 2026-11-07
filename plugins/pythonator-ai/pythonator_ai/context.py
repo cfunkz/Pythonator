@@ -207,6 +207,10 @@ def resolve_paths(edits: dict[str, list[Edit]], known: list[str],
     out: dict[str, list[Edit]] = {}
     for real, items in merged.items():
         if real not in shown:
+            if real in known and any(not e.old.strip() for e in items):
+                notes.append(f"The change to {real} isn't offered: it writes the whole file, but the assistant "
+                             f"didn't see {real}. Add it with Add a file… and ask again.")
+                continue
             out[real] = items  # not shown to the model: Pythonator checks it when you review it
             continue
         fitted, why = _fit_all(real, shown[real], items)
@@ -234,7 +238,8 @@ def _fit_all(path: str, shown: str, items: list[Edit]) -> tuple[list[Edit], str]
         old = edit.old.replace("\r\n", "\n")
         if not old.strip():
             if len(items) == 1 and not cut and edit.new.strip():
-                out.append(Edit(edit.path, text, edit.new))  # the whole file, written again
+                # The whole file, written again (an empty one: nothing to replace, as for a new file)
+                out.append(Edit(edit.path, text if text.strip() else "", edit.new))
                 text = edit.new
                 continue
             return [], f"{which} doesn't say which text of {path} it replaces"

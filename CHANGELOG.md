@@ -9,6 +9,15 @@ All notable changes to Pythonator are recorded here. The format follows
 
 ## [0.0.17] - 2026-11-07
 
+Bundled plugins: AI assistant 1.3.2.
+
+### Fixed
+
+- AI assistant: an answer that writes a whole file (nothing before `=======`) for a file that exists but is empty,
+  such as a new project's `main.py`, is written after you review it. It was refused with *"main.py exists, so say
+  which text to replace"*. A whole-file answer for a file the assistant wasn't shown isn't offered, and the chat
+  says to add the file with **Add a file…** and ask again.
+
 ## [0.0.16] - 2026-11-07
 
 Bundled plugins: Project builder 1.4.0, Notify 1.1.1, AI assistant 1.3.1.
