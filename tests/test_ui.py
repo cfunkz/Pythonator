@@ -851,3 +851,36 @@ def test_a_worker_answer_that_arrives_after_the_window_closed_is_dropped(qtbot: 
         if not close_first:
             window.deleteLater()
     assert got == ["done:False"]
+
+
+def test_editing_the_folder_and_file_to_run_shows_at_once(qtbot: Any, dirs: DataDirs, tmp_path: Path) -> None:
+    """The service dialog's new folder, name and file to run reach the file tree and the editor as soon as the
+    daemon sends the edited service back, not only after selecting another service and back."""
+    from pythonator.ui.main_window import MainWindow
+
+    old, new = tmp_path / "old", tmp_path / "new"
+    old.mkdir()
+    new.mkdir()
+    (old / "app.py").write_text("print('old')\n", encoding="utf-8")
+    (new / "bot.py").write_text("print('new')\n", encoding="utf-8")
+    (new / "main.py").write_text("print('main')\n", encoding="utf-8")
+    window = MainWindow(dirs)
+    qtbot.addWidget(window)
+    try:
+        data = Service.model_validate({"name": "web", "folder": str(old), "runtime": "python",
+                                       "entry": "app.py"}).model_dump(mode="json")
+        window._set_services([data])
+        window._select(data["id"])
+        files, editor = window.editor.files, window.editor
+        assert files.root == str(old) and editor.current().path == old / "app.py"  # type: ignore[union-attr]
+        window._set_services([{**data, "name": "bot", "folder": str(new), "entry": "bot.py"}])
+        assert files.root == str(new) and files.title.text() == "BOT"
+        assert editor.current().path == new / "bot.py"  # type: ignore[union-attr]
+        assert window.console.title.text() == "Console · bot"
+        window._set_services([{**data, "name": "bot", "folder": str(new), "entry": "main.py"}])
+        assert files.root == str(new) and editor.current().path == new / "main.py"  # type: ignore[union-attr]
+        editor.open(new / "bot.py")
+        window._set_services([{**data, "name": "bot", "folder": str(new), "entry": "main.py", "args": ["-v"]}])
+        assert editor.current().path == new / "bot.py"  # type: ignore[union-attr]  # an unrelated edit keeps the tab
+    finally:
+        window.client.close()

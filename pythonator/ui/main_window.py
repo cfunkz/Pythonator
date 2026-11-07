@@ -415,7 +415,9 @@ class MainWindow(QMainWindow):
             except ValueError:
                 continue
             services[s.id] = s
+        before = self.services.get(self.current)
         self.services = services
+        self._follow_edit(before, services.get(self.current))
         self.states = {k: v for k, v in self.states.items() if k in services}
         self.removing.intersection_update(services)  # the ones gone are done
         self.list.set_services(list(services.values()))
@@ -423,6 +425,19 @@ class MainWindow(QMainWindow):
         self.list.setVisible(bool(services))
         self._update_header()
         self._update_counts()
+
+    def _follow_edit(self, before: Service | None, after: Service | None) -> None:
+        """The selected service was edited: a new folder or name shows in the file tree at once, and a new folder
+        or file to run opens that file, as selecting the service does."""
+        if before is None or after is None:
+            return
+        if (before.folder, before.name) != (after.folder, after.name):
+            self.editor.set_root(after.folder, after.name)
+            self.console.title.setText(f"Console · {after.name}")
+        if after.entry and (before.folder, before.entry) != (after.folder, after.entry):
+            entry = Path(after.folder, after.entry)
+            if entry.is_file():
+                self.editor.open(entry)
 
     def _on_state(self, st: dict[str, Any]) -> None:
         sid = str(st.get("id"))
