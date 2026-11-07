@@ -10,6 +10,7 @@ import errno
 import os
 import socket
 import sys
+import time
 from pathlib import Path
 
 from ..paths import FROZEN, IS_LINUX, IS_WINDOWS, DataDirs
@@ -172,16 +173,36 @@ def _port_refused(port: int) -> str:
     return ""
 
 
+_listening: tuple[float, dict[int, int]] = (0.0, {})
+
+
+def _listeners() -> dict[int, int]:
+    """Listening TCP port to pid, read once per 2 s: a check of eight ports read every connection eight times, which
+    took about a second on the window's thread with 8,000 sockets open."""
+    global _listening
+    import psutil
+
+    if time.monotonic() - _listening[0] > 2:
+        found: dict[int, int] = {}
+        try:
+            for c in psutil.net_connections(kind="tcp"):
+                if c.status == psutil.CONN_LISTEN and c.laddr and c.pid:
+                    found.setdefault(c.laddr.port, c.pid)
+        except (psutil.Error, OSError):
+            pass
+        _listening = (time.monotonic(), found)
+    return _listening[1]
+
+
 def _owner(port: int) -> str:
     """ " by <program> (pid N)" when the program listening on ``port`` can be named."""
     import psutil
 
-    try:
-        for c in psutil.net_connections(kind="tcp"):
-            if c.status == psutil.CONN_LISTEN and c.laddr and c.laddr.port == port and c.pid:
-                return f" by {psutil.Process(c.pid).name()} (pid {c.pid})"
-    except (psutil.Error, OSError):
-        pass
+    if pid := _listeners().get(port):
+        try:
+            return f" by {psutil.Process(pid).name()} (pid {pid})"
+        except (psutil.Error, OSError):
+            pass
     return ""
 
 

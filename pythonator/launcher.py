@@ -160,7 +160,7 @@ def _run_linux(plan: dict[str, Any]) -> int:
                            bind_ports=[int(p) for p in landlock.get("ports") or []])
         if seccomp:
             apply_seccomp(block_net=bool(seccomp.get("net")), block_unix=bool(seccomp.get("unix")),
-                          library=str(seccomp.get("lib") or ""))
+                          library=str(seccomp.get("lib") or ""), group=seccomp.get("group", True) is not False)
         drop_capabilities()
         _subreaper()
     except SandboxError as exc:
@@ -401,7 +401,8 @@ def _errno(code: int) -> int:
     return 0x00050000 | code  # SCMP_ACT_ERRNO
 
 
-def seccomp_rules(*, block_net: bool, block_unix: bool) -> list[tuple[int, str, list[tuple[int, int, int, int]]]]:
+def seccomp_rules(*, block_net: bool, block_unix: bool,
+                  group: bool = True) -> list[tuple[int, str, list[tuple[int, int, int, int]]]]:
     """``(action, system call, [(argument, comparison, a, b), ...])``: the filter, in libseccomp's terms."""
     flags_arg = 1 if seccomp_arch() == "s390x" else 0  # clone takes its flags second there
     rules: list[tuple[int, str, list[tuple[int, int, int, int]]]] = []
@@ -414,8 +415,11 @@ def seccomp_rules(*, block_net: bool, block_unix: bool) -> list[tuple[int, str, 
     rules += [(_errno(_EPERM), "ioctl", [(1, _SCMP_CMP_MASKED_EQ, _LOW32, cmd)]) for cmd in (_TIOCSTI, _TIOCLINUX)]
     # Nothing leaves the service's process group: setsid and setpgid report success and change nothing. So Stop
     # and the clean-up after an exit (a signal to the whole group) reach every process it ever started, even one
-    # that daemonised and was handed to init. A program that starts a "detached" child still works.
-    rules += [(_errno(0), name, []) for name in ("setsid", "setpgid")]
+    # that daemonised and was handed to init. A program that starts a "detached" child still works. Not under
+    # bubblewrap (``group`` False): its PID namespace already ends everything with the service, and a faked setsid
+    # would break programs that open a terminal (forkpty), which only bubblewrap's own /dev/pts allows.
+    if group:
+        rules += [(_errno(0), name, []) for name in ("setsid", "setpgid")]
     if block_unix:
         rules.append((_errno(_EACCES), "socket", [(0, _SCMP_CMP_MASKED_EQ, _LOW32, _AF_UNIX)]))
     if block_net:  # every address family but Unix sockets and netlink (interface lists, no traffic)
@@ -476,7 +480,7 @@ def seccomp_library() -> str:
     return ""
 
 
-def apply_seccomp(*, block_net: bool, block_unix: bool, library: str = "") -> None:
+def apply_seccomp(*, block_net: bool, block_unix: bool, library: str = "", group: bool = True) -> None:
     """Install the filter on this process and everything it starts. Raises SandboxError if it can't be."""
     import ctypes
 
@@ -499,7 +503,7 @@ def apply_seccomp(*, block_net: bool, block_unix: bool, library: str = "") -> No
     try:
         if lib.seccomp_attr_set(ctx, _SCMP_FLTATR_ACT_BADARCH, _errno(_ENOSYS)) != 0:
             raise SandboxError("libseccomp refused the filter settings")
-        for action, name, cmps in seccomp_rules(block_net=block_net, block_unix=block_unix):
+        for action, name, cmps in seccomp_rules(block_net=block_net, block_unix=block_unix, group=group):
             nr = lib.seccomp_syscall_resolve_name(name.encode())
             if nr < 0:
                 continue  # not on this architecture (e.g. iopl on arm64)

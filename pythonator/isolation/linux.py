@@ -158,7 +158,7 @@ def wrap(argv: list[str], cwd: Path, env: dict[str, str], policy: Policy, home: 
         # Unix sockets: without bubblewrap they reach your desktop session's (X11, D-Bus, the agent sockets). With
         # it and the network on, abstract ones (X11's @/tmp/.X11-unix) stay reachable unless Landlock 6+ scopes them.
         unix = not sup.bwrap or (policy.network and sup.landlock < 6)
-        plan["seccomp"] = {"net": not policy.network, "unix": unix, "lib": sup.seccomp}
+        plan["seccomp"] = {"net": not policy.network, "unix": unix, "lib": sup.seccomp, "group": not sup.bwrap}
     if sup.bwrap:
         plan["bwrap"] = bwrap_args(sup.bwrap, network=policy.network, grants=grants, cwd=str(cwd), tmp=tmp,
                                    links=links)

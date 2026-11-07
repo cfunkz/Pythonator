@@ -25,7 +25,10 @@ password.
 ## Pulling updates
 
 Select the service and choose **Packages ▾ → Pull from Git (fast-forward only)**, or tick **Pull the newest code
-before every start (fast-forward only)** on its **Environment** tab.
+before every start (fast-forward only)** on its **Environment** tab. The service needs its **Git** address (and
+optionally a branch) in its settings: a pull fetches only that address, never the checkout's own `origin`, which the
+service itself could change. If the checkout's `origin` is set, it must be the same address. With a branch set, the
+checkout must be on that branch.
 
 A pull fetches, then [fast-forwards](https://git-scm.com/docs/git-merge#Documentation/git-merge.txt---ff-only)
 (`git merge --ff-only`). It never merges, rebases or discards local work: if the checkout has commits or changes of
@@ -45,6 +48,9 @@ commits applied, `old..new`.
 | No system config | `GIT_CONFIG_NOSYSTEM=1` |
 | The checkout's own config checked | A pull runs as the user, in a folder a sandboxed service can write to. Its `.git/config` may therefore hold only what git writes itself (remotes, branches, basic `core.*` keys, `user.name`). Anything else, such as `core.sshCommand`, a filter driver, `credential.helper` or `include.path`, stops the pull and is named. Such settings belong in `~/.gitconfig` |
 | Nothing runs during a pull | The service must be stopped first unless it has Full access, and so must every other service whose folder is the same, inside or around it, with its installs and console commands. Pull on start skips the pull, and says so, while another such service runs. Nothing sandboxed starts in that folder until the pull is done, so nothing can change the checkout while git works in it |
+| Only the saved address | The fetch names the address and branch saved in the service's settings, so a sandboxed service can't point the pull at another repository your SSH key or credential helper can read |
+| No links in `.git` | A pull refuses a `.git` folder holding a symbolic link, a junction, a hard link (outside `objects`), a FIFO or other special file, or an `alternates` file. Git, running as the user, appends to reflogs and rewrites `FETCH_HEAD` by following links, so a planted link would let the service write any of the user's files. No `FETCH_HEAD` is written, reflogs aren't started, and the name in a reflog line is `Pythonator`, not one the checkout set |
+| A real timeout | git's output is read on a thread, so a host that never answers stops the pull after the timeout, with every helper git started (`git-remote-https`, `ssh`) |
 | Sign-in programs pinned | `credential.helper` and `core.sshCommand` are set on git's command line to what `~/.gitconfig` says, and `core.askPass` to nothing, so the checkout's config can't add one. The config is checked again after the fetch, before the merge |
 
 The clone itself runs as the user, as git always does. The cloned code does not run until the service is started, in

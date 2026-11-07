@@ -124,7 +124,7 @@ RUNTIMES: dict[str, Runtime] = {r.key: r for r in (
     Runtime("ruby", "Ruby", ("ruby",), (".rb",), ("Gemfile",), "ruby:3.4-slim",
             install=lambda f, p: [[which("bundle") or "bundle", "install"]],
             packages="vendor/bundle in the project (BUNDLE_PATH)"),
-    Runtime("php", "PHP", ("php",), (".php",), ("composer.json",), "php:8.4-cli",
+    Runtime("php", "PHP", ("php",), (".php",), ("composer.json",), "php:8.5-cli",
             install=lambda f, p: [[which("composer") or "composer", "install", "--no-interaction"]],
             packages="vendor in the project"),
     Runtime("rust", "Rust", ("cargo",), (".rs",), ("Cargo.toml",), "rust:1-slim",

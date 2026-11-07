@@ -1103,6 +1103,9 @@ class Supervisor:
             raise ValueError("Busy")
         if not (Path(slot.service.folder) / ".git").exists():
             raise ValueError("This service's folder isn't a git checkout")
+        if slot.service.git is None:
+            # The checkout's own origin is the service's to change: a pull fetches only the saved address.
+            raise ValueError("Add the Git address in this service's settings first: Pythonator pulls only from it")
         if slot.service.mode is not Mode.FULL and (slot.runner or slot.shell):
             # git runs as you, outside the sandbox: nothing sandboxed may change the checkout while it does
             raise ValueError("Stop it first: a sandboxed service can't run while git pulls its folder")
@@ -1146,9 +1149,13 @@ class Supervisor:
             slot.task_name = "Pulling"
             self.emit(self.state_event(slot, "pulling"))
 
+        source = slot.service.git
+
         def work() -> None:
             try:
-                changed = git.pull(Path(slot.service.folder),
+                if source is None:
+                    raise git.GitError("the service has no Git address")
+                changed = git.pull(Path(slot.service.folder), source.url, source.branch,
                                    on_line=lambda line: self.post(lambda: slot.pending.append(slot.log.write(line))))
                 result = f"Updated {changed}" if changed else "Already up to date"
                 ok = True

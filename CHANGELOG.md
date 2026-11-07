@@ -22,12 +22,21 @@ All notable changes to Pythonator are recorded here. The format follows
 - Container mode's default images: Deno `denoland/deno:debian` (the `2` tag never existed, so Deno couldn't start),
   Go `golang:1.27` (1.24 has ended), .NET `sdk:10.0` (9.0 ends on 2026-11-10), Node.js `node:24-slim`.
 - Container mode keeps Go, Rust, Ruby, Deno and NuGet packages in the project's `.container-cache` folder, so
-  installs work with the read-only image. PHP installs run in the `composer:2` image (`php:*-cli` has no Composer).
+  installs work with the read-only image. PHP installs run in the `composer:2` image (`php:*-cli` has no Composer),
+  and PHP services run in `php:8.5-cli`, the PHP that `composer:2` resolves packages for (8.4 before).
 - Project templates ask for supported runtimes: Node.js 22, Python 3.11, Go 1.26, Ruby 3.3, PHP 8.3, Java 21. The
   discord.py template requires aiohttp 3.14.5 or later.
 - The discord.py, discord.js and grammY bot templates log out cleanly when stopped on Linux and macOS (SIGTERM).
-- The file tree shows `node_modules`, `.venv`, `.git`, `target` and similar folders without listing them: a big
+- The file tree shows `node_modules`, `.venv`, `venv`, `vendor`, `.git`, `target` and similar folders without listing them: a big
   `node_modules` held the window for over a second each time it was opened.
+- The file tree no longer watches the folder. A running service that kept writing files (logs, uploads, a cache)
+  made it re-read and re-sort on the window's thread at every change, and the window froze. It reads the folder again
+  with the new **Refresh** button, after **New file** or **New folder**, and when you come back to the window (for
+  folders of up to 5,000 entries); open folders stay open.
+- A pull needs the service's **Git** address in its settings, and fetches only that address and branch. A checkout
+  whose `origin` is a different address is refused, and so is one on another branch than the one set.
+- Release builds use Python 3.14. setup-python had no Windows or macOS build of 3.13.18, so the 3.13 builds missed
+  its certificate fix (CVE-2026-115557, the compromised eMudhra certificates). CI also tests on 3.14.
 
 ### Fixed
 
@@ -51,6 +60,15 @@ All notable changes to Pythonator are recorded here. The format follows
 - A memory or CPU limit typed with hundreds of digits raised an error instead of saying what to write.
 - A plugin disabled for misbehaving: the messages it had already sent are dropped. They were still acted on (one
   could stop a service), and each disabled it again, with a settings save and a broadcast every time.
+- Linux under bubblewrap: programs that open a terminal (`pty.fork`, `forkpty`) work again. The new process-group
+  lock is only used without bubblewrap, whose PID namespace already ends everything with the service.
+- Opening a FIFO or other special file from the tree or the Open dialog froze the window for good; it is refused.
+  A file over 8 MB asks first (a 19 MB one-line file held the window for 10 s).
+- An error on a background thread of the window showed its status line from that thread, which Qt doesn't allow. It
+  is now passed to the window's own thread.
+- git's timeout started only after git closed its output, so a host that never answered held a pull, and a plugin
+  installed from git held the background service, forever. It now counts from the start and ends git with every
+  helper it started.
 
 ### Security
 
@@ -70,6 +88,34 @@ All notable changes to Pythonator are recorded here. The format follows
   next start, which froze every service, and a file of gigabytes or a link to `/dev/zero` could fill its memory.
 - Release builds install Pythonator with `--no-build-isolation`, so setuptools comes from the hash-locked build lock
   instead of an unchecked download.
+- git pull: a sandboxed or container service could put symbolic links in its own `.git`. Pythonator's pull runs git
+  as you, and git followed them: it appended a reflog line holding the checkout's `user.name` to any file (such as
+  `~/.bashrc`, so a command ran at your next terminal) and rewrote any file through `FETCH_HEAD`. A pull now refuses
+  links, junctions, hard links, FIFOs and `alternates` files anywhere in `.git`, writes no `FETCH_HEAD`, starts no
+  reflog, and pins the name in a reflog line to `Pythonator`.
+- git pull: the service could change its checkout's `origin` and have the pull fetch any repository your SSH key or
+  credential helper can read into its folder. The pull fetches only the address saved in the service's settings.
+- Container mode refuses the same folders as Sandbox mode: your home folder, Pythonator's data folder and folders of
+  keys. A container on `~` could rewrite your shell files, and one on the data folder could rewrite `services.json`.
+- Sandbox and Container modes also refuse, as a folder or a write grant: folders on `PATH` (Pythonator runs git,
+  docker and the runtimes from there, as you), Pythonator's own program folder and the Python it runs on, login
+  autostart folders, `/Applications`, `ProgramData` and `ProgramW6432`.
+- Sandboxed services and plugins no longer inherit more variables that usually hold secrets: names with `PASS`,
+  `AUTH`, `ACCESS_KEY`, `DSN`, `SESSION`, `COOKIE`, `WEBHOOK` or `DATABASE_URL`, and any value that is an address
+  with a password in it (`redis://user:pw@…`). Set them on the service when it needs them.
+- Release: a tag only publishes when it is on `main` and CI and Security passed on that exact commit. 0.0.18 was
+  published while its CI was red. A version with no changelog section fails instead of publishing empty notes.
+
+### Known limitations
+
+- A sandboxed service can connect to servers on this computer (`127.0.0.1`): a database, Redis, Ollama, the Docker
+  API over TCP. Give those servers a password.
+- With no ports listed, Linux and macOS don't limit which ports a sandboxed service listens on.
+- macOS: a program that starts a new session and clears its environment can outlive Stop.
+- Nothing restarts the background service if it dies with no window open. On Windows every service ends with it.
+- Linux limits are watched by Pythonator, not enforced by the kernel (no cgroups yet).
+- Releases aren't code signed or notarized.
+- Windows: another local account could create the background service's pipe first (a shared PC only).
 
 ## [0.0.18] - 2026-11-07
 

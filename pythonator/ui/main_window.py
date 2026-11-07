@@ -636,7 +636,7 @@ class MainWindow(QMainWindow):
             add("Recreate environment…", self._recreate, idle)
         menu.addSeparator()
         add("Pull from Git (fast-forward only)", lambda: self._op("pull"),
-            idle and Path(service.folder, ".git").exists())
+            idle and service.git is not None and Path(service.folder, ".git").exists())
 
     def _compose(self, action: str) -> None:
         if sid := self.current:

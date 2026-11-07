@@ -139,6 +139,12 @@ def prepare(service: Service, dirs: DataDirs, *, task: list[str] | None = None, 
     if not folder.is_dir():
         raise IsolationError(f"The folder {folder} doesn't exist")
     if service.mode is Mode.CONTAINER:
+        # The engine mounts the folder as you (your uid on Linux): the same folders are off limits as in Sandbox
+        # mode, or a container on ~ or on Pythonator's data folder would rewrite your shell files or services.json.
+        compose = service.runtime == runtimes.COMPOSE
+        write = compose or task is not None or service.sandbox.write_project
+        if why := (forbidden_write if write else forbidden_read)(folder.resolve(), dirs):
+            raise IsolationError(f"A container service can't use {why} as its folder. Pick its project folder.")
         cmd = container.wrap(service, task=task)
         if cmd.compose:
             cmd.shown = ["compose", *cmd.argv[len(cmd.compose):]]

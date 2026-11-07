@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import contextlib
+import os
+import stat
+import time
 from functools import cache
 from pathlib import Path
 
@@ -32,6 +35,7 @@ from PyQt6.Qsci import (
 from PyQt6.QtCore import QDir, QModelIndex, QSize, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QColor, QDesktopServices, QFileSystemModel, QKeySequence, QShortcut, QWheelEvent
 from PyQt6.QtWidgets import (
+    QApplication,
     QFileDialog,
     QHBoxLayout,
     QInputDialog,
@@ -243,7 +247,8 @@ def _bad_name(name: str) -> str:
 
 # Folders the tree shows but doesn't list: tools fill them with thousands of files (a node_modules can hold
 # 100,000), and listing, sorting and watching them all would hold up the window. The file manager still opens them.
-NOT_LISTED = frozenset({"node_modules", ".venv", ".venv-container", ".container-cache", ".git", "__pycache__",
+NOT_LISTED = frozenset({"node_modules", ".venv", "venv", "vendor", ".cache", ".venv-container", ".container-cache",
+                        ".git", "__pycache__",
                         ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox", ".nox", ".next", ".gradle", "target"})
 
 
@@ -271,13 +276,21 @@ class _Files(QFileSystemModel):
 
 
 class FileTree(QWidget):
-    """The service's folder: under the service list, so the editor and console get the full width."""
+    """The service's folder: under the service list, so the editor and console get the full width.
+
+    The tree doesn't watch the folder. A running service that writes files all the time (logs, uploads, a cache)
+    made the watcher re-read and re-sort on the window's thread at every change, and the whole window froze. It
+    re-reads when you press Refresh, make a file or folder here, or come back to the window."""
 
     open_file = pyqtSignal(Path)
+    BIG = 5000  # a folder with more top-level entries than this isn't re-read just because the window came back
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.root = ""
+        self._reopen: set[str] = set()  # folders to expand again after a refresh, as they load
+        self._scroll = 0
+        self._loaded = 0.0
         self.view = QTreeView()
         self.icons = _file_icons()
         self.model = self._new_model()
@@ -295,6 +308,7 @@ class FileTree(QWidget):
         head.addWidget(self.title, 1)
         self.buttons: list[QToolButton] = []
         for name, tip, slot in (("new", "New file", self.new_file), ("folder", "New folder", self.new_folder),
+                                ("refresh", "Refresh", self.refresh),
                                 ("collapse", "Collapse all", self.view.collapseAll),
                                 ("open", "Open the folder in the file manager", self.reveal)):
             b = QToolButton()
@@ -310,15 +324,59 @@ class FileTree(QWidget):
         layout.addLayout(head)
         layout.addWidget(self.view, 1)
         self.set_root("")
+        if isinstance(app := QApplication.instance(), QApplication):
+            app.applicationStateChanged.connect(self._app_state)
 
     def _new_model(self) -> QFileSystemModel:
         model = _Files(self)
+        model.setOption(QFileSystemModel.Option.DontWatchForChanges, True)
         model.setIconProvider(self.icons)
         model.setFilter(QDir.Filter.AllEntries | QDir.Filter.NoDotAndDotDot | QDir.Filter.Hidden)
+        model.directoryLoaded.connect(self._expand_again)
         self.view.setModel(model)
         for col in (1, 2, 3):
             self.view.hideColumn(col)
         return model
+
+    def _expanded(self, parent: QModelIndex) -> list[str]:
+        out: list[str] = []
+        for row in range(self.model.rowCount(parent)):
+            child = self.model.index(row, 0, parent)
+            if self.view.isExpanded(child):
+                out += [self.model.filePath(child), *self._expanded(child)]
+        return out
+
+    def refresh(self) -> None:
+        """Read the folder again, keeping what was open and where the view was."""
+        if not self.root:
+            return
+        root, title = self.root, self.title.text()
+        bar = self.view.verticalScrollBar()
+        reopen, scroll = set(self._expanded(self.view.rootIndex())), bar.value() if bar is not None else 0
+        old, selection = self.model, self.view.selectionModel()
+        self.model = self._new_model()
+        if selection is not None:
+            selection.deleteLater()
+        old.deleteLater()
+        self._reopen, self._scroll = reopen, scroll
+        self.set_root(root, title)
+        self._loaded = time.monotonic()
+
+    def _expand_again(self, _path: str) -> None:
+        for path in list(self._reopen):
+            index = self.model.index(path)
+            if index.isValid():
+                self._reopen.discard(path)
+                self.view.expand(index)
+        if not self._reopen and self._scroll and (bar := self.view.verticalScrollBar()) is not None:
+            bar.setValue(self._scroll)
+            self._scroll = 0
+
+    def _app_state(self, state: Qt.ApplicationState) -> None:
+        if (state is Qt.ApplicationState.ApplicationActive and self.root and self.isVisible()
+                and time.monotonic() - self._loaded > 5
+                and self.model.rowCount(self.view.rootIndex()) <= self.BIG):
+            self.refresh()
 
     def release(self) -> None:
         """Show nothing, and drop the model with every folder it watches: Windows can't delete a watched one."""
@@ -341,6 +399,7 @@ class FileTree(QWidget):
             return
         self.view.setVisible(True)
         self.view.setRootIndex(self.model.setRootPath(folder))
+        self._loaded = time.monotonic()
 
     def _open_index(self, index: QModelIndex) -> None:
         path = Path(self.model.filePath(index))
@@ -382,6 +441,7 @@ class FileTree(QWidget):
         except OSError as exc:
             warn(self, "New file", str(exc))
             return
+        self.refresh()
         self.open_file.emit(path)
 
     def new_folder(self) -> None:
@@ -391,6 +451,8 @@ class FileTree(QWidget):
                 path.mkdir()
             except OSError as exc:
                 warn(self, "New folder", str(exc))
+                return
+            self.refresh()
 
     def reveal(self) -> None:
         if self.root:
@@ -402,6 +464,7 @@ class EditorPanel(QWidget):
 
     status = pyqtSignal(str)
     cursor_info = pyqtSignal(str)  # "Ln 3, Col 14" for the status bar
+    BIG_FILE = 8_000_000  # bytes; bigger asks first (a 19 MB one-line file held the window for 10 s)
 
     def __init__(self, font_size: int = 11, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -457,10 +520,22 @@ class EditorPanel(QWidget):
                 self.tabs.setCurrentIndex(i)
                 return
         try:
-            with path.open("rb") as f:  # only the start: a log of gigabytes must not be read to check it
-                head = f.read(8192)
+            # Without blocking, and only a regular file: opening a FIFO (or a file a service swapped for one) by
+            # path waited forever on the window's thread.
+            fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0))
+            with os.fdopen(fd, "rb") as f:
+                info = os.fstat(f.fileno())
+                if not stat.S_ISREG(info.st_mode):
+                    self.status.emit(f"{path.name} isn't a regular file; not opened")
+                    return
+                head = f.read(8192)  # only the start: a log of gigabytes must not be read to check it
             if b"\0" in head:
                 self.status.emit(f"{path.name} looks like a binary file; not opened")
+                return
+            if info.st_size > self.BIG_FILE and ask(
+                    self, "Open a big file",
+                    f"{path.name} is {info.st_size / 1e6:.0f} MB. The editor may hold up the window for a while "
+                    "opening it. Open it anyway?") != QMessageBox.StandardButton.Yes:
                 return
             editor = CodeEditor(path, self.font_size)
         except OSError as exc:

@@ -8,6 +8,8 @@ name: Release
 #   Linux    pythonator_<v>_amd64.deb / _arm64.deb and Pythonator-<v>-linux-<arch>.tar.gz
 #   macOS    Pythonator-<v>-macos-arm64.dmg (Apple silicon) and -macos-x86_64.dmg (Intel)
 #
+# A tag publishes only when its commit is on main and CI and Security both passed on that exact commit: push the
+# commit, wait for both to go green, then push the tag (or re-run this workflow once they are).
 # Actions > Release > Run workflow builds the same files as downloadable artifacts, without releasing.
 # Check a download with  gh attestation verify <file> --repo cfunkz/Pythonator
 
@@ -24,8 +26,35 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  gate:
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: The tag is on main, and CI and Security passed on its commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          status=$(gh api "repos/$REPO/compare/main...$SHA" --jq .status)
+          if [ "$status" != "identical" ] && [ "$status" != "behind" ]; then
+            echo "::error::$SHA isn't on main ($status)"; exit 1
+          fi
+          for wf in ci.yml security.yml; do
+            ok=$(gh api "repos/$REPO/actions/workflows/$wf/runs?head_sha=$SHA&status=success&per_page=1" --jq .total_count)
+            if [ "$ok" -lt 1 ]; then
+              echo "::error::$wf hasn't passed on $SHA yet. Wait for it to go green, then re-run this workflow."; exit 1
+            fi
+          done
+
   build:
     name: build (${{ matrix.name }})
+    needs: gate
+    # Runs when the gate passed (a tag) or was skipped (Run workflow, which never publishes).
+    if: ${{ !cancelled() && (needs.gate.result == 'success' || needs.gate.result == 'skipped') }}
     strategy:
       fail-fast: false
       matrix:
@@ -47,7 +76,8 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
-          python-version: "3.13"
+          # 3.14: setup-python has no Windows or macOS build of 3.13.18, so 3.13 builds miss its certificate fix.
+          python-version: "3.14"
       - if: github.ref_type == 'tag'
         name: The tag matches the version
         shell: bash
@@ -91,7 +121,7 @@ jobs:
 
   publish:
     needs: build
-    if: github.ref_type == 'tag'
+    if: ${{ !cancelled() && github.ref_type == 'tag' && needs.build.result == 'success' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write       # create the release
@@ -121,7 +151,10 @@ jobs:
         run: |
           VERSION="${TAG#v}"
           # This version's section of CHANGELOG.md ("## [1.2.3] - date" up to the next "## "), without its heading.
-          awk -v v="## [$VERSION]" 'index($0, v) == 1 {on=1; next} on && /^## / {exit} on {print}' CHANGELOG.md > notes.md || true
+          awk -v v="## [$VERSION]" 'index($0, v) == 1 {on=1; next} on && /^## / {exit} on {print}' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "::error::CHANGELOG.md has no '## [$VERSION]' section"; exit 1
+          fi
           cat >> notes.md << EOF
 
           ## Downloads

@@ -87,7 +87,10 @@ def _sandboxed(project: Path, dirs: DataDirs, script: str) -> base.Command:
 
 
 @pytest.mark.skipif(not IS_LINUX, reason="seccomp is Linux's")
-def test_a_sandboxed_program_cant_leave_its_process_group(project: Path, dirs: DataDirs) -> None:
+def test_a_sandboxed_program_cant_leave_its_process_group(project: Path, dirs: DataDirs,
+                                                          monkeypatch: pytest.MonkeyPatch) -> None:
+    real = linux.support()  # without bubblewrap: under it, its PID namespace does this job and setsid is real
+    monkeypatch.setattr(linux, "support", lambda: linux.Support(real.landlock, real.seccomp, ""))
     cmd = _sandboxed(project, dirs, """
         import os
         before = os.getpgrp()
@@ -175,7 +178,8 @@ def test_a_pull_waits_for_a_service_that_may_write_the_checkout_from_more_folder
         checkout = tmp_path / "a"
         (checkout / ".git").mkdir(parents=True)
         (tmp_path / "b").mkdir()
-        web = Service.model_validate({"name": "web", "folder": str(checkout), "entry": "app.py"})
+        web = Service.model_validate({"name": "web", "folder": str(checkout), "entry": "app.py",
+                                      "git": {"url": "https://example.com/x.git"}})
         other = Service.model_validate({"name": "other", "folder": str(tmp_path / "b"), "entry": "app.py",
                                         "sandbox": {"folders": [{"path": str(checkout), "write": True}]}})
         sup.add(web)
@@ -268,7 +272,7 @@ def test_container_caches_live_in_the_project_and_php_installs_with_composer(
     php = Service.model_validate({"name": "php", "folder": str(tmp_path), "runtime": "php", "entry": "index.php",
                                   "mode": "container"})
     assert "composer:2" in container.wrap(php, task=["composer", "install"]).argv
-    assert "php:8.4-cli" in container.wrap(php).argv
+    assert "php:8.5-cli" in container.wrap(php).argv
     mine = php.model_copy(update={"env": {"BUNDLE_PATH": "x"}, "runtime": "ruby"})
     assert container.wrap(mine).env["BUNDLE_PATH"] == "x"  # the service's own value wins
 

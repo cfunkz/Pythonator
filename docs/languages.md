@@ -13,7 +13,7 @@ folder, so a project cannot place its own `python` or `node` ahead of the real o
 | Java | `java` | `java -jar app.jar`, `java Main.java` | | | The build's own folders | `eclipse-temurin:21` |
 | .NET | `dotnet` | `dotnet run --project app.csproj` | `dotnet run` | `dotnet restore` | The NuGet cache | `mcr.microsoft.com/dotnet/sdk:10.0` |
 | Ruby | `ruby` | `ruby main.rb` | | `bundle install` | `vendor/bundle` | `ruby:3.4-slim` |
-| PHP | `php` | `php index.php` | | `composer install` | `vendor` | `php:8.4-cli` |
+| PHP | `php` | `php index.php` | | `composer install` | `vendor` | `php:8.5-cli` |
 | Rust | `cargo` | | `cargo run --release` | `cargo fetch` | `target` and the Cargo cache | `rust:1-slim` |
 | Shell | `bash`, `sh` | `bash run.sh` | | | | `debian:stable-slim` |
 | PowerShell | `pwsh`, `powershell` | `pwsh -NoProfile -File run.ps1` | | | | `mcr.microsoft.com/powershell` |

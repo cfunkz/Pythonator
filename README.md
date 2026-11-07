@@ -18,7 +18,7 @@
 
 Pythonator runs programs that are meant to stay up, such as a Discord bot, a FastAPI or Express server, or a
 scraper on a timer. Each program is a *service*: Pythonator starts it, restarts it after a crash, records its output
-and confines it to its own folder and the ports it declares. Services are run by a background process, so they keep
+and keeps it to its own folder (Sandbox and Container modes) and, where the system allows it, the ports it declares. Services are run by a background process, so they keep
 going after the window is closed. It runs on Windows, macOS and Linux.
 
 * **Supervision.** Restarts with exponential back-off, interval and [cron](https://man7.org/linux/man-pages/man5/crontab.5.html)

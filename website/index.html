@@ -103,7 +103,7 @@ description: Run bots, web servers and workers in any language, each in its own 
         <tbody>
           <tr><td>Sandbox</td><td>Its own folder, its runtime, and the listed ports. Not the home folder, keys, other projects or Pythonator's data.</td><td><a href="{{ docs }}glossary.html#landlock">Landlock</a>, <a href="{{ docs }}glossary.html#seccomp">seccomp</a> and <a href="{{ docs }}glossary.html#bubblewrap">bubblewrap</a> on Linux, <a href="{{ docs }}glossary.html#seatbelt">Seatbelt</a> on macOS, <a href="{{ docs }}glossary.html#appcontainer">AppContainer</a> on Windows</td></tr>
           <tr><td>Container</td><td>Only the project folder, mounted at <code>/app</code>. Can join a container network to reach a database.</td><td>Docker or Podman with every capability dropped, a read-only image and no new privileges</td></tr>
-          <tr><td>Full access</td><td>Everything the user's account can. Confirmed once per service, and shown in red.</td><td>A normal process, still in a <a href="{{ docs }}glossary.html#job-object">job</a> or process group so stopping ends all of it</td></tr>
+          <tr><td>Full access</td><td>Everything the user's account can. Confirmed once per service, and shown in red.</td><td>A normal process in a <a href="{{ docs }}glossary.html#job-object">job</a> (Windows) or process group. A program that starts a new session leaves the group on Linux and macOS</td></tr>
         </tbody>
       </table>
       <p class="facts"><a href="{{ docs }}isolation.html">Isolation modes</a> · <a href="{{ docs }}networking.html">Ports and APIs</a> · <a href="{{ docs }}security.html">The security model</a></p>
@@ -115,7 +115,7 @@ description: Run bots, web servers and workers in any language, each in its own 
       <div>
         <p class="num label">03 · Ports and APIs</p>
         <h3>Only the declared ports, for the chosen audience</h3>
-        <p>Each service lists the ports it serves, and in Sandbox mode may listen on those alone. <em>This
+        <p>Each service lists the ports it serves, and in Sandbox mode may listen on those alone (with no ports listed, Linux and macOS don't limit listening). <em>This
           computer only</em> suits a local API; <em>Other computers too</em> opens it to the local network. On
           Windows, <strong>Make reachable</strong> adds the loopback exemption and firewall rules for that one
           service in a single administrator prompt, and <strong>Undo</strong> removes them.</p>

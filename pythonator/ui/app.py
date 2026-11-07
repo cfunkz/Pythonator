@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
+from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtGui import QIcon
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 from PyQt6.QtWidgets import QApplication
@@ -14,6 +16,24 @@ from ..core.store import Store
 from ..instance import InstanceLock
 from ..paths import IS_WINDOWS, DataDirs, leave_current_folder
 from . import theme
+
+if TYPE_CHECKING:
+    from .main_window import MainWindow
+
+
+class _Notice(QObject):
+    """Carries the "something went wrong" line to the status bar. An error on any thread emits it; Qt queues it to
+    the window's thread, the only one that may touch a widget."""
+
+    said = pyqtSignal(str)
+
+    def __init__(self, window: MainWindow) -> None:
+        super().__init__(window)
+        self.target = window
+        self.said.connect(self._show)
+
+    def _show(self, text: str) -> None:
+        self.target._status(text, 15000)
 
 
 def window_socket(dirs: DataDirs) -> str:
@@ -75,7 +95,8 @@ def main(args: list[str]) -> int:
     from .main_window import MainWindow  # after the theme, so widgets pick it up
 
     window = MainWindow(dirs, settings)
-    errors.keep_running(lambda text: window._status(text, 15000))
+    notice = _Notice(window)  # lives on the window's thread; a failed worker thread only emits to it
+    errors.keep_running(notice.said.emit)
     woken = QLocalServer(app)
     woken.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
     QLocalServer.removeServer(window_socket(dirs))

@@ -154,13 +154,13 @@ def test_git_ssh_becomes_a_command_no_config_can_override(monkeypatch: pytest.Mo
 
 def test_a_pull_checks_the_config_again_before_the_merge(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     steps: list[str] = []
-    monkeypatch.setattr(git, "check_checkout", lambda folder: steps.append("check"))
+    monkeypatch.setattr(git, "check_checkout", lambda folder, url="": steps.append("check"))
     def run(args: list[str], *rest: Any, **named: Any) -> str:
         steps.append(args[0])
         return "abc"
 
     monkeypatch.setattr(git, "run", run)
-    git.pull(tmp_path)
+    git.pull(tmp_path, "https://example.com/x.git")
     assert steps == ["check", "rev-parse", "fetch", "check", "merge", "rev-parse"]
 
 
@@ -208,7 +208,7 @@ def test_a_pull_waits_for_every_sandboxed_service_in_the_folder(sup: Supervisor,
     folder = _checkout(tmp_path)
     pulled: list[str] = []
     monkeypatch.setattr(sup, "_pull", lambda slot, then: pulled.append(slot.service.name))
-    web = _slot(sup, _service("web", folder))
+    web = _slot(sup, _service("web", folder, git={"url": "https://example.com/x.git"}))
     worker = _slot(sup, _service("worker", folder / "worker"))  # inside the checkout: it can write it too
     elsewhere = _slot(sup, _service("elsewhere", tmp_path / "other"))
     worker.runner = elsewhere.runner = _Running()  # type: ignore[assignment]

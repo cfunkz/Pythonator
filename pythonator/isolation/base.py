@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -100,13 +101,23 @@ def read_env_file(folder: Path, name: str) -> dict[str, str]:
     return out
 
 
+# Inherited variables a sandbox doesn't get, besides SECRET_NAME: more names secrets go by, and any value that is
+# an address with a password in it. They can still be set on the service, or in its env file, when it needs them.
+INHERITED_SECRET = re.compile(r"PASS|AUTH|DSN|ACCESS_KEY|SESSION|COOKIE|DATABASE_URL|WEBHOOK", re.IGNORECASE)
+URL_PASSWORD = re.compile(r"://[^/@\s:]*:[^/@\s]+@")
+
+
+def _inherited_secret(name: str, value: str) -> bool:
+    return bool(SECRET_NAME.search(name) or INHERITED_SECRET.search(name) or URL_PASSWORD.search(value))
+
+
 def base_env(service: Service, *, sandboxed: bool) -> dict[str, str]:
     """The service's environment: yours (minus the app's own and, in a sandbox, the desktop session's variables
     and anything named like a secret, such as GITHUB_TOKEN), then its ``.env`` file, then the variables set on the
     service."""
     env = {k: v for k, v in os.environ.items()
            if k.upper() not in APP_ENV and not k.upper().startswith(APP_ENV_PREFIXES)
-           and not (sandboxed and (k.upper() in SESSION_ENV or SECRET_NAME.search(k)))}
+           and not (sandboxed and (k.upper() in SESSION_ENV or _inherited_secret(k, v)))}
     if FROZEN and "LD_LIBRARY_PATH_ORIG" in os.environ:  # PyInstaller changed it for itself
         env["LD_LIBRARY_PATH"] = os.environ["LD_LIBRARY_PATH_ORIG"]
     elif FROZEN:
@@ -172,13 +183,57 @@ def forbidden_write(path: Path, dirs: DataDirs) -> str:
     if _holds_secrets(p, home):
         return "a folder of passwords or keys"
     if IS_WINDOWS:
-        system = [Path(os.environ.get(v, "")) for v in ("SystemRoot", "ProgramFiles", "ProgramFiles(x86)")]
+        system = [Path(os.environ.get(v, "")) for v in ("SystemRoot", "ProgramFiles", "ProgramFiles(x86)",
+                                                         "ProgramW6432", "ProgramData")]
         if any(s.parts and p.is_relative_to(s.resolve()) for s in system if str(s)):
             return "a Windows system folder"
     elif p.parts[1:2] and p.parts[1] in ("usr", "bin", "sbin", "lib", "lib64", "etc", "boot", "proc", "sys",
-                                          "dev", "System", "Library"):
+                                          "dev", "System", "Library", "Applications"):
         return "a system folder"
+    if any(_overlaps(p, f) for f in _own_install()):
+        return "Pythonator's own program folder"
+    if any(_overlaps(p, f) for f in _autostart(home)):
+        return "a folder of programs that start when you log in"
+    if any(p == f or f.is_relative_to(p) for f in _on_path()):
+        return "a folder of programs on your PATH (Pythonator runs git, docker and others from there, as you)"
     return ""
+
+
+def _overlaps(a: Path, b: Path) -> bool:
+    return a.is_relative_to(b) or b.is_relative_to(a)
+
+
+def _own_install() -> list[Path]:
+    """Where Pythonator itself and the Python it runs on are: a service that wrote there would run as you next
+    time Pythonator starts."""
+    found = [source_root(), Path(sys.executable).resolve().parent]
+    if not FROZEN:
+        found += [Path(sys.prefix).resolve(), Path(sys.base_prefix).resolve()]
+    out = []
+    for f in found:
+        app = next((a for a in (f, *f.parents) if a.suffix == ".app"), None)  # macOS: the whole app bundle
+        out.append(app or f)
+    return out
+
+
+def _autostart(home: Path) -> list[Path]:
+    places = [home / ".config" / "autostart", home / ".config" / "systemd", home / "Library" / "LaunchAgents",
+              home / ".local" / "share" / "applications",  # launchers: what runs when you click an app
+              home / ".bashrc", home / ".profile", home / ".zshrc", home / ".bash_profile"]
+    if IS_WINDOWS and os.environ.get("APPDATA"):
+        places.append(Path(os.environ["APPDATA"], "Microsoft", "Windows", "Start Menu"))
+    return [f.absolute() for f in places]
+
+
+def _on_path() -> list[Path]:
+    out = []
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        if entry and Path(entry).is_absolute():
+            try:
+                out.append(Path(entry).resolve())
+            except OSError:
+                continue
+    return out
 
 
 def forbidden_read(path: Path, dirs: DataDirs) -> str:
