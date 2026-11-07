@@ -137,6 +137,7 @@ class Plugin:
     activity: deque[str] = field(default_factory=lambda: deque(maxlen=200))
     panel: dict[str, Any] | None = None
     stopping: bool = False
+    killed: subprocess.Popen[bytes] | None = None  # the process cut off for misbehaving: nothing more it sent counts
     requests: deque[float] = field(default_factory=deque)
     creations: deque[float] = field(default_factory=deque)
 
@@ -449,6 +450,9 @@ class PluginHost:
             proc.kill()
 
     def _kill(self, p: Plugin, proc: subprocess.Popen[bytes], why: str) -> None:
+        if p.killed is proc:  # once: the lines it sent before it died are dropped, not each a new disable
+            return
+        p.killed = proc
         p.error = f"Disabled: it {why}"
         self._activity(p, p.error)
         self._end(proc)
@@ -473,7 +477,7 @@ class PluginHost:
         return False
 
     def _on_line(self, p: Plugin, proc: subprocess.Popen[bytes], line: bytes) -> None:
-        if p.proc is not proc:
+        if p.proc is not proc or p.killed is proc:
             return
         if not self._rate_ok(p, len(line)):
             if p.drops >= MAX_DROPS:

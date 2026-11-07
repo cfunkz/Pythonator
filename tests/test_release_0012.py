@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from pythonator import launcher
-from pythonator.core import runtimes, templates
+from pythonator.core import runtimes, templates, versions
 from pythonator.core.models import Service
 from pythonator.isolation import windows
 
@@ -21,6 +21,8 @@ from pythonator.isolation import windows
 @pytest.mark.parametrize("key", [k for k, t in templates.TEMPLATES.items() if not t.command])
 def test_every_written_template_is_valid_code(key: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(runtimes, "which", lambda name: f"/bin/{name}")
+    # Not this computer's /bin/python3 or node: on Ubuntu 22.04 (Python 3.10) Streamlit's ">=3.11" refused it.
+    monkeypatch.setattr(versions, "installed", lambda prog: None)
     plan = templates.plan(key, "demo", tmp_path, set())
     t = templates.TEMPLATES[key]
     Service.model_validate(plan.service)  # a valid service as it is

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
-from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QButtonGroup,
@@ -269,17 +269,6 @@ class ServiceDialog(QDialog):
         self.expose.setCurrentIndex(0 if n.get("expose", "local") == "local" else 1)
         form.addRow("", self.net_on)
         form.addRow("Serves on ports", self.ports)
-        # As typed: a port something else already uses, or one Windows reserved for Hyper-V, WSL or Docker, only
-        # shows up later as a server nobody can reach.
-        self.port_note = _muted("")
-        self.port_note.setStyleSheet(f"color: {theme.color('warn')}")
-        self.port_note.hide()
-        form.addRow("", self.port_note)
-        self._port_timer = QTimer(self)
-        self._port_timer.setSingleShot(True)
-        self._port_timer.setInterval(500)
-        self._port_timer.timeout.connect(self._check_ports)
-        self.ports.textEdited.connect(lambda _t: self._port_timer.start())
         form.addRow("Who may connect", self.expose)
         form.addRow("", _muted("Sandboxed services may listen only on these ports (Linux 6.7+, macOS, containers). "
                                "PORT and HOST are set for the program unless you set them."))
@@ -297,15 +286,6 @@ class ServiceDialog(QDialog):
             form.addRow("Windows", row)
             form.addRow("", self.reach_note)
         return w
-
-    def _check_ports(self) -> None:
-        try:
-            ports = validate.parse_ports(self.ports.text())
-        except ValueError:
-            ports = []
-        problems = [p for p in (envcheck.port_problem(port) for port in ports[:8]) if p]
-        self.port_note.setText("\n".join(problems))
-        self.port_note.setVisible(bool(problems))
 
     def _limits(self, d: dict[str, Any]) -> QWidget:
         self.limits_tab = LimitsTab(d)
@@ -466,11 +446,11 @@ class ServiceDialog(QDialog):
         except ValueError as exc:
             self.error.setText(str(exc))
             return
-        reserved = [p for p in ports if not undo and envcheck.port_problem(p).startswith("Windows has reserved")]
+        reserved = [p for p in ports if not undo and envcheck.port_reserved(p)]
         if reserved:  # nothing can listen there: an administrator prompt for it would only add rules for nothing
-            self.error.setText(envcheck.port_problem(reserved[0]) + " Change the port first, then Make reachable.")
+            self.error.setText(f"Windows has reserved port {reserved[0]} for itself (Hyper-V, WSL or Docker). "
+                               "Change the port first, then Make reachable.")
             return
-        self._check_ports()
         lan = self.expose.currentData() == "lan"
         sid = self.original.id
         self.reach_note.setText("Waiting for the administrator prompt…")

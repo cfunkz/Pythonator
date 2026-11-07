@@ -472,3 +472,25 @@ def test_a_worker_thread_can_report_after_the_window_closed(qtbot: Any) -> None:
     assert got == ["one"]
     source = (ROOT / "pythonator" / "ui" / "main_window.py").read_text(encoding="utf-8")
     assert "bridge.text.emit(" not in source
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="bubblewrap is Linux only")
+def test_bubblewrap_check_tries_what_a_start_does(monkeypatch: pytest.MonkeyPatch) -> None:
+    """In Docker or LXC bubblewrap can make a user namespace but not mount /proc: the check must find that, so
+    Sandbox mode falls back to Landlock + seccomp instead of every start failing."""
+    seen: list[list[str]] = []
+
+    def run(args: list[str], **_kw: Any) -> subprocess.CompletedProcess[str]:
+        seen.append(args)
+        return subprocess.CompletedProcess(args, 1, "", "bwrap: Can't mount proc on /newroot/proc: Operation not "
+                                                        "permitted\n")
+
+    monkeypatch.setattr(linux, "bwrap_path", lambda: "/usr/bin/bwrap")
+    monkeypatch.setattr(subprocess, "run", run)
+    linux.support.cache_clear()
+    try:
+        sup = linux.support()
+    finally:
+        linux.support.cache_clear()
+    assert {"--unshare-pid", "--proc", "--dev"} <= set(seen[0])
+    assert sup.bwrap == "" and "mount proc" in sup.bwrap_problem

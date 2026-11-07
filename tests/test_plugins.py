@@ -122,6 +122,17 @@ def test_garbage_is_cut_off(harness: DaemonHarness, tmp_path: Path) -> None:
     harness.wait(lambda: "isn't a protocol message" in activity(harness, "junk"))
 
 
+def test_nothing_after_a_violation_counts(harness: DaemonHarness, tmp_path: Path) -> None:
+    # Already in the pipe when it is cut off: neither acted on nor each a new "Disabled" (and settings save).
+    install(harness, tmp_path, "late", "class P(Plugin):\n    def on_start(self):\n"
+            "        os.write(1, b'junk\\n' + b'{\"t\":\"notify\",\"text\":\"late-notice\"}\\n' * 50)\n"
+            "        time.sleep(30)\n")
+    harness.wait(lambda: "isn't a protocol message" in activity(harness, "late"))
+    harness.qtbot.wait(1000)
+    assert not any("late-notice" in e.get("text", "") for e in harness.events if e.get("ev") == "notice")
+    assert activity(harness, "late").count("Disabled") <= 2  # the cut-off, then its exit
+
+
 def test_crashing_plugin_is_disabled(harness: DaemonHarness, tmp_path: Path) -> None:
     install(harness, tmp_path, "crashy", "raise SystemExit(9)\n")
     harness.wait(lambda: "crashed 3 times" in plugin_state(harness, "crashy").get("error", ""), timeout=30_000)

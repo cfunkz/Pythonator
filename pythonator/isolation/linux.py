@@ -76,7 +76,11 @@ def support() -> Support:
     bwrap, problem = bwrap_path(), ""
     if bwrap:
         try:
-            done = subprocess.run([bwrap, "--ro-bind", "/", "/", "--unshare-user", "--unshare-net", "--", "/bin/true"],
+            # The namespaces and mounts a real start uses: in a container (Docker, LXC) bubblewrap may make a user
+            # namespace but not mount a new /proc, and then every sandboxed start failed instead of falling back.
+            done = subprocess.run([bwrap, "--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-uts",
+                                   "--unshare-net", "--cap-drop", "ALL", "--ro-bind", "/", "/", "--dev", "/dev",
+                                   "--proc", "/proc", "--", "/bin/true"],
                                   capture_output=True, text=True, timeout=10, check=False)
             if done.returncode != 0:
                 problem = (done.stderr.strip() or "bubblewrap refused to start").splitlines()[0]

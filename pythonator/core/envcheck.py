@@ -127,32 +127,19 @@ def port_problems(service: Service) -> list[str]:
     out = []
     for port in service.network.ports:
         why = _port_refused(port)
+        near = free_port_near(port, set(service.network.ports)) if why else 0
+        instead = f" (port {near} is free)" if near else ""
         if why == "in use":
-            out.append(f"Port {port} is already in use{_owner(port)}. Stop that program, or choose another port "
-                       "on the Network tab (and the same one in the program's settings)")
+            out.append(f"Port {port} is already in use{_owner(port)}. Stop that program, or choose another "
+                       f"port{instead} on the Network tab (and the same one in the program's settings)")
         elif why == "reserved":
             out.append(f"Windows has reserved port {port} for itself: Hyper-V, WSL and Docker reserve ranges of "
                        "ports, and the ranges can change at each restart (netsh interface ipv4 show "
-                       "excludedportrange protocol=tcp lists them). Choose another port on the Network tab")
+                       f"excludedportrange protocol=tcp lists them). Choose another port{instead} on the Network tab")
         elif why == "privileged":
             out.append(f"Port {port} is below 1024, which only an administrator may listen on here. "
-                       "Choose a port from 1024 up on the Network tab")
+                       f"Choose a port from 1024 up{instead} on the Network tab")
     return out
-
-
-def port_problem(port: int) -> str:
-    """One port, as the Network tab is typed: "" when this computer lets a program listen on it now, else what is
-    wrong and a port that is free."""
-    why = _port_refused(port)
-    if not why:
-        return ""
-    near = free_port_near(port)
-    instead = f" Port {near} is free." if near else ""
-    if why == "in use":
-        return f"Port {port} is already in use{_owner(port)}.{instead}"
-    if why == "reserved":
-        return f"Windows has reserved port {port} for itself (Hyper-V, WSL or Docker).{instead}"
-    return f"Port {port} is below 1024: only an administrator may listen on it.{instead}"
 
 
 def free_port_near(port: int, taken: set[int] | None = None) -> int:
@@ -161,6 +148,11 @@ def free_port_near(port: int, taken: set[int] | None = None) -> int:
         if p not in (taken or set()) and not _port_refused(p):
             return p
     return 0
+
+
+def port_reserved(port: int) -> bool:
+    """Windows reserved ``port`` for Hyper-V, WSL or Docker: nothing can listen there."""
+    return _port_refused(port) == "reserved"
 
 
 def _port_refused(port: int) -> str:

@@ -375,7 +375,7 @@ def test_system_check_wraps_long_paths_and_hides_the_home_folder() -> None:
 # -- Ports: taken, reserved, IPv6 only ------------------------------------------------------------------------------
 
 
-def test_a_port_in_use_is_named_with_a_free_one_to_use_instead() -> None:
+def test_a_port_in_use_is_named_with_a_free_one_to_use_instead(tmp_path: Path) -> None:
     import socket
 
     from pythonator.core import envcheck
@@ -384,11 +384,15 @@ def test_a_port_in_use_is_named_with_a_free_one_to_use_instead() -> None:
         s.bind(("127.0.0.1", 0))
         s.listen()
         port = s.getsockname()[1]
-        text = envcheck.port_problem(port)
+        service = Service.model_validate({"name": "web", "folder": str(tmp_path), "runtime": "python",
+                                          "entry": "app.py", "network": {"enabled": True, "ports": [port]}})
+        [text] = envcheck.port_problems(service)
         assert f"Port {port} is already in use" in text
         near = envcheck.free_port_near(port)
-        assert near > port and f"Port {near} is free" in text
-    assert envcheck.port_problem(near) == ""
+        assert near > port and f"(port {near} is free)" in text
+        assert not envcheck.port_reserved(port)
+    service.network.ports = [near]
+    assert envcheck.port_problems(service) == []
 
 
 def test_a_service_listening_on_ipv6_only_or_beside_another_program_gets_a_note(
@@ -453,3 +457,27 @@ def test_this_system_lists_other_programs_listeners() -> None:
                  if c.status == psutil.CONN_LISTEN and c.laddr and c.laddr.port == port]
         assert found, f"psutil didn't list the listener on {port}: {sum(map(len, conns.values()))} connections"
         assert os.getpid() in {pid for pid, _ in found}, found
+
+
+@pytest.mark.skipif(not IS_LINUX, reason="PSS is Linux's")
+def test_forked_workers_shared_memory_is_counted_once() -> None:
+    """A prefork server: a parent with 200 MB and four forked workers that only read it. Summed RSS says about
+    1 GB; what they hold is about 200 MB, so a 500 MB limit must not stop it."""
+    from pythonator.daemon import supervisor
+
+    code = ("import os, time\nb = bytearray(200 * 1024 * 1024)\nfor i in range(0, len(b), 4096): b[i] = 1\n"
+            "for _ in range(4):\n    if os.fork() == 0:\n        s = sum(b[i] for i in range(0, len(b), 4096))\n"
+            "        time.sleep(30); os._exit(0)\nprint('ready', flush=True)\ntime.sleep(30)\n")
+    proc = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE)
+    try:
+        assert proc.stdout is not None and proc.stdout.readline().strip() == b"ready"
+        time.sleep(1.5)
+        st = supervisor._tree_stats(proc.pid, {}, ports=False)
+        assert st.processes == 5
+        assert st.memory > 700 * 1024 * 1024  # what the watchdog first sees
+        assert supervisor._own_memory(st) < 450 * 1024 * 1024
+    finally:
+        for child in psutil.Process(proc.pid).children(recursive=True):
+            child.kill()
+        proc.kill()
+        proc.wait()

@@ -9,8 +9,8 @@ All notable changes to Pythonator are recorded here. The format follows
 
 ### Added
 
-- The Network tab warns as you type when a port is already in use (and by which program) or reserved by Windows for
-  Hyper-V, WSL or Docker, and names a free port near it. Make reachable refuses a reserved port.
+- A start refused because a port is in use or reserved by Windows (Hyper-V, WSL, Docker) names a free port near it.
+  Make reachable refuses a reserved port.
 - A running server gets a note when it listens on IPv6 only (`[::1]`, what `localhost` can mean), since the Open
   button, Make reachable and `HOST` use `127.0.0.1`, and when another program listens on the same port and may take
   its connections.
@@ -37,6 +37,15 @@ All notable changes to Pythonator are recorded here. The format follows
   paths in your home folder show as `~` (they showed your user name).
 - Ending a plugin ends every process it started: its process group, and on Windows its own job object (the
   sandboxed worker outlived the launcher before).
+- Linux: in Docker or LXC, where bubblewrap can make a user namespace but not mount `/proc`, every sandboxed start
+  and plugin failed. The bubblewrap check now tries what a start does, so Sandbox mode falls back to Landlock and
+  seccomp there.
+- A server with forked workers (gunicorn, uvicorn `--workers`, PHP-FPM, Node.js cluster) was stopped far below its
+  memory limit: the memory the workers share with their parent was counted once per worker (300 MB with four
+  workers counted as 1.5 GB). Before stopping a service, Linux now counts shared memory once (PSS) and Windows counts
+  private memory, the same as its job object.
+- A plugin disabled for misbehaving: the messages it had already sent are dropped. They were still acted on (one
+  could stop a service), and each disabled it again, with a settings save and a broadcast every time.
 
 ### Security
 

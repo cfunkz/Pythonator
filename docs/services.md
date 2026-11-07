@@ -120,7 +120,7 @@ memory*) or, in red, what is wrong with it. A service cannot be saved with an un
 | --- | --- |
 | Windows | The job object's memory limit; Windows refuses the allocation that would exceed it |
 | Containers | `--memory`, enforced by the engine |
-| macOS and Linux | A watchdog checks the tree every 2 seconds and stops the service when it is over the limit |
+| macOS and Linux | A watchdog checks the tree every 2 seconds and stops the service when it is over the limit. On Linux, memory that forked workers share (gunicorn, uvicorn `--workers`, PHP-FPM) is split between them instead of counted once per worker |
 
 ### CPU limit
 

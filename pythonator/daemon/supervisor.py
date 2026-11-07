@@ -1226,8 +1226,9 @@ class Supervisor:
             slot.stats = st
             self._check_listening(slot)
             limit = slot.service.memory_mb
-            if limit and st.memory > limit * 1024 * 1024 and slot.service.mode is not Mode.CONTAINER:
-                self.note(slot, f"Over its {limit} MB memory limit ({st.memory // (1024 * 1024)} MB): stopping it")
+            if limit and st.memory > limit * 1024 * 1024 and slot.service.mode is not Mode.CONTAINER \
+                    and (used := _own_memory(st)) > limit * 1024 * 1024:
+                self.note(slot, f"Over its {limit} MB memory limit ({used // (1024 * 1024)} MB): stopping it")
                 slot.runner.kill(f"{limit} MB memory limit")
             items[sid] = {"cpu": round(st.cpu, 1), "memory": st.memory, "processes": st.processes,
                           "ports": st.ports, "remote": st.remote[:50]}
@@ -1429,6 +1430,24 @@ def _tree_stats(pid: int, cache: dict[int, psutil.Process], *, ports: bool,
                     if c.status == psutil.CONN_LISTEN and c.laddr and c.laddr.port in want:
                         st.others.setdefault(c.laddr.port, []).append(other)
     return st
+
+
+def _own_memory(st: Stats) -> int:
+    """What a tree over its limit by summed RSS really holds. Forked workers (gunicorn, uvicorn --workers, PHP-FPM)
+    share their parent's pages, which RSS counts once per process: Linux's PSS splits each shared page between its
+    users, and Windows' private bytes are what its job object limits. macOS keeps the RSS sum."""
+    if sys.platform == "darwin":
+        return st.memory
+    total = 0
+    for proc in st.procs:
+        try:
+            mem: Any = proc.memory_info() if sys.platform == "win32" else proc.memory_full_info()
+            total += mem.private if sys.platform == "win32" else mem.pss
+        except (psutil.NoSuchProcess, psutil.ZombieProcess):
+            continue  # one that ended holds nothing now
+        except (psutil.Error, AttributeError, OSError):
+            return st.memory  # can't be told: the RSS sum stands
+    return total
 
 
 def _process_tree(pid: int | None) -> str:
