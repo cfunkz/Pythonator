@@ -44,6 +44,7 @@ All notable changes to Pythonator are recorded here. The format follows
   memory limit: the memory the workers share with their parent was counted once per worker (300 MB with four
   workers counted as 1.5 GB). Before stopping a service, Linux now counts shared memory once (PSS) and Windows counts
   private memory, the same as its job object.
+- A memory or CPU limit typed with hundreds of digits raised an error instead of saying what to write.
 - A plugin disabled for misbehaving: the messages it had already sent are dropped. They were still acted on (one
   could stop a service), and each disabled it again, with a settings save and a broadcast every time.
 
@@ -59,6 +60,10 @@ All notable changes to Pythonator are recorded here. The format follows
   on Linux with Landlock but neither libseccomp nor bubblewrap). They show why they didn't start.
 - Windows: WSL's `bash.exe` and `wsl.exe` in System32 are refused in Sandbox mode. They would run the script inside
   WSL, outside the AppContainer.
+- Files a sandboxed service can write in its folder and Pythonator reads itself (`package.json`, `pyproject.toml`,
+  `go.mod`, `Cargo.toml`, `composer.json`, `pyvenv.cfg`, the env file, and files plugins read): only regular files
+  of at most 1 MB are read, without waiting. `mkfifo package.json` made the background service wait forever at the
+  next start, which froze every service, and a file of gigabytes or a link to `/dev/zero` could fill its memory.
 - Release builds install Pythonator with `--no-build-isolation`, so setuptools comes from the hash-locked build lock
   instead of an unchecked download.
 

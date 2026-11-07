@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import contextlib
 import difflib
+import errno
 import fnmatch
 import hashlib
 import os
@@ -30,6 +31,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
+
+from ..core import readfile
 
 MAX_READ = 256 * 1024
 MAX_LIST = 3000
@@ -263,8 +266,10 @@ class ServiceFiles:
         path = resolve(self.folder, rel)
         if not path.is_file():
             raise FileRefused(f"{rel} isn't a file")
-        with path.open("rb") as fh:
-            data = fh.read(MAX_READ + 1)
+        try:
+            data = readfile.read_regular(path, MAX_READ, head=True)
+        except OSError as exc:
+            raise FileRefused(f"{rel} can't be read: {exc.strerror or exc}") from None
         if b"\0" in data[:8192]:
             raise FileRefused(f"{rel} isn't a text file")
         truncated = len(data) > MAX_READ
@@ -278,9 +283,12 @@ class ServiceFiles:
             return None
         if not path.is_file():
             raise FileRefused(f"{rel} isn't a file")
-        if path.stat().st_size > MAX_RESULT:
-            raise FileRefused(f"{rel} is larger than 512 KB; change it yourself")
-        data = path.read_bytes()
+        try:
+            data = readfile.read_regular(path, MAX_RESULT)
+        except OSError as exc:
+            if exc.errno == errno.EFBIG:
+                raise FileRefused(f"{rel} is larger than 512 KB; change it yourself") from None
+            raise FileRefused(f"{rel} can't be read: {exc.strerror or exc}") from None
         if b"\0" in data[:8192]:
             raise FileRefused(f"{rel} isn't a text file")
         try:

@@ -481,3 +481,45 @@ def test_forked_workers_shared_memory_is_counted_once() -> None:
             child.kill()
         proc.kill()
         proc.wait()
+
+
+@pytest.mark.skipif(IS_WINDOWS, reason="FIFOs are POSIX")
+def test_a_fifo_or_huge_file_in_a_service_folder_never_blocks_pythonator(tmp_path: Path) -> None:
+    """A sandboxed program may write its folder: ``mkfifo package.json`` made the background service wait forever
+    at the next start (every service with it), and a file of gigabytes filled its memory. Each read here returns
+    at once, as if the file weren't there."""
+    from pythonator.core import readfile, runtimes, versions
+    from pythonator.isolation.base import read_env_file
+    from pythonator.plugins.files import FileRefused, ServiceFiles
+
+    for name in (".env", "package.json", "pyproject.toml"):
+        os.mkfifo(tmp_path / name)
+    (tmp_path / ".venv").mkdir()
+    os.mkfifo(tmp_path / ".venv" / "pyvenv.cfg")
+    started = time.monotonic()
+    assert read_env_file(tmp_path, ".env") == {}
+    assert runtimes.env_missing("node", tmp_path) == ""
+    assert runtimes.venv_config(tmp_path / ".venv", "home") == ""
+    assert versions.declared("python", tmp_path) == ("", "")
+    with pytest.raises(FileRefused):
+        ServiceFiles(tmp_path).read("package.json")
+    assert time.monotonic() - started < 5
+
+    big = tmp_path / "big.json"
+    with big.open("wb") as fh:
+        fh.truncate(readfile.MAX_PROJECT_FILE * 8)  # sparse: no disk used
+    with pytest.raises(OSError, match="larger than"):
+        readfile.read_regular(big)
+    assert len(readfile.read_regular(big, 100, head=True)) == 101
+    (tmp_path / "deep").mkdir()
+    (tmp_path / "deep" / "package.json").write_text("[" * 200_000 + "]" * 200_000, encoding="utf-8")
+    assert versions.declared("node", tmp_path / "deep") == ("", "")
+    assert runtimes.env_missing("node", tmp_path / "deep") == ""
+
+
+def test_a_limit_too_big_for_a_number_is_an_error_not_a_crash() -> None:
+    from pythonator.core import limits
+
+    for parse in (limits.parse_memory, limits.parse_cpu):
+        with pytest.raises(limits.LimitError):
+            parse("9" * 400)

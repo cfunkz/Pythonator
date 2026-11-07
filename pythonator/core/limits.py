@@ -18,6 +18,7 @@ watchdog for the rest (it stops the tree when it goes over).
 from __future__ import annotations
 
 import contextlib
+import math
 import os
 import re
 import signal
@@ -152,7 +153,8 @@ def _number(text: str) -> tuple[float, str] | None:
     m = _NUMBER.match(text.strip().lower().replace(" ", ""))
     if not m:
         return None
-    return float(m.group(1).replace(",", ".")), m.group(2)
+    value = float(m.group(1).replace(",", "."))
+    return (value, m.group(2)) if math.isfinite(value) else None  # 400 nines are "inf", which no int holds
 
 
 def parse_memory(text: str, total_mb: int | None = None) -> tuple[int, str]:

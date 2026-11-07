@@ -18,6 +18,7 @@ import tomllib
 from pathlib import Path
 
 from ..paths import IS_WINDOWS, quiet_start
+from . import readfile
 
 Version = tuple[int, int, int]
 
@@ -123,25 +124,25 @@ def declared(runtime: str, folder: Path) -> tuple[str, str]:
     """The versions a project says it needs, and where it says so (("", "") when it doesn't)."""
     try:
         if runtime in ("node", "bun") and (f := folder / "package.json").is_file():
-            engines = json.loads(f.read_text(encoding="utf-8")).get("engines") or {}
+            engines = json.loads(readfile.read_text(f)).get("engines") or {}
             spec = engines.get("bun" if runtime == "bun" else "node") if isinstance(engines, dict) else None
             return (str(spec), "package.json (engines)") if isinstance(spec, str) and spec else ("", "")
         if runtime == "python" and (f := folder / "pyproject.toml").is_file():
-            spec = tomllib.loads(f.read_text(encoding="utf-8")).get("project", {}).get("requires-python")
+            spec = tomllib.loads(readfile.read_text(f)).get("project", {}).get("requires-python")
             return (str(spec), "pyproject.toml (requires-python)") if isinstance(spec, str) else ("", "")
         if runtime == "go" and (f := folder / "go.mod").is_file():
-            m = re.search(r"^go\s+(\d+\.\d+(?:\.\d+)?)\s*$", f.read_text(encoding="utf-8"), re.M)
+            m = re.search(r"^go\s+(\d+\.\d+(?:\.\d+)?)\s*$", readfile.read_text(f), re.M)
             if not m or (wanted := parse(m[1])) is None:
                 return "", ""
             # From Go 1.21, go fetches the newer toolchain a go.mod asks for by itself: only older ones can't.
             return (">=1.21" if wanted >= (1, 21, 0) else f">={m[1]}"), "go.mod (go line)"
         if runtime == "rust" and (f := folder / "Cargo.toml").is_file():
-            spec = tomllib.loads(f.read_text(encoding="utf-8")).get("package", {}).get("rust-version")
+            spec = tomllib.loads(readfile.read_text(f)).get("package", {}).get("rust-version")
             return (f">={spec}", "Cargo.toml (rust-version)") if isinstance(spec, str) else ("", "")
         if runtime == "php" and (f := folder / "composer.json").is_file():
-            require = json.loads(f.read_text(encoding="utf-8")).get("require") or {}
+            require = json.loads(readfile.read_text(f)).get("require") or {}
             spec = require.get("php") if isinstance(require, dict) else None
             return (str(spec), "composer.json (require php)") if isinstance(spec, str) else ("", "")
-    except (OSError, ValueError, AttributeError, tomllib.TOMLDecodeError):
+    except (OSError, ValueError, AttributeError, RecursionError):  # TOMLDecodeError is a ValueError
         pass
     return "", ""

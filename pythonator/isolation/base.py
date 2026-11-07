@@ -73,14 +73,14 @@ def read_env_file(folder: Path, name: str) -> dict[str, str]:
     """``KEY=value`` lines of the file ``name`` in ``folder`` (``#`` comments, optional quotes, ``export``
     prefix). Bad lines are skipped. Only a file inside the folder counts: a sandboxed service can write its folder,
     and a link from there to your own files (``.env`` -> ``~/.aws/credentials``) must not hand them to it."""
-    from ..core import validate
+    from ..core import readfile, validate
 
     out: dict[str, str] = {}
     try:
         path = (folder / name).resolve(strict=True)
         if not path.is_relative_to(folder.resolve()):
             return out
-        text = path.read_text(encoding="utf-8-sig")
+        text = readfile.read_text(path, encoding="utf-8-sig")
     except (OSError, UnicodeDecodeError):
         return out
     for raw in text.splitlines()[:1000]:

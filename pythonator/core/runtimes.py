@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..paths import IS_WINDOWS
+from . import readfile
 
 Argv = list[str]
 VENV_NAMES = (".venv", "venv", "env")
@@ -175,8 +176,8 @@ def detect(folder: Path) -> tuple[Runtime | None, str]:
 
 def _package_main(folder: Path) -> str:
     try:
-        data = json.loads((folder / "package.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        data = json.loads(readfile.read_text(folder / "package.json"))
+    except (OSError, ValueError, RecursionError):
         return ""
     if isinstance(data, dict) and isinstance(data.get("scripts"), dict) and "start" in data["scripts"]:
         return ""  # npm start
@@ -258,7 +259,7 @@ def venv_has_pip(venv: Path) -> bool:
 def venv_config(venv: Path, name: str) -> str:
     """A setting of a venv's pyvenv.cfg (``home``, ``version``), "" when it has none."""
     try:
-        for line in (venv / "pyvenv.cfg").read_text(encoding="utf-8").splitlines():
+        for line in readfile.read_text(venv / "pyvenv.cfg").splitlines():
             key, _, value = line.partition("=")
             if key.strip().lower() == name and value.strip():
                 return value.strip()
@@ -310,8 +311,8 @@ def env_folders(runtime: str, folder: Path, *, container: bool = False) -> list[
 
 def _has_dependencies(package_json: Path) -> bool:
     try:
-        data = json.loads(package_json.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        data = json.loads(readfile.read_text(package_json))
+    except (OSError, ValueError, RecursionError):
         return False
     return isinstance(data, dict) and any(data.get(k) for k in ("dependencies", "devDependencies"))
 
