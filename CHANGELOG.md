@@ -7,6 +7,19 @@ changed.
 
 ## [Unreleased]
 
+### Changed
+
+- Service settings: memory and CPU limits have their own **Limits** tab. Each limit is a card with its value in
+  large type and its share of this computer, a slider over this computer's own range (all the way right is no
+  limit), one-click sizes and a box to type any value, checked as you type as before. Profiles at the top (Small
+  bot, Web app, Worker, No limits) set both at once.
+- Service settings: schedules moved from General to a new **Schedule & restarts** tab, with the restart rules.
+  Choose **Keep it running** or **Run on a schedule**; a schedule comes from eight presets (every 5 or 15 minutes,
+  hourly, every 6 hours, nightly, weekdays, Mondays, monthly), a small form (every day at 09:00, Monday to Friday,
+  every week on a day, every month on a day…) or text as before, and the tab says it in words with its next three
+  runs. Restart rules are greyed out for a scheduled job, which isn't restarted. Saved services are unchanged: a
+  schedule is still saved as `every 15m` or a cron line.
+
 ### Added
 
 - System check: **Left behind by services** lists what can keep a port open or a door unlocked after a service is

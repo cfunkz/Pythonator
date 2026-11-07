@@ -1,4 +1,4 @@
-"""Add or edit a service: what runs, how isolated it is, who can reach it, and how it restarts."""
+"""Add or edit a service: what runs, how isolated it is, who can reach it, its limits, and when it runs."""
 
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
-    QFrame,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -32,11 +31,12 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ..core import limits, runtimes, validate
+from ..core import runtimes, validate
 from ..core.models import Mode, Service
 from ..paths import IS_WINDOWS
 from . import theme
-from .widgets import dspin, label, line, spin
+from .run_settings import LimitsTab, ScheduleTab
+from .widgets import label, line, scroll
 
 
 def _muted(text: str) -> QLabel:
@@ -123,7 +123,7 @@ class ServiceDialog(QDialog):
                  *, preset: dict[str, Any] | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Edit service" if service else "New service")
-        self.resize(720, 620)
+        self.resize(760, 680)
         self.original = service
         self.result_service: Service | None = None
         data: dict[str, Any] = service.model_dump(mode="json") if service else {}
@@ -132,7 +132,8 @@ class ServiceDialog(QDialog):
         tabs.addTab(self._general(data), "General")
         tabs.addTab(self._isolation(data, capabilities), "Isolation")
         tabs.addTab(self._network(data), "Network")
-        tabs.addTab(self._restarts(data), "Restarts && limits")
+        tabs.addTab(self._limits(data), "Limits")
+        tabs.addTab(self._schedule(data), "Schedule && restarts")
         tabs.addTab(self._environment(data), "Environment")
         self.error = label()
         self.error.setStyleSheet(f"color: {theme.color('error')}")
@@ -172,10 +173,6 @@ class ServiceDialog(QDialog):
         erow.addWidget(pick)
         self.command = line(validate.join_command(d.get("command", [])), "e.g. uvicorn app:app --port 8000")
         self.args = line(validate.join_command(d.get("args", [])), "Arguments (optional)")
-        self.autostart = QCheckBox("Start when Pythonator starts")
-        self.autostart.setChecked(bool(d.get("autostart")))
-        self.schedule = line(d.get("schedule", ""), "Empty: keep it running. Or 'every 15m', "
-                                                                         "or cron like '0 * * * *'")
         self.own_env = QCheckBox("Own environment: its own venv, node_modules or package cache, never global installs")
         self.own_env.setToolTip("Start makes it if it's missing. Packages ▾ → Recreate environment starts it fresh.")
         self.own_env.setChecked(bool(d.get("own_env", True)))
@@ -190,8 +187,6 @@ class ServiceDialog(QDialog):
         form.addRow("File to run", erow)
         form.addRow("Command", self.command)
         form.addRow("Arguments", self.args)
-        form.addRow("Schedule", self.schedule)
-        form.addRow("", self.autostart)
         form.addRow("", detect)
         form.addRow("", self.hint)
         form.addRow("Packages", self.own_env)
@@ -285,100 +280,25 @@ class ServiceDialog(QDialog):
             form.addRow("", self.reach_note)
         return w
 
-    def _restarts(self, d: dict[str, Any]) -> QWidget:
-        w = QWidget()
-        form = QFormLayout(w)
-        self.restart = QComboBox()
-        for key, text in (("on-failure", "When it crashes"), ("always", "Always, also after a clean exit"),
-                          ("never", "Never")):
-            self.restart.addItem(text, key)
-        self.restart.setCurrentIndex(max(0, self.restart.findData(d.get("restart", "on-failure"))))
-        self.max_restarts = spin(0, 1000, int(d.get("max_restarts", 5)))
-        self.max_restarts.setSpecialValueText("No limit")
-        self.stop_timeout = dspin(0.5, 600, float(d.get("stop_timeout", 10)), suffix=" s")
-        form.addRow("Restart", self.restart)
-        form.addRow("Give up after", self.max_restarts)
-        form.addRow("", _muted("restarts within 10 minutes. The wait doubles each time, up to a minute."))
-        form.addRow("Time to stop", self.stop_timeout)
-        form.addRow("", _muted("After asking it to stop (SIGTERM / Ctrl+C), the whole process tree is killed."))
-        form.addRow(self._limits_box(d))
-        return w
-
-    def _limits_box(self, d: dict[str, Any]) -> QWidget:
-        """Memory and CPU limits, typed (512M, 2G, 1.5 cores, 150%) and checked as you type against this
-        computer, which is named at the top."""
-        n, total = limits.cores(), limits.memory_total_mb()
-        box = QFrame()
-        box.setObjectName("LimitsBox")
-        box.setStyleSheet(f"#LimitsBox {{ border: 1px solid {theme.rgba('accent', 0.45)}; border-radius: 4px; "
-                          f"background: {theme.rgba('accent', 0.06)}; }} #LimitsBox QLabel {{ background: none; }}")
-        layout = QVBoxLayout(box)
-        layout.setContentsMargins(12, 10, 12, 10)
-        hi = theme.color("accent_hi")
-        head = QLabel(f"<span style='font-size:13pt'>This computer: <b style='color:{hi}'>{n} cores</b>"
-                      f" &nbsp;·&nbsp; <b style='color:{hi}'>{total / 1024:.1f} GB memory</b></span>")
-        layout.addWidget(head)
-        grid = QFormLayout()
-        self._limit_start = {"memory": int(d.get("memory_mb", 0)), "cpu": int(d.get("cpu_percent", 0))}
-        self.memory = line(limits.format_memory(self._limit_start["memory"]), "No limit (e.g. 512M, 2G, 1.5 GB)")
-        self.cpu = line(limits.format_cpu(self._limit_start["cpu"]), "No limit (e.g. 1.5 cores, or 150%)")
-        self.memory_note, self.cpu_note = _muted(""), _muted("")
-        for edit, note, presets in (
-            (self.memory, self.memory_note, (("No limit", ""), ("512M", "512M"), ("1G", "1G"),
-                                             ("A quarter", limits.format_memory(max(16, total // 4 // 512 * 512))))),
-            (self.cpu, self.cpu_note, (("No limit", ""), ("½ core", "0.5"), ("1 core", "1"),
-                                       ("Half", limits.format_cpu(n * 50) if n > 1 else "0.5"))),
-        ):
-            row = QHBoxLayout()
-            row.addWidget(edit, 1)
-            for text, value in presets:
-                chip = QPushButton(text)
-                chip.setAutoDefault(False)
-                chip.setFixedWidth(96)
-                chip.setToolTip(f"Set it to {value}" if value else "No limit")
-                chip.clicked.connect(lambda _c=False, e=edit, v=value: e.setText(v))
-                row.addWidget(chip)
-            grid.addRow("Memory limit" if edit is self.memory else "CPU limit", row)
-            grid.addRow("", note)
-            edit.textChanged.connect(self._check_limits)
-        layout.addLayout(grid)
-        how = ("Windows holds it to the limit (job object)" if IS_WINDOWS else
-               "Pythonator pauses it in short slices whenever it goes over")
-        layout.addWidget(_muted("For the whole process tree, all threads and child processes together. "
-                                f"CPU: 1 core is 100%. {how}; containers use --cpus and --memory."))
-        self._check_limits()
-        return box
+    def _limits(self, d: dict[str, Any]) -> QWidget:
+        self.limits_tab = LimitsTab(d)
+        self.memory, self.cpu = self.limits_tab.memory.edit, self.limits_tab.cpu.edit
+        self.memory_note, self.cpu_note = self.limits_tab.memory.note, self.limits_tab.cpu.note
+        area = scroll()
+        area.setWidget(self.limits_tab)
+        return area
 
     def limit_values(self) -> tuple[int, int]:
-        """(memory_mb, cpu_percent) from the two boxes. Raises ValueError with what to write instead."""
-        out = []
-        for key, edit, parse, fmt in (("memory", self.memory, limits.parse_memory, limits.format_memory),
-                                      ("cpu", self.cpu, limits.parse_cpu, limits.format_cpu)):
-            start = self._limit_start[key]
-            if edit.text() == fmt(start):  # unchanged: kept as it was, even if set on a bigger computer
-                out.append(start)
-            else:
-                out.append(parse(edit.text())[0])
-        return out[0], out[1]
+        """(memory_mb, cpu_percent) from the Limits tab. Raises ValueError with what to write instead."""
+        return self.limits_tab.values()
 
-    def _check_limits(self) -> None:
-        n, total = limits.cores(), limits.memory_total_mb()
-        for edit, note in ((self.memory, self.memory_note), (self.cpu, self.cpu_note)):
-            try:
-                if edit is self.memory:
-                    value, why = limits.parse_memory(edit.text())
-                    what = f"{limits.format_memory(value)}, {value * 100 / total:.0f}% of this computer's memory"
-                else:
-                    value, why = limits.parse_cpu(edit.text())
-                    what = f"{limits.describe(value)}, {value / n:.0f}% of this computer's CPU"
-            except limits.LimitError as exc:
-                text, tone = str(exc).split(": ", 1)[1], "error"
-            else:
-                text = (what if value else "No limit") + (f" ({why})" if why else "")
-                tone = "warn" if why else ("ok" if value else "muted")
-            note.setText(text)
-            note.setStyleSheet(f"color: {theme.color(tone)}")
-            edit.setStyleSheet(f"border-color: {theme.color('error')}" if tone == "error" else "")
+    def _schedule(self, d: dict[str, Any]) -> QWidget:
+        tab = self.schedule_tab = ScheduleTab(d)
+        self.schedule, self.autostart = tab.schedule, tab.autostart
+        self.restart, self.max_restarts, self.stop_timeout = tab.restart, tab.max_restarts, tab.stop_timeout
+        area = scroll()
+        area.setWidget(tab)
+        return area
 
     def _environment(self, d: dict[str, Any]) -> QWidget:
         w = QWidget()
@@ -547,9 +467,9 @@ class ServiceDialog(QDialog):
                                     for p, w in self.folders.pairs()]},
             "container": {"engine": self.engine.currentText(), "image": self.image.text(),
                           "network": self.cnet.text(), "read_only_root": self.ro_root.isChecked()},
-            "restart": self.restart.currentData(), "max_restarts": self.max_restarts.value(),
+            "restart": self.restart.value(), "max_restarts": self.max_restarts.value(),
             "stop_timeout": self.stop_timeout.value(), "memory_mb": memory_mb, "cpu_percent": cpu_percent,
-            "autostart": self.autostart.isChecked(), "schedule": self.schedule.text(),
+            "autostart": self.autostart.isChecked(), "schedule": self.schedule_tab.schedule_text(),
             "git": {"url": self.git_url.text(), "branch": self.git_branch.text(),
                     "pull_on_start": self.git_pull.isChecked()} if self.git_url.text().strip() else None,
         }

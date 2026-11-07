@@ -16,8 +16,6 @@ Press **New service**, or select a service and press **Configure**. The tabs are
 | File to run | Relative to the folder. Empty is allowed where the language has a default (`npm start`, `go run .`, `cargo run`) |
 | Command | Custom command only: the whole command line, split like a shell would but never run by one |
 | Arguments | Passed after the file |
-| Schedule | Empty: keep it running. Otherwise when to run it (see [Schedules](#schedules)) |
-| Start when Pythonator starts | Starts it whenever the background service starts |
 
 **Detect from folder** looks for a known entry file (`main.py`, `app.py`, `bot.py`, `index.js`, `main.go`...) and
 then for project files (`package.json`, `go.mod`, `Cargo.toml`, `Gemfile`...).
@@ -26,12 +24,23 @@ Pythonator never runs a shell. Arguments go to the program exactly as written, s
 just characters. The checks refuse invisible characters (NUL, right-to-left overrides, zero-width spaces) that
 could make a command look different from what runs.
 
-## Restarts
+## Schedule & restarts
+
+The tab starts with how the service runs:
+
+* **Keep it running**: a server, a bot, a worker. When it exits, the restart rule below decides what happens.
+* **Run on a schedule**: a job, such as a backup, a report or a scraper. It runs, exits, and waits for its next
+  time (see [Schedules](#schedules)).
+
+**Start when Pythonator starts** starts it whenever the background service starts. For a scheduled job it reads
+**Also run it once when Pythonator starts**: one run at once, then on its schedule.
+
+### Restarts
 
 | Setting | Meaning |
 | --- | --- |
 | Restart: When it crashes | Started again when it exits with an error (the default) |
-| Restart: Always, also after a clean exit | Started again whenever it exits, also with exit code 0 |
+| Restart: Always | Started again whenever it exits, also with exit code 0 |
 | Restart: Never | It runs once |
 | Give up after | How many restarts within 10 minutes before Pythonator stops trying. 0 is no limit |
 | Time to stop | How long a stop waits for the program to exit politely before it is killed |
@@ -53,6 +62,18 @@ id *and* start time, so a reused id is never touched) and stops it.
 A scheduled service runs, exits, and waits for its next time. Between runs it shows **waiting** and the time of the
 next run.
 
+On **Schedule & restarts**, choose **Run on a schedule**, then either
+
+* press a preset: *Every 5 min*, *Every 15 min*, *Hourly*, *Every 6 hours*, *Nightly 03:00*, *Weekdays 09:00*,
+  *Mondays 09:00* or *Monthly, the 1st*;
+* or fill in **Repeat**: every so many seconds, minutes, hours or days; every hour at a minute; every day,
+  Monday to Friday, every week on a day or every month on a day, at a time;
+* or write it in **As text**, which is what is saved. Anything the form can't show is **Custom (cron)**.
+
+The form, the presets and the text follow each other. Above them the schedule is said in words (*Monday to Friday
+at 09:00*) and under them are its next three runs, or, in red, why it can't be read. An interval counts from when
+the last run ended, and a run still going when its time comes is left to finish.
+
 | Write | Runs |
 | --- | --- |
 | `every 30s`, `every 15m`, `every 6h`, `every 1d` | At that interval (10 seconds at least) |
@@ -64,20 +85,23 @@ Times are your computer's local time. A schedule takes the place of the restart 
 
 ## Memory and CPU limits
 
-Both are on the **Restarts & limits** tab, both are optional, and both apply to the whole process tree: every
+Both are on the **Limits** tab, both are optional, and both apply to the whole process tree: every
 thread and every child process together. The console says at each start which limits a service has and how they
 are kept.
 
-The box at the top of the limits shows this computer's cores and memory. Type a limit, or press one of the buttons
-next to it. Leave it empty (or press **No limit**) for none.
+The top of the tab shows this computer's cores and memory, and profiles that set both limits at once: **Small bot**
+(256 MB, a quarter of a core), **Web app** (1 GB, 1 core), **Worker** (2 GB, 2 cores) and **No limits**. Each limit
+has its own card with the value in large type and its share of this computer. Drag the slider (all the way right is
+no limit), press one of the sizes under it, or type a limit in the box. Leave the box empty (or press **No limit**)
+for none.
 
 * Memory: `512M`, `2G`, `1.5 GB`, `800` (megabytes). At least 16 MB. More than this computer has is lowered to
   all of it.
 * CPU: cores, like `0.5`, `1.5` or `2 cores`, or a percent of one core, like `150%`. At least 5%. All the cores
   or more means no limit.
 
-What you type is checked as you type: the line under it says what it means (for example *2 GB, 13% of this
-computer's memory*), or, in red, what to write instead. A service can't be saved with a limit that doesn't read.
+What you type is checked as you type: the card shows what it means (for example *2 GB, 13% of this computer's
+memory*), or, in red, what to write instead. A service can't be saved with a limit that doesn't read.
 
 **Memory limit**
 
