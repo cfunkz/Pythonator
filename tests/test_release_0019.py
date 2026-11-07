@@ -418,6 +418,26 @@ def test_a_service_listening_on_ipv6_only_or_beside_another_program_gets_a_note(
 
 
 def test_tree_stats_see_other_programs_on_its_port() -> None:
+    """The decision itself, from a connection list: a listener outside the service's tree on one of its ports."""
+    from pythonator.daemon import supervisor
+
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        mine = SimpleNamespace(status=psutil.CONN_LISTEN, laddr=SimpleNamespace(ip="127.0.0.1", port=8000))
+        other = SimpleNamespace(status=psutil.CONN_LISTEN, laddr=SimpleNamespace(ip="0.0.0.0", port=8000))  # noqa: S104
+        elsewhere = SimpleNamespace(status=psutil.CONN_LISTEN, laddr=SimpleNamespace(ip="127.0.0.1", port=9000))
+        conns = {child.pid: [mine], 999_999: [other], 999_998: [elsewhere]}
+        st = supervisor._tree_stats(child.pid, {}, ports=True, conns=conns, wanted=[8000])
+    finally:
+        child.kill()
+        child.wait()
+    assert st.ports == [8000] and st.addresses == {8000: ["127.0.0.1"]}
+    assert st.others == {8000: [999_999]}  # its own listener and other ports don't count
+
+
+def test_this_system_lists_other_programs_listeners() -> None:
+    """What the decision above is fed: psutil's list of every program's sockets. Where it doesn't show another
+    program's listener, the note can't appear, so this says why instead of failing on the decision."""
     import socket
 
     from pythonator.daemon import supervisor
@@ -429,10 +449,7 @@ def test_tree_stats_see_other_programs_on_its_port() -> None:
         conns = supervisor._connections()
         if conns is None:
             pytest.skip("this system lists other programs' connections only to root")
-        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
-        try:
-            st = supervisor._tree_stats(child.pid, {}, ports=True, conns=conns, wanted=[port])
-        finally:
-            child.kill()
-            child.wait()
-        assert st.others.get(port) == [os.getpid()]
+        found = [(pid, c.laddr) for pid, items in conns.items() for c in items
+                 if c.status == psutil.CONN_LISTEN and c.laddr and c.laddr.port == port]
+        assert found, f"psutil didn't list the listener on {port}: {sum(map(len, conns.values()))} connections"
+        assert os.getpid() in {pid for pid, _ in found}, found
