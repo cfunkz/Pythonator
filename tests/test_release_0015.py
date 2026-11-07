@@ -132,6 +132,7 @@ def test_a_too_old_node_is_refused_with_what_to_install(tmp_path: Path, monkeypa
 
 def test_templates_for_other_runtimes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(runtimes, "which", lambda name: f"/bin/{name}")
+    monkeypatch.setattr(versions, "installed", lambda prog: None)  # not the runner's own Go 1.24 or PHP
     php = templates.plan("php", "site", tmp_path, set())
     port = php.service["network"]["ports"][0]
     assert php.service["runtime"] == "custom"

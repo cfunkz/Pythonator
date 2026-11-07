@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+from functools import cache
 from pathlib import Path
 
 from PyQt6.Qsci import (
@@ -246,6 +247,14 @@ NOT_LISTED = frozenset({"node_modules", ".venv", ".venv-container", ".container-
                         ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox", ".nox", ".next", ".gradle", "target"})
 
 
+@cache
+def _file_icons() -> FileIcons:
+    """One icon provider for the program's whole life. A model only points at its provider, and Python may free a
+    tree's attributes before Qt deletes the tree's model (a cycle collected by the garbage collector): a provider
+    freed first left the model pointing at nothing, and macOS crashed on the next event."""
+    return FileIcons()
+
+
 class _Files(QFileSystemModel):
     def _unlisted(self, parent: QModelIndex) -> bool:
         return parent.isValid() and self.fileName(parent) in NOT_LISTED and self.isDir(parent)
@@ -270,7 +279,7 @@ class FileTree(QWidget):
         super().__init__(parent)
         self.root = ""
         self.view = QTreeView()
-        self.icons = FileIcons()  # kept here: a model only points at it
+        self.icons = _file_icons()
         self.model = self._new_model()
         self.view.setHeaderHidden(True)
         self.view.setUniformRowHeights(True)  # a folder of 60,000 files: no row is measured on its own

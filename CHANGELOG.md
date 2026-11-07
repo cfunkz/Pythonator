@@ -46,6 +46,8 @@ All notable changes to Pythonator are recorded here. The format follows
   memory limit: the memory the workers share with their parent was counted once per worker (300 MB with four
   workers counted as 1.5 GB). Before stopping a service, Linux now counts shared memory once (PSS) and Windows counts
   private memory, the same as its job object.
+- The file tree's icon provider could be freed before the tree's model, which still pointed at it; the next event
+  crashed (macOS CI). It now lives as long as the program.
 - A memory or CPU limit typed with hundreds of digits raised an error instead of saying what to write.
 - A plugin disabled for misbehaving: the messages it had already sent are dropped. They were still acted on (one
   could stop a service), and each disabled it again, with a settings save and a broadcast every time.
