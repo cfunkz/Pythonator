@@ -18,6 +18,58 @@ Bundled plugins: AI assistant 1.4.0.
   named like `script.js` is no longer taken for the prompt's example path and dropped, and the prompt asks for one
   edit block per file instead of a folder tree. Plugins get `propose_changes` for this (see the plugin API).
 
+### Changed
+
+- Linux: Sandbox mode refuses to start when neither libseccomp nor bubblewrap is available. Landlock alone doesn't
+  stop a connection to a Unix socket by its path, so the session bus, `docker.sock` and the SSH agent were
+  reachable. System check shows **Other processes: not enforced** in that state. Install `libseccomp2` (present on
+  almost every desktop distribution) or bubblewrap. Plugins on such a system don't start either.
+- Schedules: a cron line must have five fields (minute, hour, day of month, month, day of week). cronsim also reads
+  six fields with seconds first, so `* * * * * *` started a service every second. A six-field schedule saved
+  before loses its seconds field when it loads, and runs at most once a minute.
+- Project builder: new projects start from Fastify 5.12.8, Hono 4.13.16, @hono/node-server 2.1.6, Elysia 1.4.31,
+  Sinatra 4.2 and Puma 8.0.2 or later. The older floors allowed versions with published advisories, one Critical
+  (Elysia, prototype pollution).
+- Dependency floors raised to the versions CI tests: psutil 7.2 (and below 8, which changes `Process.info`),
+  pydantic 2.14, platformdirs 4.12, setuptools 84.1 for building, pytest 9.0.3 for development.
+- CI: the test job runs on Ubuntu 24.04 by name, with Ubuntu 26.04 as a job of its own. Releases use
+  `actions/attest` (in place of the `attest-build-provenance` wrapper) and `download-artifact` v8, which fails on
+  a digest mismatch instead of warning.
+- A weekly workflow, **Refresh locks**, compiles every `*.lock` file again with `--upgrade`, checks the result
+  with pip-audit, ruff, mypy and the tests, and opens one pull request. Dependabot never read the lock files. It
+  needs **Allow GitHub Actions to create and approve pull requests** in the repository's Actions settings. See
+  [Dependencies](docs/development.md#dependencies).
+- `.env` and `.env.*` files are ignored by git in this repository (`.env.example` is not).
+
+### Fixed
+
+- Project builder: Express 5 apps (Express API, WhatsApp bot) exit with an error when their port is taken. Express 5
+  hands the listen error to the callback, which printed "Listening on…" and exited with code 0, so Pythonator saw a
+  clean exit.
+- Plugins: their messages are read from the pipe in blocks. Reading byte by byte made a 1 MB message take more than
+  10 seconds on Windows, which held up a plugin with a big panel and failed the oversized-message test in CI.
+- Windows: closing the window while Make reachable, or its undo after a removal, was still running no longer raises
+  an error in that thread.
+
+### Security
+
+- Windows: Make reachable, its undo, and the firewall-rule check start PowerShell by its full path in System32. A
+  bare `powershell.exe` is looked for in the current folder first, which could be a project folder a sandboxed
+  service writes, and the planted program would run as administrator after the usual prompt. The window now also
+  moves to its data folder and sets `NoDefaultCurrentDirectoryInExePath` at start, as the background service did.
+- Git pull: a pull (manual or on start) no longer runs while another service in the same folder, inside it or
+  around it, is running, starting or installing in any mode but Full access, nor while one of their console
+  commands runs. Such a service could swap `.git/config` between Pythonator's check and git reading it. Pull on
+  start skips the pull and says so in the console; a sandboxed service starting in a folder git is pulling waits
+  for the pull. The checkout's config is checked again after the fetch, and `credential.helper`, `core.sshCommand`
+  and `core.askPass` are pinned on git's command line to your own `~/.gitconfig`. See
+  [Git](docs/git.md#hardening).
+- Plugins (and so the AI provider and Notify's webhooks) get service output and notes with every value of the
+  service's variables and env file masked, whatever its name, plus the password inside a URL. Only secret-looking
+  names were masked before, so `DB_PASS`, `DATABASE_URL` or a token in `DISCORD` went through. Numbers, addresses,
+  the service's ports and plain settings such as `production` stay readable. The console and the log file are
+  unchanged.
+
 ## [0.0.17] - 2026-11-07
 
 Bundled plugins: AI assistant 1.3.2.

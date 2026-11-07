@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       QT_QPA_PLATFORM: offscreen
     steps:
@@ -39,8 +39,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Ubuntu by version: a new Ubuntu (its AppArmor rules, bubblewrap) shows up as its own job rather than
+        # turning every Linux job red at once.
+        os: [ubuntu-24.04, windows-latest, macos-latest]
         python: ["3.12", "3.13"]
+        include:
+          - {os: ubuntu-26.04, python: "3.13"}
     runs-on: ${{ matrix.os }}
     env:
       QT_QPA_PLATFORM: offscreen
@@ -103,6 +107,8 @@ jobs:
       matrix:
         include:
           - {os: windows-latest, program: dist/Pythonator/Pythonator.exe}
+          # The oldest glibc the release supports. GitHub retires this image on 2027-04-17: build in a debian:12
+          # container on ubuntu-24.04 before then (and in release.yml).
           - {os: ubuntu-22.04, program: dist/Pythonator/Pythonator}
           - {os: macos-latest, program: dist/Pythonator.app/Contents/MacOS/Pythonator}
     runs-on: ${{ matrix.os }}

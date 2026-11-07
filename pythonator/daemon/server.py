@@ -29,7 +29,7 @@ from ..core.envcheck import app_report
 from ..core.store import Store, write_atomic
 from ..instance import InstanceLock
 from ..isolation import private_node
-from ..paths import IS_WINDOWS, DataDirs
+from ..paths import IS_WINDOWS, DataDirs, leave_current_folder
 from ..plugins.host import PluginHost
 from . import protocol as p
 from .supervisor import NeedsConfirmation, Supervisor
@@ -90,9 +90,7 @@ class Daemon:
         self.quitting = False
         self.dirs = dirs
         dirs.ensure()
-        os.environ["NoDefaultCurrentDirectoryInExePath"] = "1"  # noqa: SIM112 - Windows: never run a program from the cwd
-        with contextlib.suppress(OSError):
-            os.chdir(dirs.root)
+        leave_current_folder(dirs)
         self.token = secrets.token_urlsafe(32)  # written once this daemon listens: never over a live one's
         self.store = Store(dirs)
         self.sup = Supervisor(dirs, self.store)

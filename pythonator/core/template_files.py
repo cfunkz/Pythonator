@@ -277,7 +277,11 @@ if (!TOKEN || !VERIFY) {
   console.log("Set WHATSAPP_TOKEN and WHATSAPP_VERIFY_TOKEN in Configure → Environment, then press Start.");
 }
 const listenOn = Number(process.env.PORT || {port});
-app.listen(listenOn, "127.0.0.1", () => console.log(`Webhook on http://127.0.0.1:${listenOn}/webhook`));
+// Express 5 hands a failed listen (port in use) to this callback: throw it, so the app exits with an error.
+app.listen(listenOn, "127.0.0.1", (err) => {
+  if (err) throw err;
+  console.log(`Webhook on http://127.0.0.1:${listenOn}/webhook`);
+});
 '''
 
 EXPRESS_JS = '''// An Express app (expressjs.com): a JSON API to build on.
@@ -290,7 +294,11 @@ app.get("/", (_req, res) => res.json({ message: "Hello World" }));
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 const listenOn = Number(process.env.PORT || {port});
-app.listen(listenOn, "127.0.0.1", () => console.log(`Listening on http://127.0.0.1:${listenOn}/`));
+// Express 5 hands a failed listen (port in use) to this callback: throw it, so the app exits with an error.
+app.listen(listenOn, "127.0.0.1", (err) => {
+  if (err) throw err;
+  console.log(`Listening on http://127.0.0.1:${listenOn}/`);
+});
 '''
 
 WORKER_PY = '''"""A long-running Python worker: it does one job every INTERVAL seconds (60 unless set in Configure →
@@ -626,9 +634,9 @@ echo json_encode($path === '/health' ? ['ok' => true] : ['message' => 'Hello Wor
 
 SINATRA_GEMFILE = '''source "https://rubygems.org"
 
-gem "sinatra", "~> 4.1"
+gem "sinatra", "~> 4.2"
 gem "rackup", "~> 2.2"
-gem "puma", ">= 6"
+gem "puma", "~> 8.0", ">= 8.0.2"
 '''
 
 SINATRA_RB = '''# A Sinatra app (sinatrarb.com): a small Ruby web framework. Pythonator runs it with ``ruby app.rb``.

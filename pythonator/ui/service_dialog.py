@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -47,6 +48,12 @@ class _Bridge(QObject):
     """Brings a worker thread's result back to the window's thread."""
 
     text = pyqtSignal(str)
+
+    def send(self, text: str) -> None:
+        """Emit ``text`` from the worker thread. The window may have closed meanwhile, deleting this object with
+        it: then there is nobody left to tell, and the thread ends quietly instead of raising RuntimeError."""
+        with contextlib.suppress(RuntimeError):
+            self.text.emit(text)
 
 
 class KeyValueTable(QTableWidget):
@@ -447,7 +454,7 @@ class ServiceDialog(QDialog):
 
         def work() -> None:
             ok, message = windows.make_reachable(sid, ports, lan=lan, undo=undo)
-            bridge.text.emit(("✓ " if ok else "✗ ") + message)
+            bridge.send(("✓ " if ok else "✗ ") + message)
 
         threading.Thread(target=work, daemon=True).start()
 

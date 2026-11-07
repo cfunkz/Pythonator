@@ -593,4 +593,4 @@ class ScheduleTab(QWidget):
         text = self.schedule.text().strip()
         if not text:
             raise ValueError("Schedule: pick when it runs, or choose Keep it running")
-        return text
+        return schedule.check(text)  # here, as typed: the saved service would quietly drop a seconds field

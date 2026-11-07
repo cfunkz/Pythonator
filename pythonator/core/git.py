@@ -22,7 +22,12 @@ from . import validate
 from .runtimes import which
 
 HARDENING = ["-c", "protocol.allow=never", "-c", "protocol.https.allow=always", "-c", "protocol.ssh.allow=always",
-             "-c", "core.fsmonitor=false", "-c", "submodule.recurse=false", "-c", "credential.interactive=never"]
+             "-c", "core.fsmonitor=false", "-c", "submodule.recurse=false", "-c", "credential.interactive=never",
+             "-c", "core.askPass="]
+# The settings that name a program git runs to sign in. They are pinned on the command line, which git reads last,
+# to what your own ~/.gitconfig says, so a checkout's config can't add one even if it changes between the check
+# and the pull. An empty credential.helper drops every helper read before it.
+PINNED = re.compile(r"credential\..*helper|core\.sshcommand")
 # The settings a checkout's own config may hold for Pythonator to pull it (section.key, or section.*.key for
 # named sections such as a remote or a branch). What git and git-lfs write themselves, and nothing that runs.
 SAFE_KEYS = re.compile(
@@ -46,7 +51,38 @@ def git_path() -> str:
 def _env() -> dict[str, str]:
     env = {k: v for k, v in os.environ.items() if k not in ("GIT_ASKPASS", "SSH_ASKPASS", "GIT_DIR", "GIT_WORK_TREE")}
     env.update(GIT_TERMINAL_PROMPT="0", GIT_CONFIG_NOSYSTEM="1", GCM_INTERACTIVE="never", LC_ALL="C")
+    if not env.get("GIT_SSH_COMMAND") and env.get("GIT_SSH"):
+        # A checkout's core.sshCommand would win over GIT_SSH; GIT_SSH_COMMAND wins over any config.
+        env["GIT_SSH_COMMAND"] = "'" + env["GIT_SSH"].replace("'", "'\\''") + "'"
     return env
+
+
+def _your_settings(git: str, env: dict[str, str], cwd: Path | None) -> list[str]:
+    """``-c`` flags that pin credential helpers and the SSH command to your own global git config (read in the
+    checkout, so ``includeIf "gitdir:..."`` sections for it count)."""
+    try:
+        done = subprocess.run([git, "config", "--global", "--includes", "--null", "--get-regexp",
+                               r"^(credential\..*helper|core\.sshcommand)$"], cwd=cwd or DataDirs().root, env=env,
+                              stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=30, check=False,
+                              creationflags=0x08000000 if os.name == "nt" else 0, startupinfo=quiet_start())
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise GitError(f"Couldn't read your git settings: {exc}") from exc
+    if done.returncode not in (0, 1):  # 1: none set
+        raise GitError(f"Couldn't read your git settings: {done.stderr.strip() or done.returncode}")
+    flags = ["-c", "credential.helper="]
+    ssh = ""
+    for entry in done.stdout.split("\0"):
+        key, _, value = entry.partition("\n")
+        if not key or not PINNED.fullmatch(key.lower()) or "=" in key:
+            continue
+        if key.lower() == "core.sshcommand":
+            ssh = value
+        else:
+            flags += ["-c", f"{key}={value}"]
+    if not env.get("GIT_SSH_COMMAND"):  # that variable wins over any config
+        flags += ["-c", f"core.sshCommand={ssh or 'ssh'}"]
+    return flags
 
 
 def _hooks_off() -> list[str]:
@@ -59,9 +95,10 @@ def _hooks_off() -> list[str]:
 def run(args: list[str], cwd: Path | None = None, *, timeout: float = 300,
         on_line: Callable[[str], None] | None = None) -> str:
     """Run git with the hardening flags; raises GitError with git's own message when it fails."""
-    argv = [git_path(), *HARDENING, *_hooks_off(), *args]
+    git, env = git_path(), _env()
+    argv = [git, *HARDENING, *_hooks_off(), *_your_settings(git, env, cwd), *args]
     try:
-        proc = subprocess.Popen(argv, cwd=cwd, env=_env(), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        proc = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
                                 creationflags=0x08000000 if os.name == "nt" else 0, startupinfo=quiet_start())
     except OSError as exc:
@@ -97,6 +134,7 @@ def pull(folder: Path, *, on_line: Callable[[str], None] | None = None) -> str:
     check_checkout(folder)
     before = run(["rev-parse", "--short", "HEAD"], folder, timeout=30).strip()
     run(["fetch", "--no-recurse-submodules", "--prune", "origin"], folder, on_line=on_line)
+    check_checkout(folder)  # again: the merge writes files, so its config must still be plain
     run(["merge", "--ff-only", "@{upstream}"], folder, on_line=on_line)
     after = run(["rev-parse", "--short", "HEAD"], folder, timeout=30).strip()
     return "" if before == after else f"{before}..{after}"

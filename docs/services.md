@@ -88,7 +88,7 @@ measured from the end of the previous run, and a run that is still going when th
 | --- | --- |
 | `every 30s`, `every 15m`, `every 6h`, `every 1d` | At that interval (10 seconds minimum) |
 | `@hourly`, `@daily`, `@weekly`, `@monthly` | At the start of each hour, day, week or month |
-| `0 3 * * *` | A [cron](https://man7.org/linux/man-pages/man5/crontab.5.html) expression, here 03:00 daily. Fields: minute, hour, day of month, month, day of week |
+| `0 3 * * *` | A [cron](https://man7.org/linux/man-pages/man5/crontab.5.html) expression, here 03:00 daily. Five fields: minute, hour, day of month, month, day of week. A sixth field for seconds is refused; a schedule saved with one before 0.0.18 loses its seconds field |
 | `*/5 9-17 * * 1-5` | Every 5 minutes from 09:00 to 17:55, Monday to Friday |
 
 Times are in the computer's local time zone. Cron expressions are evaluated with

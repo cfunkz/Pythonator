@@ -44,7 +44,8 @@ commits applied, `old..new`.
 | No prompts | `GIT_TERMINAL_PROMPT=0` and no interactive credential helper, so a background pull cannot hang on a password prompt |
 | No system config | `GIT_CONFIG_NOSYSTEM=1` |
 | The checkout's own config checked | A pull runs as the user, in a folder a sandboxed service can write to. Its `.git/config` may therefore hold only what git writes itself (remotes, branches, basic `core.*` keys, `user.name`). Anything else, such as `core.sshCommand`, a filter driver, `credential.helper` or `include.path`, stops the pull and is named. Such settings belong in `~/.gitconfig` |
-| Nothing runs during a pull | A sandboxed service must be stopped first, so it cannot modify the checkout while git works in it |
+| Nothing runs during a pull | The service must be stopped first unless it has Full access, and so must every other service whose folder is the same, inside or around it, with its installs and console commands. Pull on start skips the pull, and says so, while another such service runs. Nothing sandboxed starts in that folder until the pull is done, so nothing can change the checkout while git works in it |
+| Sign-in programs pinned | `credential.helper` and `core.sshCommand` are set on git's command line to what `~/.gitconfig` says, and `core.askPass` to nothing, so the checkout's config can't add one. The config is checked again after the fetch, before the merge |
 
 The clone itself runs as the user, as git always does. The cloned code does not run until the service is started, in
 the chosen mode.

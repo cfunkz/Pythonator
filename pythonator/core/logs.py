@@ -1,17 +1,21 @@
 """Service logs: every line goes to a rotating file, the newest part stays in memory for the window.
 
 Secrets a service was given (variables named like ``*TOKEN*``, ``*KEY*``, ``*SECRET*``, ``*PASSWORD*``) are masked
-before anything is written or shown, so a bot that prints its token doesn't leak it into a log or a plugin.
+before anything is written or shown, so a bot that prints its token doesn't leak it into a log or a plugin. What
+goes on to plugins (and through them to an AI provider or a webhook) is masked once more: every value of the
+service's own variables and env file, whatever its name (:func:`plugin_secrets`).
 """
 
 from __future__ import annotations
 
 import contextlib
+import ipaddress
 import re
 import time
 from collections import deque
 from pathlib import Path
 from typing import BinaryIO
+from urllib.parse import unquote, urlsplit
 
 from ..paths import make_private
 
@@ -21,6 +25,45 @@ MASK = "••••••"
 
 def secrets_of(env: dict[str, str]) -> list[str]:
     return sorted({v for k, v in env.items() if SECRET_NAME.search(k) and len(v) >= 6}, key=len, reverse=True)
+
+
+# Values that are settings, not secrets: masking them would only make the output hard to read.
+PLAIN_VALUES = frozenset({
+    "true", "false", "yes", "no", "on", "off", "none", "null", "localhost", "development", "production", "staging",
+    "testing", "debug", "info", "warning", "error", "critical", "verbose", "enabled", "disabled",
+})
+
+
+def plugin_secrets(values: dict[str, str], ports: tuple[int, ...] | list[int] = ()) -> list[str]:
+    """Every value of a service's variables and env file worth hiding from plugins, whatever its name: 6 or more
+    characters, not a number, an address, a port or a plain setting such as ``production``. The password inside a
+    URL (``postgres://app:password@db/app``) counts on its own too. The same set ServiceFiles blanks in file
+    reads (plus the URL passwords). Longest first, so a value that contains another is masked whole."""
+    found: set[str] = set()
+    skip = {str(p) for p in ports}
+    for raw in values.values():
+        value = raw.strip()
+        if "://" in value:
+            with contextlib.suppress(ValueError):
+                if (password := urlsplit(value).password) and len(password) >= 6:
+                    found.update({password, unquote(password)})
+        if len(value) < 6 or value in skip or value.lower() in PLAIN_VALUES or _is_number_or_address(value):
+            continue
+        found.add(value)
+    return sorted(found, key=len, reverse=True)
+
+
+def _is_number_or_address(value: str) -> bool:
+    try:
+        float(value)
+        return True
+    except ValueError:
+        pass
+    try:
+        ipaddress.ip_address(value)
+        return True
+    except ValueError:
+        return False
 
 
 class Masker:
@@ -43,6 +86,7 @@ class ServiceLog:
         self._tail_len = 0
         self._fh: BinaryIO | None = None
         self.mask = Masker([])
+        self.plugin_mask = Masker([])  # on top of ``mask``, for what plugins get (plugin_secrets)
 
     def _open(self) -> BinaryIO:
         if self._fh is None:

@@ -8,6 +8,11 @@ __pycache__/
 .venv/
 venv/
 
+# Secrets: env files stay on your computer (an example with no real values may be committed)
+.env
+.env.*
+!.env.example
+
 # Builds
 build/
 dist/

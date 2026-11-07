@@ -827,16 +827,16 @@ class MainWindow(QMainWindow):
         def work() -> None:
             left = windows.reach_left([windows.container_name(i) for i in ids])
             if not left:
-                bridge.text.emit("done:")
+                bridge.send("done:")
                 return
-            bridge.text.emit("info:Undoing Make reachable for the removed service: Windows asks for administrator "
+            bridge.send("info:Undoing Make reachable for the removed service: Windows asks for administrator "
                              "rights once")
             ok, message = windows.unreach(left)
             if ok:
-                bridge.text.emit(f"ok:{message}")
+                bridge.send(f"ok:{message}")
             else:
                 level = "warn" if message.startswith("Cancelled") else "error"
-                bridge.text.emit(f"{level}:{message} Its firewall rules stay until you clean them up in the "
+                bridge.send(f"{level}:{message} Its firewall rules stay until you clean them up in the "
                                  "System check.")
 
         threading.Thread(target=work, name="unreach-removed", daemon=True).start()
@@ -971,11 +971,11 @@ class MainWindow(QMainWindow):
         lan = service.network.expose == "lan"
 
         def check() -> None:
-            bridge.text.emit("ask" if windows.loopback_exempt(service.id) is False else "open")
+            bridge.send("ask" if windows.loopback_exempt(service.id) is False else "open")
 
         def reach() -> None:
             ok, message = windows.make_reachable(service.id, ports, lan=lan)
-            bridge.text.emit("open" if ok else f"error:{message}")
+            bridge.send("open" if ok else f"error:{message}")
 
         def step(what: str) -> None:
             if what == "ask":

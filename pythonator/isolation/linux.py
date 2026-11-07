@@ -50,7 +50,8 @@ class Support:
             ("Network off", mark(bool(self.bwrap or self.seccomp), bool(self.landlock >= 4))),
             ("Only listed ports", mark(self.landlock >= 4)),
             ("Only this computer reaches its ports", "not enforced (binds where the program binds)"),
-            ("Other processes", mark(bool(self.bwrap) or self.landlock >= 6)),
+            # Without seccomp or bubblewrap Unix sockets by path stay open (D-Bus, docker.sock): Sandbox refuses.
+            ("Other processes", mark(bool(self.bwrap) or (self.landlock >= 6 and bool(self.seccomp)))),
             ("Kernel attack surface (ptrace, bpf, io_uring...)", mark(bool(self.seccomp))),
         ]
 
@@ -130,6 +131,11 @@ def wrap(argv: list[str], cwd: Path, env: dict[str, str], policy: Policy, home: 
                              f"bubblewrap. {sup.bwrap_problem}".strip())
     if not policy.network and not (sup.bwrap or sup.seccomp):
         raise IsolationError("Can't turn the network off here: install bubblewrap or libseccomp2")
+    if not (sup.bwrap or sup.seccomp):
+        # Landlock alone doesn't stop connect() to a Unix socket by path: your session bus (which can start any
+        # program outside the sandbox), docker.sock, the SSH agent. Only seccomp or bubblewrap closes that.
+        raise IsolationError("This Linux can't keep a sandboxed service away from your desktop's sockets (D-Bus, "
+                             "Docker, the SSH agent): install libseccomp2 or bubblewrap")
     grants = merge([*policy.grants, Grant(home, True), Grant(tmp, True)])
     links = _system_links()
     plan: dict[str, object] = {"argv": argv}

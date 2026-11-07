@@ -1,0 +1,85 @@
+name: Refresh locks
+
+# Dependabot can't update the hash-locked requirement files: it reads only requirement files ending in .txt or .in,
+# so requirements.lock, requirements-dev.lock and packaging/*.lock are invisible to it. Once a week this re-runs
+# the command written at the top of each lock with --upgrade, checks the result (pip-audit, ruff, mypy, the tests)
+# and, when anything changed, opens or updates one pull request from the branch refresh-locks.
+#
+# Needs Settings > Actions > General > Workflow permissions > "Allow GitHub Actions to create and approve pull
+# requests". A pull request opened with this workflow's token doesn't start CI by itself (GitHub's rule, so a
+# workflow can't trigger itself): close and reopen it, or push to its branch, to run CI on every system.
+
+on:
+  schedule:
+    - cron: "41 5 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: refresh-locks
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write        # push the refresh-locks branch
+      pull-requests: write   # open its pull request
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --require-hashes -r packaging/requirements-locktool.lock
+      - name: Re-lock every requirement file with the newest versions
+        run: |
+          # In this order: the build lock reads requirements.lock.
+          for lock in requirements.lock requirements-dev.lock packaging/requirements-build.lock \
+                      packaging/requirements-locktool.lock; do
+            header="$(sed -n 2p "$lock" | sed 's/^#    //')"
+            case "$header" in
+              "uv pip compile "*" -o $lock") ;;
+              *) echo "::error file=$lock::line 2 isn't the uv pip compile command that writes it"; exit 1 ;;
+            esac
+            read -ra command <<< "$header"
+            "${command[@]}" --upgrade --quiet --custom-compile-command "$header"
+          done
+          git diff --stat
+      - run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+      - run: python -m pip install --require-hashes -r requirements-dev.lock && python -m pip install --no-deps -e .
+      - name: Known vulnerabilities
+        run: |
+          for lock in requirements.lock requirements-dev.lock packaging/requirements-build.lock \
+                      packaging/requirements-locktool.lock; do
+            pip-audit --strict --require-hashes --disable-pip -r "$lock"
+          done
+      - run: ruff check pythonator plugins tests docs/examples packaging
+      - run: mypy
+      - run: python -m pytest -q -rs
+      - name: Open or update the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet; then echo "Every lock is up to date."; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c refresh-locks
+          git commit -qam "Refresh the locked dependencies"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" refresh-locks
+          if [ -z "$(gh pr list --head refresh-locks --state open --json number --jq '.[].number')" ]; then
+            gh pr create --head refresh-locks --title "Refresh the locked dependencies" --body "$(cat << 'EOF'
+          The weekly lock refresh: every `*.lock` file compiled again with `--upgrade`. pip-audit, ruff, mypy
+          and the tests passed on Linux before this was opened.
+
+          CI doesn't start by itself on a pull request opened by a workflow: close and reopen this one to run it on
+          Windows and macOS too. Look over the version changes before merging.
+          EOF
+          )"
+          fi

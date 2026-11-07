@@ -15,12 +15,12 @@ limits are. Security problems should be reported through
 | An official plugin is replaced or modified | *Official* means the files match the reviewed SHA-256 catalogue; a single changed byte makes the plugin third-party, with the warning, test mode and no permissions. Files that change after verification are treated as new code |
 | Another local account, or another program, talks to the background service | The socket is restricted to the user's account (mode 0600, or a per-user named pipe) and requires a random token from a file only the user can read; the token is compared in constant time |
 | A crafted message to the background service | Every request is a strict typed model with limits; unknown fields are refused; a line is at most 1 MB; a slow client is cut off, never waited for |
-| A cloned repository runs code on clone or pull | Hooks, submodules and fsmonitor disabled; only `https` and `ssh` transports; addresses validated; fast-forward only; a pull refuses a checkout whose `.git/config` holds settings that would run a program (`core.sshCommand`, filter drivers, `credential.helper`, `include.path`). See [Git](git.md) |
+| A cloned repository runs code on clone or pull | Hooks, submodules and fsmonitor disabled; only `https` and `ssh` transports; addresses validated; fast-forward only; a pull refuses a checkout whose `.git/config` holds settings that would run a program (`core.sshCommand`, filter drivers, `credential.helper`, `include.path`), checks it again before the merge, and waits until nothing sandboxed runs in that folder. See [Git](git.md) |
 | A sandboxed service modifies its own folder to escape | Nothing in the project folder runs outside the sandbox: the venv's Python version is read from `pyvenv.cfg` rather than by running it; `pyvenv.cfg` and symbolic links can only point the sandbox at a real Python installation; an env file is read only if it resolves inside the folder, and cannot set `PATH`, `HOME`, `LD_*`, `DYLD_*`, `DOCKER_*`, `XDG_*`, `PYTHONPATH` and similar variables; a sandboxed service must be stopped before a pull |
 | Arguments that look different from what runs | Programs start from argument lists, never a shell; NUL, bidirectional-override and zero-width characters are refused |
 | `LD_PRELOAD` and similar variables | Refused as service variables |
 | Secrets in the user's own environment | Inherited variables named like secrets (`GITHUB_TOKEN`, `AWS_SECRET_ACCESS_KEY`, `*_API_KEY`) are not passed to sandboxed services or plugins; they can be set on the service explicitly when needed |
-| Secrets in output | Values of secret-looking variables are masked in the console, logs and plugin messages |
+| Secrets in output | Values of secret-looking variables are masked in the console, logs and plugin messages. What plugins receive (and may pass on to an AI provider or a webhook) is also masked for every value of 6 or more characters in the service's variables and env file, whatever its name, and for the password in a URL such as `DATABASE_URL` |
 | Pythonator itself crashes | Sandboxed services on Windows and under bubblewrap end with it; others keep running, and the next start ends them, identified by process ID and start time |
 
 ## Sandbox enforcement
@@ -37,6 +37,9 @@ limits are. Security problems should be reported through
   ([`TIOCSTI`](https://man7.org/linux/man-pages/man2/ioctl_tty.2.html)). New Unix sockets are also blocked without
   bubblewrap, and with it when the network is on but Landlock cannot scope them (before Linux 6.12), since they
   would reach the desktop session (X11, D-Bus).
+* **Neither seccomp nor bubblewrap:** Sandbox mode refuses to start. Landlock alone doesn't stop a connection to a
+  Unix socket by its path, so the session bus (which can start programs outside the sandbox), `docker.sock` and the
+  SSH agent would be reachable. Install `libseccomp2` (present on almost every desktop distribution) or bubblewrap.
 * **Devices:** only `/dev/null`, `zero`, `random`, `urandom`, `tty`, `ptmx` and `shm`; no cameras or microphones.
   `/dev/pts` is available only inside bubblewrap, where it is the sandbox's own.
 * **Stopping:** the launcher is a child subreaper, so a program that leaves the service's process group (`setsid`, a
@@ -108,7 +111,7 @@ is only as strong as its engine: rootless Podman offers more protection than a D
 * PyQt6 6.12.0 is excluded because its type stubs are broken; Qt's JSON parsers are not used at all.
 * GitHub Actions are pinned to commit hashes, and workflows run with read-only permissions by default.
 * Release artefacts ship with `SHA256SUMS.txt` and signed build provenance
-  ([attest-build-provenance](https://github.com/actions/attest-build-provenance)).
+  ([actions/attest](https://github.com/actions/attest)).
 
 ## Reporting
 

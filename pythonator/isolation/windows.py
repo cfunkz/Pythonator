@@ -20,6 +20,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import threading
 from collections.abc import Sequence
 from functools import cache
@@ -346,10 +347,28 @@ def reach_script(sid: str, container: str, ports: Sequence[int], *, lan: bool, u
     return "\n".join(lines)
 
 
+def system32() -> Path:
+    """Windows' own System32 folder, from Windows itself (``GetSystemDirectoryW``), not from a variable."""
+    if sys.platform == "win32":
+        import ctypes
+
+        buf = ctypes.create_unicode_buffer(260)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined,unused-ignore]
+        if 0 < kernel32.GetSystemDirectoryW(buf, len(buf)) < len(buf):
+            return Path(buf.value)
+    return Path(os.environ.get("SYSTEMROOT", r"C:\Windows")) / "System32"
+
+
+def powershell() -> Path:
+    """Windows PowerShell by its full path. A bare ``powershell.exe`` is looked for in the current folder first,
+    which may be a project folder a sandboxed service can write: Make reachable would run its program elevated."""
+    return system32() / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+
+
 def _exempt_sids() -> set[str] | None:
     """The SIDs (lower case) in Windows' list of loopback exemptions (``CheckNetIsolation LoopbackExempt -s``,
     which needs no administrator). None when Windows can't say."""
-    tool = Path(os.environ.get("SYSTEMROOT", r"C:\Windows")) / "System32" / "CheckNetIsolation.exe"
+    tool = system32() / "CheckNetIsolation.exe"
     try:
         done = subprocess.run([str(tool), "LoopbackExempt", "-s"], capture_output=True, text=True,
                               errors="replace", timeout=20, check=False, creationflags=0x08000000,
@@ -396,7 +415,7 @@ def reach_rules() -> dict[str, list[int]] | None:
     if not IS_WINDOWS:
         return None
     try:
-        done = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+        done = subprocess.run([str(powershell()), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
                                "-EncodedCommand", encoded(LIST_RULES)], capture_output=True, text=True,
                               encoding="utf-8", errors="replace", timeout=60, check=False,
                               creationflags=0x08000000, startupinfo=quiet_start(), stdin=subprocess.DEVNULL)
@@ -599,8 +618,9 @@ def _run_elevated(command: str) -> int:
     # which also made it report any failure as ERROR_CANCELLED ("you cancelled") after you closed that box.
     info.fMask = 0x00000040 | 0x00000100 | 0x00000400
     info.lpVerb = "runas"
-    info.lpFile = "powershell.exe"
+    info.lpFile = str(powershell())  # never a bare name: Windows would look in the current folder first
     info.lpParameters = elevated_parameters(command)
+    info.lpDirectory = str(system32())
     info.nShow = 0
     if not shell32.ShellExecuteExW(ctypes.byref(info)):
         error = int(ctypes.get_last_error())  # type: ignore[attr-defined,unused-ignore]

@@ -10,10 +10,11 @@ import secrets
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 
 from . import validate
 from .schedule import check as check_schedule
+from .schedule import upgrade as upgrade_schedule
 
 
 class Mode(StrEnum):
@@ -112,7 +113,8 @@ class Service(Model):
     memory_mb: int = Field(default=0, ge=0, le=1_048_576)  # 0: no limit
     cpu_percent: int = Field(default=0, ge=0, le=102_400)  # % of one core for the whole tree; 0: no limit
     git: GitSource | None = None
-    schedule: Annotated[str, AfterValidator(check_schedule)] = ""  # "every 15m" or cron; empty: keep it running
+    schedule: Annotated[str, BeforeValidator(upgrade_schedule), AfterValidator(check_schedule)] = ""  # "every 15m"
+    # or a five-field cron line; empty: keep it running
     full_access_ok: bool = False  # the user confirmed Full mode for this service
     made_by: MadeBy | None = None  # made by the Project builder: it may then delete it, folder and all
 

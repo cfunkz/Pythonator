@@ -93,6 +93,16 @@ class DataDirs:
             make_private(folder)
 
 
+def leave_current_folder(dirs: DataDirs) -> None:
+    """Never run a program from the folder Pythonator was started in. Windows looks for a program named without a
+    path in the current folder first (CreateProcess unless NoDefaultCurrentDirectoryInExePath is set, ShellExecute
+    always), and that folder may be a project a sandboxed service can write. The window and the background service
+    both call this first thing."""
+    os.environ["NoDefaultCurrentDirectoryInExePath"] = "1"  # noqa: SIM112 - the name Windows reads
+    with contextlib.suppress(OSError):
+        os.chdir(dirs.root)
+
+
 def make_private(path: Path) -> None:
     """Only the user may read or change ``path`` (a no-op on Windows, where the profile folder already is)."""
     if not IS_WINDOWS:

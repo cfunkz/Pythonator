@@ -31,7 +31,8 @@ jobs:
       matrix:
         include:
           - {name: Windows x64, os: windows-latest, program: dist/Pythonator/Pythonator.exe}
-          # The oldest glibc still supported: the .deb then runs on Ubuntu 22.04+ and Debian 12+.
+          # The oldest glibc still supported: the .deb then runs on Ubuntu 22.04+ and Debian 12+. GitHub retires
+          # this image on 2027-04-17: build in a debian:12 container on ubuntu-24.04 before then.
           - {name: Linux x64, os: ubuntu-22.04, program: dist/Pythonator/Pythonator}
           # Raspberry Pi and ARM servers. PyQt6's ARM wheels need glibc 2.39: Ubuntu 24.04+, Debian 13+.
           - {name: Linux arm64, os: ubuntu-24.04-arm, program: dist/Pythonator/Pythonator, optional: true}
@@ -91,7 +92,7 @@ jobs:
   publish:
     needs: build
     if: github.ref_type == 'tag'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write       # create the release
       id-token: write       # sign the attestation
@@ -102,13 +103,15 @@ jobs:
           persist-credentials: false
           sparse-checkout: CHANGELOG.md  # the release notes start with this version's section
           sparse-checkout-cone-mode: false
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7.0.0
+      # v8 fails when an artifact's digest doesn't match (v7 only warned).
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           pattern: release-*
           path: release
           merge-multiple: true
       - run: cd release && sha256sum -- * > SHA256SUMS.txt && cat SHA256SUMS.txt
-      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+      # attest-build-provenance is now only a wrapper around actions/attest, with the same input.
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
         with:
           subject-path: release/*
       - name: Publish

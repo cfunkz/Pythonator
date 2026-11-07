@@ -29,7 +29,7 @@ import psutil
 
 from .. import isolation
 from ..core import envcheck, git, limits, runtimes, schedule
-from ..core.logs import Masker, ServiceLog, secrets_of
+from ..core.logs import Masker, ServiceLog, plugin_secrets, secrets_of
 from ..core.models import Mode, Restart, Service, Settings
 from ..core.store import Store, write_atomic
 from ..isolation import container as containers
@@ -133,6 +133,8 @@ class Supervisor:
         self._launches: list[tuple[str, bool]] = []  # services waiting their turn to start: (id, automatic)
         self._launching: dict[str, float] = {}  # started from the queue and still starting: id -> when
         self._env_waits: set[str] = set()  # waiting for another service to make their shared folder's environment
+        # Starting, and waiting for git to finish pulling another service's folder: id -> what to do then
+        self._pull_waits: dict[str, Callable[[], None]] = {}
         self._stop = threading.Event()
         for service in store.load_services():
             self.slots[service.id] = Slot(service, self._new_log(service))
@@ -145,6 +147,7 @@ class Supervisor:
                           backups=self.settings.log_backups)
         env = {**isolation.base.env_file_values(service), **service.env}
         log_.mask = Masker(secrets_of(env))
+        log_.plugin_mask = Masker(plugin_secrets(env, service.network.ports))
         return log_
 
     def emit(self, event: dict[str, Any]) -> None:
@@ -228,6 +231,13 @@ class Supervisor:
                 self.emit({"ev": "output", "id": slot.service.id, "text": text})
         if self._launches:
             self._next_launch()
+        for sid, then in list(self._pull_waits.items()):
+            waiting = self.slots.get(sid)
+            if waiting is None or waiting.state is not State.STARTING or waiting.runner or waiting.task:
+                del self._pull_waits[sid]
+            elif self._pulling_here(waiting) is None:
+                del self._pull_waits[sid]
+                then()
         for sid in list(self._env_waits):
             waiting = self.slots.get(sid)
             if waiting is None or waiting.state is not State.STARTING or waiting.runner or waiting.task:
@@ -376,7 +386,8 @@ class Supervisor:
         slot = self.slot(service.id)
         slot.service = service = service.model_copy(update={"made_by": slot.service.made_by})
         slot.log.close()
-        slot.log.mask = self._new_log(service).mask
+        fresh = self._new_log(service)
+        slot.log.mask, slot.log.plugin_mask = fresh.mask, fresh.plugin_mask
         self._services_changed()
         if slot.runner:
             self.note(slot, "Saved. Restart it to use the new settings.")
@@ -593,9 +604,15 @@ class Supervisor:
         if slot.pulling:  # started while git pulls its folder: it starts once the pull is done
             slot.after_pull = lambda: self._prepare_env(slot)
             return
-        if slot.service.git and slot.service.git.pull_on_start:
-            self._pull(slot, then=lambda: self._prepare_env(slot))
+        if self._wait_for_pull(slot, lambda: self._after_gate(slot, "")):
             return
+        if slot.service.git and slot.service.git.pull_on_start:
+            if writers := self._checkout_writers(slot):
+                self.note(slot, f"Didn't git pull: {_names(writers)} is sandboxed in this folder and could change "
+                                "the checkout while git runs as you. Stop it to pull on start.")
+            else:
+                self._pull(slot, then=lambda: self._prepare_env(slot))
+                return
         self._prepare_env(slot)
 
     def _prepare_env(self, slot: Slot) -> None:
@@ -653,6 +670,8 @@ class Supervisor:
 
     def _launch(self, slot: Slot, *, set_up: bool = False) -> None:
         service = slot.service
+        if self._wait_for_pull(slot, lambda: self._launch(slot, set_up=set_up)):
+            return
         if not set_up and self._set_up_first(slot, None, lambda: self._launch_after_set_up(slot)):
             return
         if service.mode is not Mode.CONTAINER:
@@ -699,7 +718,9 @@ class Supervisor:
             self._set(slot, State.FAILED, "crashed", error)
             return
         service, cmd = slot.service, runner.cmd
-        slot.log.mask = Masker(secrets_of({**cmd.env, **isolation.base.env_file_values(service)}))  # as it is now
+        env_file = isolation.base.env_file_values(service)  # as it is now
+        slot.log.mask = Masker(secrets_of({**cmd.env, **env_file}))
+        slot.log.plugin_mask = Masker(plugin_secrets({**env_file, **service.env}, service.network.ports))
         slot.runner = runner
         slot.exit_code = None
         slot.started_wall = time.time()
@@ -773,6 +794,9 @@ class Supervisor:
         service = slot.service
         if slot.task or slot.state is State.TASK:
             raise ValueError("Wait for its install to finish")
+        if slot.pulling and service.mode is not Mode.FULL:
+            raise ValueError("Wait for git to finish pulling its folder")
+        self._no_pull_here(slot)
         if service.mode is Mode.FULL and not service.full_access_ok:
             raise ValueError("Start it once and confirm Full access first: its shell runs with the same access")
         argv, cmdline = runtimes.shell_argv(line, container=service.mode is Mode.CONTAINER)
@@ -856,6 +880,7 @@ class Supervisor:
         slot = self.slot(sid)
         if slot.runner or slot.task or slot.state is State.TASK:
             raise ValueError("Stop it first")
+        self._no_pull_here(slot)
         steps = self._install_steps(slot.service)
         if not steps:
             raise ValueError("Nothing to install for this project")
@@ -874,6 +899,7 @@ class Supervisor:
             raise ValueError("Unknown Compose action")
         if slot.task or slot.state is State.TASK:
             raise ValueError("Wait for what it is doing to finish")
+        self._no_pull_here(slot)
         prog = containers.engine(service.container.engine)
         if not prog:
             raise ValueError("No container engine is running: start Docker or Podman")
@@ -927,6 +953,7 @@ class Supervisor:
         slot = self.slot(sid)
         if slot.runner or slot.task or slot.state is State.TASK:
             raise ValueError("Stop it first")
+        self._no_pull_here(slot)
         service = slot.service
         folder = Path(service.folder)
         container = service.mode is Mode.CONTAINER
@@ -1033,6 +1060,9 @@ class Supervisor:
             return
         if not set_up and self._set_up_first(slot, slot.steps[0], lambda: self._steps_after_set_up(slot)):
             return
+        if slot.service.mode is not Mode.FULL and (puller := self._pulling_here(slot)) is not None:
+            self._task_failed(slot, f"git is pulling {puller.service.name}'s folder; try again once it's done")
+            return
         step = slot.steps.pop(0)
         try:
             cmd = isolation.prepare(slot.service, self.dirs, task=step)
@@ -1074,7 +1104,37 @@ class Supervisor:
         if slot.service.mode is not Mode.FULL and (slot.runner or slot.shell):
             # git runs as you, outside the sandbox: nothing sandboxed may change the checkout while it does
             raise ValueError("Stop it first: a sandboxed service can't run while git pulls its folder")
+        if writers := self._checkout_writers(slot):
+            raise ValueError(f"Stop {_names(writers)} first: git runs as you, and a sandboxed service in the same "
+                             "folder could change the checkout while it pulls")
         self._pull(slot, then=None)
+
+    def _checkout_writers(self, slot: Slot) -> list[Slot]:
+        """Other services running or starting anything sandboxed (the service, an install, a console command) in
+        this service's folder, inside it or around it: each could rewrite .git/config while git pulls."""
+        return [o for o in self.slots.values() if o is not slot and o.service.mode is not Mode.FULL
+                and (o.runner or o.task or o.shell or o.state in (State.STARTING, State.TASK))
+                and o.service.id not in self._pull_waits and _overlap(o.service.folder, slot.service.folder)]
+
+    def _pulling_here(self, slot: Slot) -> Slot | None:
+        """Another service whose git pull runs in this service's folder, inside it or around it."""
+        return next((o for o in self.slots.values() if o is not slot and o.pulling
+                     and _overlap(o.service.folder, slot.service.folder)), None)
+
+    def _wait_for_pull(self, slot: Slot, then: Callable[[], None]) -> bool:
+        """True when git is pulling this folder for another service and this one is sandboxed: it waits, and
+        ``then`` runs once the pull is over. Nothing sandboxed starts in a folder git is pulling."""
+        if slot.service.mode is Mode.FULL or (puller := self._pulling_here(slot)) is None:
+            return False
+        if slot.service.id not in self._pull_waits:
+            self.note(slot, f"Waiting for git to finish pulling {puller.service.name}'s folder")
+        self._pull_waits[slot.service.id] = then
+        return True
+
+    def _no_pull_here(self, slot: Slot) -> None:
+        """Raise ValueError while git pulls this folder for another service, unless this one has Full access."""
+        if slot.service.mode is not Mode.FULL and (puller := self._pulling_here(slot)) is not None:
+            raise ValueError(f"Wait for git to finish pulling {puller.service.name}'s folder")
 
     def _pull(self, slot: Slot, then: Callable[[], None] | None) -> None:
         self.note(slot, "git pull (fast-forward only)")
@@ -1442,6 +1502,19 @@ def _remove_env(path: Path, allowed: list[Path]) -> None:
             if attempt == 3:
                 raise
             time.sleep(0.5 * (attempt + 1))
+
+
+def _overlap(a: str, b: str) -> bool:
+    """Whether two folders are the same, or one is inside the other."""
+    ka, kb = _key(Path(a)), _key(Path(b))
+    if not ka or not kb:
+        return True  # can't tell: assume they share files
+    return ka == kb or Path(ka).is_relative_to(kb) or Path(kb).is_relative_to(ka)
+
+
+def _names(slots: list[Slot]) -> str:
+    names = [s.service.name for s in slots]
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
 
 
 def _key(folder: Path) -> str:

@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=77"]
+requires = ["setuptools>=84.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -15,9 +15,9 @@ authors = [{ name = "cfunkz", email = "hello@routezero.tech" }]
 dependencies = [
     "PyQt6>=6.11,!=6.12.0,<7", # the window (GPL-3.0, like Pythonator); 6.12.0's type stubs break mypy
     "PyQt6-QScintilla>=2.14", # the code editor: Scintilla's lexers, folding, fast with big files
-    "psutil>=6.0",           # process trees, CPU/RAM, listening ports, on every OS
-    "pydantic>=2.9,<3",      # typed, validated settings, service files and IPC messages
-    "platformdirs>=4.2",     # the right data folder on each OS
+    "psutil>=7.2,<8",        # process trees, CPU/RAM, listening ports, on every OS (8 changes Process.info)
+    "pydantic>=2.14,<3",     # typed, validated settings, service files and IPC messages
+    "platformdirs>=4.12",    # the right data folder on each OS
     "cronsim>=2.7,<3",       # cron schedules for jobs (tiny, pure Python)
 ]
 classifiers = [
@@ -34,7 +34,7 @@ classifiers = [
 dev = [
     "mypy>=1.13",
     "ruff>=0.8",
-    "pytest>=8",
+    "pytest>=9.0.3",
     "pytest-qt>=4.4",
     "types-psutil",
     "pip-audit>=2.7",

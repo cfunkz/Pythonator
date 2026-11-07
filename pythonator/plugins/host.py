@@ -13,6 +13,7 @@ crashing is stopped and disabled with the reason shown.
 from __future__ import annotations
 
 import contextlib
+import io
 import json
 import logging
 import os
@@ -44,6 +45,7 @@ from .manifest import PERMISSIONS, Manifest, load
 log = logging.getLogger(__name__)
 RETIRED = ("health", "webhooks")  # official plugins that became Notify in 0.0.11
 MAX_LINE = 1024 * 1024  # one message; a panel with a long AI answer is a few hundred KB
+READ_BUFFER = 64 * 1024
 RATE, BURST, MAX_DROPS = 200.0, 400.0, 2000
 BYTE_RATE, BYTE_BURST = 2.0 * 1024 * 1024, 8.0 * 1024 * 1024  # and at most this much a second (panels are big)
 MAX_TEXT = 2000  # characters of one log line, error or stderr line kept
@@ -341,8 +343,11 @@ class PluginHost:
     def _read(self, p: Plugin, proc: subprocess.Popen[bytes], outbox: queue.Queue[bytes | None]) -> None:
         if proc.stdout is None:
             return
+        # Buffered: the pipe itself is unbuffered (bufsize=0), and readline() on it reads one byte per system
+        # call. A 1 MB message then took seconds on Windows, and a big panel held up the plugin.
+        out = io.BufferedReader(proc.stdout, READ_BUFFER)  # type: ignore[type-var]
         while True:
-            line = proc.stdout.readline(MAX_LINE + 1)
+            line = out.readline(MAX_LINE + 1)
             if not line:
                 break
             if len(line) > MAX_LINE:
@@ -365,9 +370,9 @@ class PluginHost:
                 return
 
     def _read_err(self, p: Plugin, proc: subprocess.Popen[bytes]) -> None:
-        err = proc.stderr
-        if err is None:
+        if proc.stderr is None:
             return
+        err = io.BufferedReader(proc.stderr, READ_BUFFER)  # type: ignore[type-var]
         second, shown, dropped = 0, 0, 0
         for raw in iter(lambda: err.readline(8192), b""):
             now = int(time.monotonic())
@@ -777,13 +782,15 @@ class PluginHost:
             for p in self._live():
                 self._send(p, {"t": "tick"})
         if ev == "state" and event.get("kind"):
+            note = self._masked(event["id"], str(event.get("note", "")))
             for p in self._live():
                 self._send(p, {"t": "event", "kind": event["kind"], "exit": event.get("exit"),
-                               "note": event.get("note", ""), "service": self._view(p, event["id"])})
+                               "note": note, "service": self._view(p, event["id"])})
         elif ev == "output":
-            lines = str(event.get("text", "")).splitlines()[-200:]
-            for p in self._live():
-                if "read_logs" in self.granted(p):
+            readers = [p for p in self._live() if "read_logs" in self.granted(p)]
+            if readers:
+                lines = self._masked(event["id"], str(event.get("text", ""))).splitlines()[-200:]
+                for p in readers:
                     self._send(p, {"t": "output", "id": event["id"], "lines": lines})
         elif ev == "stats":
             for p in self._live():
@@ -792,6 +799,13 @@ class PluginHost:
         elif ev == "services":
             for p in self._live():
                 self._send(p, {"t": "services", "services": self._views(p)})
+
+    def _masked(self, sid: str, text: str) -> str:
+        """``text`` with every value of the service's variables and env file masked, whatever its name: plugins
+        pass logs on (to an AI provider, a webhook), and a ``DB_PASS`` or a token in ``DISCORD`` is as secret as
+        a ``*_TOKEN``. The console and the log file keep the name-based mask only."""
+        slot = self.sup.slots.get(sid)
+        return slot.log.plugin_mask(text) if slot is not None else text
 
     def _live(self) -> list[Plugin]:
         return [p for p in self.plugins.values() if p.proc and p.ready]

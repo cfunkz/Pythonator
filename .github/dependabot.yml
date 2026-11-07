@@ -1,5 +1,7 @@
-# Pull requests that update the pinned GitHub Actions and the locked dependencies. The cooldown waits a week after a
-# release, so a compromised version that is pulled quickly never arrives here; security updates skip it.
+# Pull requests that update the pinned GitHub Actions and the version ranges in pyproject.toml. The cooldown waits a
+# week after a release, so a compromised version that is pulled quickly never arrives here; security updates skip
+# it. Dependabot never reads the hash-locked *.lock files (only requirement files ending in .txt or .in):
+# .github/workflows/refresh-locks.yml refreshes those once a week and opens a pull request.
 version: 2
 updates:
   - package-ecosystem: github-actions

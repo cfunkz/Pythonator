@@ -77,10 +77,11 @@ as third-party. Approving a pull request that changes `official.json` therefore 
 
 | Workflow | Trigger | Steps |
 | --- | --- | --- |
-| [`ci.yml`](https://github.com/cfunkz/Pythonator/blob/main/.github/workflows/ci.yml) | Every push and pull request | Lint and type checks; tests on Windows, macOS and Linux with Python 3.12 and 3.13 (on Linux, first with bubblewrap blocked by AppArmor, then with it allowed); a Node.js end-to-end test in the Windows sandbox; builds on each system, installs the package and runs `packaging/smoke_test.py` |
-| [`security.yml`](https://github.com/cfunkz/Pythonator/blob/main/.github/workflows/security.yml) | Every push and pull request, and weekly | `pip-audit` on the app, development and build lock files |
+| [`ci.yml`](https://github.com/cfunkz/Pythonator/blob/main/.github/workflows/ci.yml) | Every push and pull request | Lint and type checks; tests on Windows, macOS and Ubuntu 24.04 with Python 3.12 and 3.13, and on Ubuntu 26.04 with 3.13 (on Linux, first with bubblewrap blocked by AppArmor, then with it allowed); a Node.js end-to-end test in the Windows sandbox; builds on each system, installs the package and runs `packaging/smoke_test.py` |
+| [`security.yml`](https://github.com/cfunkz/Pythonator/blob/main/.github/workflows/security.yml) | Every push and pull request, and weekly | `pip-audit` on the app, development, build and lock-tool lock files |
 | [`release.yml`](https://github.com/cfunkz/Pythonator/blob/main/.github/workflows/release.yml) | A pushed `v*` tag | Builds, smoke-tests, attests and publishes a release |
-| [`dependabot.yml`](https://github.com/cfunkz/Pythonator/blob/main/.github/dependabot.yml) | Weekly | Update pull requests for actions and locked packages, after a 7-day cooldown |
+| [`refresh-locks.yml`](https://github.com/cfunkz/Pythonator/blob/main/.github/workflows/refresh-locks.yml) | Weekly, or by hand | Compiles every `*.lock` again with `--upgrade`, runs `pip-audit`, ruff, mypy and the tests, and opens or updates one pull request from the `refresh-locks` branch |
+| [`dependabot.yml`](https://github.com/cfunkz/Pythonator/blob/main/.github/dependabot.yml) | Weekly | Update pull requests for actions and the version ranges in `pyproject.toml`, after a 7-day cooldown. It never reads the `*.lock` files |
 
 Every action is pinned to a commit hash, and every workflow starts with a read-only token. CodeQL's default set-up,
 Dependabot alerts and secret scanning are enabled in the repository's **Security** settings and need no workflow.
@@ -96,7 +97,14 @@ uv pip compile pyproject.toml --universal --python-version 3.12 --generate-hashe
 uv pip compile pyproject.toml --extra dev --universal --python-version 3.12 --generate-hashes -o requirements-dev.lock
 uv pip compile packaging/requirements-build.in --universal --python-version 3.12 --generate-hashes \
     -o packaging/requirements-build.lock
+uv pip compile packaging/requirements-locktool.in --universal --python-version 3.12 --generate-hashes \
+    -o packaging/requirements-locktool.lock
 ```
+
+The second line of each lock is the command that wrote it; `refresh-locks.yml` runs exactly that, with `--upgrade`.
+The workflow needs **Settings > Actions > General > Workflow permissions > Allow GitHub Actions to create and approve
+pull requests**. A pull request it opens doesn't start CI by itself (GitHub's rule for a workflow's own token):
+close and reopen it to run CI on every system.
 
 PyQt6 6.12.0 is excluded because its type stubs break mypy.
 
@@ -126,7 +134,7 @@ service through it, and stops it with `shutdown`, the same command the Windows i
 
 `release.yml` checks that the tag matches `__version__`, builds the installers and portable archives on Windows,
 Linux (x64 and arm64) and macOS (Apple silicon and Intel), installs and starts each one, and publishes them with
-`SHA256SUMS.txt` and signed build provenance ([attest-build-provenance](https://github.com/actions/attest-build-provenance)).
+`SHA256SUMS.txt` and signed build provenance ([actions/attest](https://github.com/actions/attest)).
 CI builds and test-installs the same packages on every push.
 
 ## The website

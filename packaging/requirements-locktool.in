@@ -1,0 +1,2 @@
+# The tool that refreshes the hash-locked requirement files (.github/workflows/refresh-locks.yml).
+uv==0.13.2

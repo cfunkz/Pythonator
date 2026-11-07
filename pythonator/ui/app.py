@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import QApplication
 from .. import __version__
 from ..core.store import Store
 from ..instance import InstanceLock
-from ..paths import IS_WINDOWS, DataDirs
+from ..paths import IS_WINDOWS, DataDirs, leave_current_folder
 from . import theme
 
 
@@ -49,6 +49,7 @@ def main(args: list[str]) -> int:
         app.setWindowIcon(QIcon(str(icon)))
     dirs = DataDirs()
     dirs.ensure()
+    leave_current_folder(dirs)  # Make reachable starts an elevated PowerShell from this process
     lock = InstanceLock(dirs.root / "window.lock")
     if not lock.acquire():  # one window per data folder: two would each ask every question, and run twice
         if not hidden:

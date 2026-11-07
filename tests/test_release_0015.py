@@ -266,7 +266,7 @@ def test_linux_sandbox_plans_add_the_picked_port(monkeypatch: pytest.MonkeyPatch
     from pythonator.isolation import linux
     from pythonator.isolation.base import Policy
 
-    monkeypatch.setattr(linux, "support", lambda: linux.Support(landlock=4, seccomp="", bwrap=""))
+    monkeypatch.setattr(linux, "support", lambda: linux.Support(landlock=4, seccomp="libseccomp.so.2", bwrap=""))
     for ports, expected in (((5173,), [5173, 0]), ((), [])):
         cmd = linux.wrap(["node"], tmp_path, {}, Policy(network=True, ports=ports), tmp_path / "h", tmp_path / "t")
         plan = json.loads(cmd.argv[-1])

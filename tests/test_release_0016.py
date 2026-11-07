@@ -302,8 +302,8 @@ def test_stop_ends_a_program_that_left_its_process_group(harness: Any, project: 
     from pythonator.isolation import linux
 
     real = linux.support()
-    if not real.landlock:
-        pytest.skip("no Landlock here")
+    if not real.landlock or not real.seccomp:
+        pytest.skip("no Landlock or no libseccomp here (Landlock alone isn't a sandbox)")
     monkeypatch.setattr(linux, "support", lambda: linux.Support(real.landlock, real.seccomp, ""))
     (project / "d.py").write_text("import os, time\nif os.fork() == 0:\n    os.setsid()\n    if os.fork() == 0:\n"
                                   "        os.execvp('sleep', ['sleep', '3117'])\n    os._exit(0)\n"

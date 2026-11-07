@@ -31,9 +31,21 @@ def next_run(text: str, after: datetime) -> datetime:
         return after + timedelta(seconds=seconds)
     expr = _MACROS.get(text.lower(), text)
     try:
+        if len(expr.split()) != 5:
+            # cronsim also reads six fields with seconds first: "* * * * * *" would start it every second.
+            raise CronSimError("a cron line has five fields: minute, hour, day of month, month, day of week")
         return next(CronSim(expr, after))
     except (CronSimError, StopIteration) as exc:
         raise ValueError(f"Not a schedule: {text!r} (try 'every 15m' or a cron line like '*/5 * * * *')") from exc
+
+
+def upgrade(value: object) -> object:
+    """A schedule saved before 0.0.18 may have six cron fields, seconds first: drop the seconds, so the service
+    still loads and runs at most once a minute (for "0 */5 * * * *", exactly as meant)."""
+    if isinstance(value, str) and not _EVERY.fullmatch(text := " ".join(value.split())) \
+            and len(fields := text.split()) == 6:
+        return " ".join(fields[1:])
+    return value
 
 
 # -- the schedule builder in the service settings --------------------------------------------------------------
