@@ -244,6 +244,9 @@ class Runner:
                 self.kill()
                 return
         else:
+            # Its tree right now: a child that left the group (setsid) since the stats thread last looked is still
+            # below the service here, but not once SIGTERM ends its parent and it is reparented.
+            self.seen = (*self.seen, *_tree(proc.pid)[1:])
             with contextlib.suppress(OSError):
                 os.killpg(proc.pid, signal.SIGTERM)
         try:

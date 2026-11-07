@@ -21,8 +21,10 @@ import signal
 import stat
 import subprocess
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import NoReturn
 
 from ..paths import DataDirs, quiet_start
 from . import validate
@@ -32,7 +34,11 @@ HARDENING = ["-c", "protocol.allow=never", "-c", "protocol.https.allow=always", 
              "-c", "core.fsmonitor=false", "-c", "submodule.recurse=false", "-c", "credential.interactive=never",
              "-c", "core.askPass=",
              # Reflogs aren't started, and the name in one that exists is Pythonator's, not one the checkout set.
-             "-c", "core.logAllRefUpdates=false", "-c", "user.name=Pythonator", "-c", "user.email=pythonator@localhost"]
+             "-c", "core.logAllRefUpdates=false", "-c", "user.name=Pythonator", "-c", "user.email=pythonator@localhost",
+             # No automatic gc or maintenance after a fetch or merge: gc's "worktree prune" deletes
+             # .git/worktrees/<id> recursively, following a link there into any folder of yours, and it goes on in
+             # the background after the pull, when the service may already be running again.
+             "-c", "gc.auto=0", "-c", "maintenance.auto=false"]
 UPSTREAM = "refs/pythonator/upstream"  # where a pull fetches to: not a branch or remote ref the checkout names
 # The settings that name a program git runs to sign in. They are pinned on the command line, which git reads last,
 # to what your own ~/.gitconfig says, so a checkout's config can't add one even if it changes between the check
@@ -106,10 +112,15 @@ def _hooks_off() -> list[str]:
 
 
 def run(args: list[str], cwd: Path | None = None, *, timeout: float = 300,
-        on_line: Callable[[str], None] | None = None) -> str:
-    """Run git with the hardening flags; raises GitError with git's own message when it fails."""
+        on_line: Callable[[str], None] | None = None, repo: Path | None = None) -> str:
+    """Run git with the hardening flags; raises GitError with git's own message when it fails.
+
+    ``repo``: the checkout git must use, named outright. Left to find it, git skips a ``.git`` that isn't a valid
+    repository (a service can delete its own ``.git/HEAD``) and uses the next one up, around the service's folder:
+    a pull would fetch into and fast-forward that repository, writing files outside the folder."""
     git, env = git_path(), _env()
-    argv = [git, *HARDENING, *_hooks_off(), *_your_settings(git, env, cwd), *args]
+    here = ["--git-dir", str(repo / ".git"), "--work-tree", str(repo)] if repo is not None else []
+    argv = [git, *HARDENING, *_hooks_off(), *_your_settings(git, env, cwd), *here, *args]
     try:
         # Its own process group, so a timeout ends git-remote-https and ssh with it.
         proc = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -129,6 +140,7 @@ def run(args: list[str], cwd: Path | None = None, *, timeout: float = 300,
     # Output is read on a thread, so the timeout counts from the start: a host that never answers, or a FIFO git
     # waits on, can't hold a pull (or the background service) forever.
     reader = threading.Thread(target=read, name="git-output", daemon=True)
+    deadline = time.monotonic() + timeout
     reader.start()
     try:
         code = proc.wait(timeout)
@@ -136,7 +148,10 @@ def run(args: list[str], cwd: Path | None = None, *, timeout: float = 300,
         _kill_tree(proc)
         reader.join(5)
         raise GitError("git took too long and was stopped") from None
-    reader.join()
+    reader.join(max(0.0, deadline - time.monotonic()))
+    if reader.is_alive():  # git ended, but a helper it started still holds its output open: end that too
+        _kill_tree(proc)
+        reader.join(5)
     out = "".join(lines)
     if code != 0:
         raise GitError(out.strip().splitlines()[-1] if out.strip() else f"git failed (exit code {code})")
@@ -178,15 +193,16 @@ def pull(folder: Path, url: str, branch: str = "", *, on_line: Callable[[str], N
     fast-forward to it. Returns ``"old..new"`` or "" when nothing changed."""
     url, branch = validate.git_url(url), validate.git_ref(branch)
     check_checkout(folder, url)
-    before = run(["rev-parse", "--short", "HEAD"], folder, timeout=30).strip()
-    if branch and (on := run(["rev-parse", "--abbrev-ref", "HEAD"], folder, timeout=30).strip()) != branch:
+    before = run(["rev-parse", "--short", "HEAD"], folder, timeout=30, repo=folder).strip()
+    if branch and (on := run(["rev-parse", "--abbrev-ref", "HEAD"], folder, timeout=30,
+                             repo=folder).strip()) != branch:
         raise GitError(f"The checkout is on {on}, not {branch}. Switch it to {branch}, or change the branch in the "
                        "service's settings")
     run(["fetch", "--no-recurse-submodules", "--no-tags", "--no-write-fetch-head", "--", url,
-         f"+{f'refs/heads/{branch}' if branch else 'HEAD'}:{UPSTREAM}"], folder, on_line=on_line)
+         f"+{f'refs/heads/{branch}' if branch else 'HEAD'}:{UPSTREAM}"], folder, on_line=on_line, repo=folder)
     check_checkout(folder, url)  # again: the merge writes files, so its config must still be plain
-    run(["merge", "--ff-only", UPSTREAM], folder, on_line=on_line)
-    after = run(["rev-parse", "--short", "HEAD"], folder, timeout=30).strip()
+    run(["merge", "--ff-only", UPSTREAM], folder, on_line=on_line, repo=folder)
+    after = run(["rev-parse", "--short", "HEAD"], folder, timeout=30, repo=folder).strip()
     return "" if before == after else f"{before}..{after}"
 
 
@@ -202,10 +218,18 @@ def _plain_files(dot_git: Path) -> None:
     (a hard link) or points git at another repository's objects: git, running as you, would write or read
     through it. Objects are left out of the hard-link rule: git never writes into one that exists, and a local
     clone shares them by hard link."""
-    for top, folders, files in os.walk(dot_git, followlinks=False):
+    def unreadable(exc: OSError) -> NoReturn:
+        # A folder the walk can't list (chmod 0o300 by the service) still lets git open the names inside it.
+        raise GitError(f"{exc.filename} can't be read ({exc.strerror}). Pythonator won't pull a checkout it can't "
+                       "check: make everything in .git readable, or clone the project again") from exc
+
+    for top, folders, files in os.walk(dot_git, onerror=unreadable, followlinks=False):
         for name in (*folders, *files):
             path = Path(top, name)
-            info = os.lstat(path)
+            try:
+                info = os.lstat(path)
+            except OSError as exc:
+                unreadable(exc)
             if stat.S_ISLNK(info.st_mode) or os.path.isjunction(path):
                 what = "a link"
             elif stat.S_ISDIR(info.st_mode):
@@ -214,7 +238,8 @@ def _plain_files(dot_git: Path) -> None:
                 what = "a special file"
             elif info.st_nlink > 1 and path.relative_to(dot_git).parts[0] != "objects":
                 what = "a hard link"
-            elif path.relative_to(dot_git).as_posix() in ("objects/info/alternates", "objects/info/http-alternates"):
+            elif path.relative_to(dot_git).as_posix().lower() in ("objects/info/alternates",
+                                                                  "objects/info/http-alternates"):  # any case
                 what = "a pointer to another repository"
             else:
                 continue

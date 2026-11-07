@@ -8,7 +8,7 @@ from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationError
 
-from ..core import validate
+from ..core import readfile, validate
 
 API = 5  # 2: chat input, select, code; read_files, propose_changes. 3: the chat view. 4: Markdown, create_services.
 # 5: tabs (a panel's views), icon buttons, and the sizing contract (see pythonator.sdk.ui)
@@ -58,9 +58,9 @@ def load(folder: Path) -> Manifest:
     """Read and validate ``folder/plugin.toml``. Nothing in the plugin is imported. Raises ValueError."""
     path = folder / MANIFEST
     try:
-        if path.stat().st_size > 64 * 1024:
-            raise ValueError("plugin.toml is larger than 64 KB")
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        # A regular file of at most 64 KB, read without waiting: a plugin from git may carry plugin.toml as a link
+        # to /dev/zero (stat says 0 bytes), which read_text() read until the background service ran out of memory.
+        data = tomllib.loads(readfile.read_text(path, 64 * 1024))
     except (OSError, tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
         raise ValueError(f"Can't read {path}: {exc}") from None
     meta = data.get("plugin", data)

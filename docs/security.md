@@ -9,14 +9,14 @@ limits are. Security problems should be reported through
 
 | Threat | Protection |
 | --- | --- |
-| A service is malicious, or is compromised (a malicious dependency, a remote code execution bug) | Sandbox or Container mode: it cannot read the user's files and keys, write outside its folder, listen on other ports, reach the desktop session, or interact with other programs |
+| A service is malicious, or is compromised (a malicious dependency, a remote code execution bug) | Sandbox or Container mode: it cannot read the user's files and keys, write outside its folder, listen on other ports, reach the desktop session, or interact with other programs. On Linux before 6.12 without bubblewrap, it can still signal the user's other processes and reach their System V shared memory (see Linux below) |
 | A service tries to read Pythonator's data (the token, other services' logs) | The data folder is never granted in any mode except Full access, and is private to the user's account |
 | A service writes where code runs as the user | Sandbox and Container modes refuse, as a service's folder or a write grant: the home folder itself, Pythonator's data and program folders and the Python it runs on, system folders (`/usr`, `/etc`, `/Applications`, `Program Files`, `ProgramData`, `C:\Windows`), folders on `PATH`, login autostart folders and shell start files, and folders of keys. Full access is not limited: it is confirmed once per service and shown in red |
 | A plugin is malicious | Plugins run in their own sandbox (official ones too: no plugin starts where the sandbox can't be set up), receive only what their permissions allow, start in test mode when third-party, and are disabled when they flood, send malformed messages or crash repeatedly; ending one ends every process it started |
 | An official plugin is replaced or modified | *Official* means the files match the reviewed SHA-256 catalogue; a single changed byte makes the plugin third-party, with the warning, test mode and no permissions. Files that change after verification are treated as new code |
 | Another local account, or another program, talks to the background service | The socket is restricted to the user's account (mode 0600, or a per-user named pipe) and requires a random token from a file only the user can read; the token is compared in constant time |
 | A crafted message to the background service | Every request is a strict typed model with limits; unknown fields are refused; a line is at most 1 MB; a slow client is cut off, never waited for |
-| A cloned repository runs code on clone or pull | Hooks, submodules and fsmonitor disabled; only `https` and `ssh` transports (`GIT_ALLOW_PROTOCOL`, which a checkout's own settings can't override); addresses validated; fast-forward only; a pull fetches only the Git address and branch saved in the service's settings (never the checkout's own `origin`), refuses a checkout whose `.git/config` holds settings that would run a program (`core.sshCommand`, filter drivers, `credential.helper`, `include.path`) or whose `.git` holds a link, a hard link, a FIFO or an `alternates` file (git, running as the user, would write through it), checks it again before the merge, has a real timeout that ends git and its helpers, and waits until nothing sandboxed runs in that folder or may write it through *More folders*. See [Git](git.md) |
+| A cloned repository runs code on clone or pull | Hooks, submodules and fsmonitor disabled; only `https` and `ssh` transports (`GIT_ALLOW_PROTOCOL`, which a checkout's own settings can't override); addresses validated; fast-forward only; a pull fetches only the Git address and branch saved in the service's settings (never the checkout's own `origin`), refuses a checkout whose `.git/config` holds settings that would run a program (`core.sshCommand`, filter drivers, `credential.helper`, `include.path`) or whose `.git` holds a link, a hard link, a FIFO or an `alternates` file (git, running as the user, would write through it), or a folder Pythonator can't read; names the checkout's own `.git` outright, so git never falls back to a repository around the folder; turns off git's automatic `gc` and maintenance; checks it again before the merge, has a real timeout that ends git and its helpers, and waits until nothing sandboxed runs in that folder or may write it through *More folders*. See [Git](git.md) |
 | A sandboxed service modifies its own folder to escape | Nothing in the project folder runs outside the sandbox: the venv's Python version is read from `pyvenv.cfg` rather than by running it; `pyvenv.cfg` and symbolic links can only point the sandbox at a real Python installation; an env file is read only if it resolves inside the folder, and cannot set `PATH`, `HOME`, `LD_*`, `DYLD_*`, `DOCKER_*`, `XDG_*`, `PYTHONPATH` and similar variables; a sandboxed service must be stopped before a pull |
 | Arguments that look different from what runs | Programs start from argument lists, never a shell; NUL, bidirectional-override and zero-width characters are refused |
 | `LD_PRELOAD` and similar variables | Refused as service variables |
@@ -31,12 +31,16 @@ limits are. Security problems should be reported through
 * **[Landlock](https://docs.kernel.org/userspace-api/landlock.html)** (kernel 5.13+; network rules 6.7+, scoping
   6.12+): the service may read the system folders, its runtime's installation and its project, and write its project
   and its private home and temporary folders, and nothing else. With the network on, it may listen only on the
-  listed TCP ports; outbound connections may go to any port. Signals and abstract Unix sockets outside its own
-  sandbox are refused.
+  listed TCP ports; outbound connections may go to any port. From Linux 6.12, signals and abstract Unix sockets
+  outside its own sandbox are refused. Before 6.12, without bubblewrap, a service can send signals to (and so stop)
+  any of your processes, including Pythonator's background service, and reach other programs' System V shared
+  memory and message queues; bubblewrap's PID and IPC namespaces close both.
 * **[seccomp](https://man7.org/linux/man-pages/man2/seccomp.2.html)** (through `libseccomp`): with the network off,
   no sockets except Unix sockets. Always blocked: `ptrace`, `bpf`, `io_uring`, kernel module loading, `kexec`,
   `perf_event_open`, `userfaultfd`, mounts, joining other namespaces, and injecting terminal input
-  ([`TIOCSTI`](https://man7.org/linux/man-pages/man2/ioctl_tty.2.html)). New Unix sockets are also blocked without
+  ([`TIOCSTI`](https://man7.org/linux/man-pages/man2/ioctl_tty.2.html)). Landlock doesn't cover a file's owner or
+  mode, so `chown` and a `chmod` that adds set-user-ID, set-group-ID or write for other accounts report success and
+  change nothing, and a file can't be created set-user-ID. New Unix sockets are also blocked without
   bubblewrap, and with it when the network is on but Landlock cannot scope them (before Linux 6.12), since they
   would reach the desktop session (X11, D-Bus).
 * **Neither seccomp nor bubblewrap:** Sandbox mode refuses to start. Landlock alone doesn't stop a connection to a
@@ -44,9 +48,10 @@ limits are. Security problems should be reported through
   SSH agent would be reachable. Install `libseccomp2` (present on almost every desktop distribution) or bubblewrap.
 * **Devices:** only `/dev/null`, `zero`, `random`, `urandom`, `tty`, `ptmx` and `shm`; no cameras or microphones.
   `/dev/pts` is available only inside bubblewrap, where it is the sandbox's own.
-* **Stopping:** nothing leaves the service's process group. seccomp makes `setsid` and `setpgid` report success and
+* **Stopping:** nothing outlives Stop. Without bubblewrap, seccomp makes `setsid` and `setpgid` report success and
   change nothing, so Stop and the clean-up after an exit reach every process the service ever started, even one that
-  daemonised. Under bubblewrap the service's own PID namespace ends with it as well.
+  daemonised. Under bubblewrap they work normally (programs that open a terminal need them), and the service's own
+  PID namespace ends with it instead.
 * **[bubblewrap](https://github.com/containers/bubblewrap)**, when installed and permitted to create
   [user namespaces](https://man7.org/linux/man-pages/man7/user_namespaces.7.html): a private `/tmp`; new PID, IPC and
   UTS namespaces; only the required folders mounted; all capabilities dropped; and the service dies with its parent.

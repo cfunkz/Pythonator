@@ -387,8 +387,21 @@ DENIED = (
     "syslog", "quotactl", "vhangup", "lookup_dcookie", "uselib", "iopl", "ioperm",
 )
 # ENOSYS, so programs fall back: io_uring can create sockets and open files past the checks above, and
-# clone3's flags can't be inspected (glibc, Go and Rust then use clone, whose flags can).
-UNSUPPORTED = ("io_uring_setup", "io_uring_enter", "io_uring_register", "clone3")
+# clone3's flags can't be inspected (glibc, Go and Rust then use clone, whose flags can). openat2 takes its mode in
+# a struct seccomp can't read (see the setuid rule below); programs fall back to openat.
+UNSUPPORTED = ("io_uring_setup", "io_uring_enter", "io_uring_register", "clone3", "openat2")
+# Landlock doesn't cover changing a file's owner or mode, so without bubblewrap a service could chmod any file of
+# yours, anywhere: ~/.bashrc or services.json writable by every account on the computer, your home folder open to
+# them. And in its own folder (any stack) it could make a set-user-ID program: whoever runs it is you. These modes
+# report success and change nothing; the system call (or the argument its mode is in) for each:
+_S_ISUID, _S_ISGID, _S_IWOTH = 0o4000, 0o2000, 0o0002
+CHMODS = (("chmod", 1), ("fchmod", 1), ("fchmodat", 2), ("fchmodat2", 2))
+CHOWNS = ("chown", "fchown", "lchown", "fchownat")
+# Making a file that is set-user-ID from the start: refused (open's "success" would be a file descriptor).
+_O_CREAT, _O_TMPFILE = 0o100, 0o20000000
+CREATES = (("open", 1, 2), ("openat", 2, 3))
+# System calls numbered the same on every architecture, for a libseccomp too old to know their names.
+SYSCALL_NUMBERS = {"fchmodat2": 452, "openat2": 437, "clone3": 435}
 
 
 def seccomp_arch() -> str:
@@ -420,6 +433,15 @@ def seccomp_rules(*, block_net: bool, block_unix: bool,
     # would break programs that open a terminal (forkpty), which only bubblewrap's own /dev/pts allows.
     if group:
         rules += [(_errno(0), name, []) for name in ("setsid", "setpgid")]
+    for name, arg in CHMODS:
+        rules += [(_errno(0), name, [(arg, _SCMP_CMP_MASKED_EQ, bit, bit)]) for bit in (_S_ISUID, _S_ISGID, _S_IWOTH)]
+    rules += [(_errno(0), name, []) for name in CHOWNS]
+    for name, flags, mode in CREATES:
+        rules += [(_errno(_EPERM), name, [(flags, _SCMP_CMP_MASKED_EQ, kind, kind),
+                                          (mode, _SCMP_CMP_MASKED_EQ, bit, bit)])
+                  for kind in (_O_CREAT, _O_TMPFILE) for bit in (_S_ISUID, _S_ISGID)]
+    rules += [(_errno(_EPERM), name, [(mode, _SCMP_CMP_MASKED_EQ, bit, bit)])
+              for name, mode in (("creat", 1), ("mknod", 1), ("mknodat", 2)) for bit in (_S_ISUID, _S_ISGID)]
     if block_unix:
         rules.append((_errno(_EACCES), "socket", [(0, _SCMP_CMP_MASKED_EQ, _LOW32, _AF_UNIX)]))
     if block_net:  # every address family but Unix sockets and netlink (interface lists, no traffic)
@@ -505,7 +527,9 @@ def apply_seccomp(*, block_net: bool, block_unix: bool, library: str = "", group
             raise SandboxError("libseccomp refused the filter settings")
         for action, name, cmps in seccomp_rules(block_net=block_net, block_unix=block_unix, group=group):
             nr = lib.seccomp_syscall_resolve_name(name.encode())
-            if nr < 0:
+            if nr < 0 and name in SYSCALL_NUMBERS:
+                nr = SYSCALL_NUMBERS[name]  # newer than this libseccomp: by number, or it would slip through
+            elif nr < 0:
                 continue  # not on this architecture (e.g. iopl on arm64)
             array = (ArgCmp * max(1, len(cmps)))(*(ArgCmp(*c) for c in cmps))
             if lib.seccomp_rule_add_array(ctx, action, nr, len(cmps), array) != 0:

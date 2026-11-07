@@ -25,6 +25,51 @@ All notable changes to Pythonator are recorded here. The format follows
 - Windows: closing the window while removing a service was still undoing its Make reachable (or while Make
   reachable or Open was still checking) raised an error in the event loop: the answer reached a part of the window
   that was already gone. It is now dropped.
+- git's timeout stopped counting once git itself ended, so a helper that kept its output open still held a pull.
+- Full access on Linux and macOS: a child that left the service's process group (`setsid`) less than 2 s before Stop
+  outlived Stop and Quit. Stop now looks at the whole process tree first. A program that daemonises with a double fork
+  can still outlive Stop in Full access.
+- A plugin whose `plugin.toml` was a link to `/dev/zero` or a FIFO made the background service read until it ran out
+  of memory, or wait for good, when the plugin was installed. The manifest is now read like other files a plugin
+  brings: a regular file of at most 64 KB, without waiting.
+
+### Security
+
+- git pull: a sandboxed service could make a folder in its `.git` unreadable (`chmod 300`). The check before a pull
+  skipped what it couldn't list, but git, running as you, still used the links inside, and its automatic clean-up
+  after the fetch deleted through one: a pull emptied a folder of yours and wrote into `services.json`. A pull now
+  refuses a `.git` it can't read in full, and git's automatic `gc` and maintenance are off for every git command
+  Pythonator runs. An `alternates` file is recognised in any letter case.
+- git pull: a service could delete its own `.git/HEAD`, so git skipped that `.git` and used the repository around the
+  service's folder, fetching into it and fast-forwarding it. Every git command of a pull now names the service's own
+  `.git` outright.
+- Linux: Landlock doesn't cover a file's owner or mode. Without bubblewrap a sandboxed service could make
+  `~/.bashrc` or `services.json` writable by every account on the computer, and with any stack it could make a
+  set-user-ID program in its folder. seccomp now makes `chown`, and a `chmod` that adds set-user-ID, set-group-ID or
+  write for others, report success and change nothing; creating a set-user-ID file is refused; `openat2` is reported
+  as missing (programs fall back to `openat`); and `fchmodat2`, `openat2` and `clone3` are filtered by number when the
+  installed libseccomp is too old to know them.
+
+### Known limitations
+
+These were already true in 0.0.19 and are now written down:
+
+- A service that crashes *Give up after* times in 10 minutes (5 by default) stays stopped until you start it. For a
+  bot, set it to 0.
+- Linux without bubblewrap: `/dev/shm` and other programs' System V shared memory are shared with the service, and
+  before Linux 6.12 it can send signals to any of your processes, the background service included. Installing
+  bubblewrap closes all three.
+- Linux and macOS: memory and CPU limits are watched by Pythonator every 2 s, not enforced by the kernel, and there's
+  no limit on the number of processes. Plugins have no memory limit.
+- Linux without bubblewrap: a process a plugin started can outlive Disable.
+- Sandbox and Container modes still accept `/tmp`, `/opt`, `/var`, `/srv`, `/run/user`, user site-packages and
+  folders on your shell's `PATH` that aren't on Pythonator's own `PATH` (`~/.cargo/bin`, `~/go/bin`, a
+  `~/.local/bin` made later) as write folders. Don't grant them.
+- A sandboxed service can make files in its folder readable by other accounts.
+- A sandboxed Rust service can read `~/.cargo` (including `credentials.toml`).
+- A clone runs in the window, outside the lock a pull takes, and a checkout's `.lfsconfig` can redirect git-lfs
+  downloads when git-lfs is installed globally.
+- Nothing restarts a service whose health check fails, because there are no health checks yet.
 
 ## [0.0.19] - 2026-11-07
 
