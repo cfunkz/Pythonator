@@ -7,6 +7,8 @@ All notable changes to Pythonator are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.0.19] - 2026-11-07
+
 ### Added
 
 - A start refused because a port is in use or reserved by Windows (Hyper-V, WSL, Docker) names a free port near it.
@@ -714,7 +716,8 @@ First public release.
   Webhooks, Guard and the AI assistant (Claude, OpenAI, Gemini, DeepSeek, Ollama).
 - A website with guides, a glossary, a dependency list and an API reference.
 
-[Unreleased]: https://github.com/cfunkz/Pythonator/compare/v0.0.18...HEAD
+[Unreleased]: https://github.com/cfunkz/Pythonator/compare/v0.0.19...HEAD
+[0.0.19]: https://github.com/cfunkz/Pythonator/compare/v0.0.18...v0.0.19
 [0.0.18]: https://github.com/cfunkz/Pythonator/compare/v0.0.17...v0.0.18
 [0.0.17]: https://github.com/cfunkz/Pythonator/compare/v0.0.16...v0.0.17
 [0.0.16]: https://github.com/cfunkz/Pythonator/compare/v0.0.15...v0.0.16
