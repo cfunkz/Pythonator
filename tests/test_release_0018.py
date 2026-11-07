@@ -428,24 +428,32 @@ def test_env_files_are_never_committed() -> None:
 
 def test_a_plugin_message_is_read_in_blocks_not_byte_by_byte() -> None:
     """The pipe is unbuffered: readline() on it made one system call per byte, which on Windows took longer than
-    10 seconds for a 1 MB message. The oversized message is now noticed at once."""
+    10 seconds for a 1 MB message. The oversized message is now noticed at once, and the plugin killed by the
+    reading thread itself: it is still writing the rest, which nobody reads, so waiting for it would never end."""
     import queue
+    import threading
     import time
 
     from pythonator.plugins.host import MAX_LINE, PluginHost
 
     posted: list[Any] = []
     stub = SimpleNamespace(sup=SimpleNamespace(post=posted.append))
-    code = f"import os; os.write(1, b'a' * {MAX_LINE + 50_000} + b'\\n')"
+    # Far more than any pipe buffer holds after the first megabyte: the writer blocks until it is killed.
+    code = f"import os; os.write(1, b'a' * {MAX_LINE * 3} + b'\\n')"
     proc = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, bufsize=0)
+    reader = threading.Thread(target=PluginHost._read, args=(stub, SimpleNamespace(), proc, queue.Queue()),
+                              daemon=True)
     started = time.perf_counter()
-    try:
-        PluginHost._read(stub, SimpleNamespace(), proc, queue.Queue())  # type: ignore[arg-type]
-    finally:
+    reader.start()
+    reader.join(15)
+    took = time.perf_counter() - started
+    if reader.is_alive():  # stuck: end it, so the test fails instead of hanging
         proc.kill()
-        proc.wait()
-    assert time.perf_counter() - started < 5
+        reader.join(15)
+    proc.wait()
+    assert took < 10, f"the reading thread was stuck for {took:.0f} s"
     assert len(posted) == 2  # the kill for the oversized message, then the exit
+    assert proc.returncode != 0  # killed by the reader, not finished
 
 
 def test_a_worker_thread_can_report_after_the_window_closed(qtbot: Any) -> None:

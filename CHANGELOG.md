@@ -7,6 +7,8 @@ All notable changes to Pythonator are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.0.18] - 2026-11-07
+
 Bundled plugins: AI assistant 1.4.0.
 
 ### Added
@@ -47,7 +49,9 @@ Bundled plugins: AI assistant 1.4.0.
   hands the listen error to the callback, which printed "Listening on…" and exited with code 0, so Pythonator saw a
   clean exit.
 - Plugins: their messages are read from the pipe in blocks. Reading byte by byte made a 1 MB message take more than
-  10 seconds on Windows, which held up a plugin with a big panel and failed the oversized-message test in CI.
+  10 seconds on Windows, which held up a plugin with a big panel and failed the oversized-message test in CI. A
+  plugin that sends a message over 1 MB is killed at once by the thread reading it: it was left blocked writing
+  the rest of the message, which nobody read, until the background service got round to it.
 - Windows: closing the window while Make reachable, or its undo after a removal, was still running no longer raises
   an error in that thread.
 
@@ -650,7 +654,8 @@ First public release.
   Webhooks, Guard and the AI assistant (Claude, OpenAI, Gemini, DeepSeek, Ollama).
 - A website with guides, a glossary, a dependency list and an API reference.
 
-[Unreleased]: https://github.com/cfunkz/Pythonator/compare/v0.0.17...HEAD
+[Unreleased]: https://github.com/cfunkz/Pythonator/compare/v0.0.18...HEAD
+[0.0.18]: https://github.com/cfunkz/Pythonator/compare/v0.0.17...v0.0.18
 [0.0.17]: https://github.com/cfunkz/Pythonator/compare/v0.0.16...v0.0.17
 [0.0.16]: https://github.com/cfunkz/Pythonator/compare/v0.0.15...v0.0.16
 [0.0.15]: https://github.com/cfunkz/Pythonator/compare/v0.0.14...v0.0.15

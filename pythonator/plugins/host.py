@@ -351,6 +351,10 @@ class PluginHost:
             if not line:
                 break
             if len(line) > MAX_LINE:
+                # Killed here, at once: nobody reads the rest of the message, so a plugin still writing it is
+                # stuck, and proc.wait() below would wait for it forever (Windows pipes hold only a few KB).
+                with contextlib.suppress(OSError):
+                    proc.kill()
                 self.sup.post(lambda: self._kill(p, proc, "sent a message larger than 1 MB"))
                 break
             self.sup.post(lambda line=line: self._on_line(p, proc, line))
