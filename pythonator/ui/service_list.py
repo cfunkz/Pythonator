@@ -29,7 +29,7 @@ from PyQt6.QtWidgets import QAbstractItemView, QListView, QStyle, QStyledItemDel
 from ..core.models import Service
 from . import theme
 
-MODE_LABEL = {"sandbox": "Sandbox", "container": "Container", "full": "Full access"}
+MODE_LABEL = {"sandbox": "Sandbox", "container": "Container", "full": "Full access", "wsl": "WSL"}
 _Index = QModelIndex | QPersistentModelIndex
 RowRole = Qt.ItemDataRole.UserRole + 1
 
@@ -110,7 +110,7 @@ def status_text(row: Row) -> str:
 def tooltip(row: Row) -> str:
     s = row.service
     mode = MODE_LABEL.get(row.mode, row.mode)
-    if row.mode != "full":
+    if row.mode not in ("full", "wsl"):
         mode += ", network on" if s.network.enabled else ", offline"
     if s.network.ports:
         mode += " · serves on " + ", ".join(map(str, s.network.ports))
@@ -290,7 +290,7 @@ class ServiceDelegate(QStyledItemDelegate):
         if room >= 20:
             x = left + painter.fontMetrics().horizontalAdvance(name) + 6
             theme.draw_mode(painter, row.mode, QRectF(x, top + 2.5, self.ICON, self.ICON),
-                            offline=row.mode != "full" and not row.service.network.enabled)
+                            offline=row.mode not in ("full", "wsl") and not row.service.network.enabled)
 
         painter.setFont(self.mono)
         fm = painter.fontMetrics()

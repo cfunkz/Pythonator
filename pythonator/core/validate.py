@@ -33,6 +33,7 @@ _GIT_REF = re.compile(r"[A-Za-z0-9._/-]{1,200}")
 _IMAGE = re.compile(r"[a-z0-9]+(?:[._-][a-z0-9]+)*(?::\d{1,5})?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*"
                     r"(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?(?:@sha256:[a-f0-9]{64})?")
 _NET_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,62}")
+_WSL_DISTRO = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
 # Variables that change how every program loads code: refused in a service's environment, because a
 # sandbox would still apply them to the runtime itself and they are a common way to hijack a process.
 DANGEROUS_ENV = frozenset({"LD_PRELOAD", "LD_AUDIT", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH",
@@ -203,6 +204,15 @@ def image(value: str) -> str:
     value = value.strip()
     if value and (len(value) > 255 or not _IMAGE.fullmatch(value)):
         raise ValueError("Not a container image name, e.g. python:3.13-slim")
+    return value
+
+
+def wsl_distro(value: str) -> str:
+    """A WSL distribution's name as ``wsl --list`` shows it (letters, digits, ``.``, ``_``, ``-``). Empty: the
+    default distribution."""
+    value = value.strip()
+    if value and not _WSL_DISTRO.fullmatch(value):
+        raise ValueError("Not a WSL distribution name, e.g. Ubuntu-24.04")
     return value
 
 

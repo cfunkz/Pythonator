@@ -23,6 +23,17 @@ class Mode(StrEnum):
     FULL = "full"  # runs as you, like in a terminal
     SANDBOX = "sandbox"  # the operating system's own sandbox: its folder, its runtime, nothing else
     CONTAINER = "container"  # a Docker or Podman container
+    WSL = "wsl"  # Windows: in a WSL 2 Linux distribution, as your Linux user (not a sandbox)
+
+    @property
+    def runs_as_you(self) -> bool:
+        """Not isolated: it can change what your account can, so Pythonator asks once before it starts."""
+        return self in (Mode.FULL, Mode.WSL)
+
+    @property
+    def linux_inside(self) -> bool:
+        """Its runtime and packages are a Linux system's (a container's or WSL's), not this computer's."""
+        return self in (Mode.CONTAINER, Mode.WSL)
 
 
 class Expose(StrEnum):
@@ -66,10 +77,17 @@ class SandboxOptions(Model):
 
 
 class ContainerOptions(Model):
-    engine: Literal["auto", "docker", "podman"] = "auto"
+    # "wsl": Docker Engine installed inside a WSL 2 distribution (Windows, without Docker Desktop)
+    engine: Literal["auto", "docker", "podman", "wsl"] = "auto"
     image: Annotated[str, AfterValidator(validate.image)] = ""  # empty: the runtime's default image
     network: Annotated[str, AfterValidator(validate.network_name)] = ""  # join this network (to reach a database)
     read_only_root: bool = True  # the image itself can't be changed, only the project folder
+
+
+class WslOptions(Model):
+    """Windows: the WSL distribution for WSL mode and for the "wsl" container engine."""
+
+    distro: Annotated[str, AfterValidator(validate.wsl_distro)] = ""  # empty: WSL's default distribution
 
 
 class GitSource(Model):
@@ -106,6 +124,7 @@ class Service(Model):
     network: Network = Field(default_factory=Network)
     sandbox: SandboxOptions = Field(default_factory=SandboxOptions)
     container: ContainerOptions = Field(default_factory=ContainerOptions)
+    wsl: WslOptions = Field(default_factory=WslOptions)
     restart: Restart = Restart.ON_FAILURE
     max_restarts: int = Field(default=5, ge=0, le=1000)  # automatic restarts within 10 minutes; 0: unlimited
     stop_timeout: float = Field(default=10.0, ge=0.5, le=600)
@@ -115,7 +134,7 @@ class Service(Model):
     git: GitSource | None = None
     schedule: Annotated[str, BeforeValidator(upgrade_schedule), AfterValidator(check_schedule)] = ""  # "every 15m"
     # or a five-field cron line; empty: keep it running
-    full_access_ok: bool = False  # the user confirmed Full mode for this service
+    full_access_ok: bool = False  # the user confirmed Full (or WSL) mode for this service
     made_by: MadeBy | None = None  # made by the Project builder: it may then delete it, folder and all
 
     @model_validator(mode="after")

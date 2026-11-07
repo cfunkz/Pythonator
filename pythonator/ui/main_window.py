@@ -51,6 +51,7 @@ MODE_TIPS = {
                "of reach.",
     "container": "Container: only its working folder is mounted; no root powers.",
     "full": "Full access: it runs with your full permissions and can read and change all your files.",
+    "wsl": "WSL: it runs in Linux as your Linux user and can change your Windows files under /mnt.",
 }
 
 
@@ -531,7 +532,7 @@ class MainWindow(QMainWindow):
         out = [("State", status_text(row) if row else state.capitalize()),
                ("Runs", f"{rt.label if rt else 'Command'} · {entry_text(service)}"),
                ("Isolation", MODE_LABEL.get(service.mode.value, service.mode.value)),
-               ("Network", "off" if service.mode.value != "full" and not service.network.enabled else
+               ("Network", "off" if not service.mode.runs_as_you and not service.network.enabled else
                 "on" + (f", serves {', '.join(map(str, service.network.ports))}" if service.network.ports else ""))]
         if state in ("running", "stopping"):
             if st.get("pid"):
@@ -571,7 +572,7 @@ class MainWindow(QMainWindow):
         """Re-set the pixmaps and tooltips only when something changed: doing it every second makes tooltips
         flicker."""
         mode = service.mode.value
-        offline = mode != "full" and not service.network.enabled
+        offline = not service.mode.runs_as_you and not service.network.enabled
         key = (service.id, state, mode, offline, tuple(service.network.ports), self.devicePixelRatioF())
         if key == self._icons:
             return
@@ -583,7 +584,7 @@ class MainWindow(QMainWindow):
         c = theme.mode_color(mode)
         theme.set_style(self.h_mode, f"QLabel {{ background: {theme.rgba(c, 0.12)}; border: 1px solid "
                                      f"{theme.rgba(c, 0.32)}; border-radius: {theme.R_SM}px; }}")
-        net = "" if mode == "full" else "\nNetwork: off" if offline else "\nNetwork: on"
+        net = "" if service.mode.runs_as_you else "\nNetwork: off" if offline else "\nNetwork: on"
         if service.network.ports:
             net += " · serves on " + ", ".join(map(str, service.network.ports))
         theme.set_tooltip(self.h_mode, f"{MODE_LABEL.get(mode, mode)}. {MODE_TIPS.get(mode, '')}{net}")
@@ -661,9 +662,10 @@ class MainWindow(QMainWindow):
         if service is None:
             return
         folder = Path(service.folder)
-        container = service.mode is Mode.CONTAINER
-        names = [p.relative_to(folder).as_posix() for p in runtimes.env_folders(service.runtime, folder,
-                                                                                 container=container) if p.exists()]
+        container = service.mode.linux_inside
+        names = [p.relative_to(folder).as_posix() for p in runtimes.env_folders(
+            service.runtime, folder, container=service.mode is Mode.CONTAINER, wsl=service.mode is Mode.WSL)
+            if p.exists()]
         if not container and service.runtime in runtimes.CACHE_VARS:
             names.append(f"its private {runtimes.RUNTIMES[service.runtime].label} package cache")
         what = ", ".join(names) or "nothing yet"
@@ -677,11 +679,16 @@ class MainWindow(QMainWindow):
         if ok:
             return
         if error == "confirm_full" and op == "start":
-            name = self.services[sid].name if sid in self.services else "This service"
-            if warn(self, "Full access", f"{name} runs with Full access: it can read and change "
-                                   "everything your account can. Start it anyway?\n\nSandbox mode keeps it to its "
-                                   "own folder.", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                                   QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+            service = self.services.get(sid)
+            name = service.name if service else "This service"
+            in_wsl = service is not None and service.mode is Mode.WSL
+            title, what = (("WSL", f"{name} runs in WSL as your Linux user: it can read and change your Windows "
+                                   "files under /mnt and everything in your WSL home.") if in_wsl else
+                           ("Full access", f"{name} runs with Full access: it can read and change everything your "
+                                           "account can."))
+            if warn(self, title, f"{what} Start it anyway?\n\nSandbox mode keeps it to its own folder.",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
                 self._op("start", sid=sid, confirmed=True)
             return
         warn(self, "Pythonator", error)

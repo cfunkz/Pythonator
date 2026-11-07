@@ -53,7 +53,7 @@ STATE_COLORS = {"running": "ok", "starting": "accent", "stopping": "warn", "wait
 STATE_LABELS = {"running": "Running", "starting": "Starting", "stopping": "Stopping", "waiting": "Waiting",
                 "failed": "Failed", "task": "Busy", "stopped": "Stopped"}
 LIVE = ("running", "starting", "stopping", "task")  # a process is up
-MODE_COLORS = {"sandbox": "teal", "container": "blue", "full": "warn"}
+MODE_COLORS = {"sandbox": "teal", "container": "blue", "full": "warn", "wsl": "warn"}
 
 R_SM, R_MD, R_LG = 2, 3, 4  # corners: squarish, never quite square
 TOOLTIP_DELAY_MS = 250  # Qt's 700 ms feels like lag in a dense window
@@ -129,7 +129,7 @@ def _shield(x: float, y: float, w: float, h: float) -> QPainterPath:
 
 def draw_mode(p: QPainter, mode: str, box: QRectF, *, offline: bool = False) -> None:
     """How a service is isolated: a shield (sandbox; a bar across when offline), a box (container) or a warning
-    triangle (Full access)."""
+    triangle (Full access, WSL: neither is isolated)."""
     c = QColor(mode_color(mode))
     hole = QColor(current.panel)
     side = min(box.width(), box.height())
@@ -151,7 +151,7 @@ def draw_mode(p: QPainter, mode: str, box: QRectF, *, offline: bool = False) -> 
         p.drawPolyline(QPolygonF([QPointF(left, y + side * 0.2), QPointF(cx, y + side * 0.36),
                                   QPointF(right, y + side * 0.2)]))
         p.drawLine(QPointF(cx, y + side * 0.36), QPointF(cx, bottom))
-    elif mode == "full":
+    elif mode in ("full", "wsl"):
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(c)
         tri = QPainterPath()

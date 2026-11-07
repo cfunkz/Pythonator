@@ -38,7 +38,7 @@ class ServiceInfo:
     id: str
     name: str
     runtime: str
-    mode: str  # "full", "sandbox" or "container"
+    mode: str  # "full", "sandbox", "container" or "wsl"
     state: str  # "stopped", "starting", "running", "stopping", "waiting", "failed", "task"
     network: bool = True
     ports: tuple[int, ...] = ()  # the ports it is set up to serve on

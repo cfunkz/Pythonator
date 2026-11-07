@@ -130,7 +130,7 @@ Security rules for every service, checked before each start and monitored while 
 
 | Setting | Meaning |
 | --- | --- |
-| Don't start services in Full access mode | Refuses those starts |
+| Don't start services in Full access or WSL mode | Refuses those starts (neither is isolated) |
 | Don't let other computers reach any service | Refuses services exposed to other computers |
 | Allowed ports | For example `3000-3999, 8000-8100, 443`; empty allows any |
 | Act when a service listens on a port it didn't declare | Compares declared ports with those actually in use |

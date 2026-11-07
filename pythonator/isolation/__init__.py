@@ -1,4 +1,4 @@
-"""Isolation: turn a service into the exact command that runs it in Full, Sandbox or Container mode.
+"""Isolation: turn a service into the exact command that runs it in Full, Sandbox, Container or WSL mode.
 
 This package is security-critical and not pluggable. Every mode fails closed: if the isolation a service asks
 for can't be set up exactly, :func:`prepare` raises :class:`IsolationError` and nothing starts.
@@ -120,7 +120,13 @@ def policy_for(service: Service, argv: list[str], dirs: DataDirs, *, task: bool,
 
 def slow_setup(service: Service, dirs: DataDirs, *, task: list[str] | None = None) -> Callable[[], object] | None:
     """Work :func:`prepare` would do first that takes seconds (Windows: copying Node.js for sandboxes, once per
-    Node version), for the caller to run in the background before it; None when there's none."""
+    Node version; asking WSL, which may have to start), for the caller to run in the background before it; None
+    when there's none."""
+    if IS_WINDOWS and service.mode is Mode.WSL:
+        from . import wsl
+
+        distro, folder = service.wsl.distro, Path(service.folder)
+        return None if wsl.known(distro, folder) else lambda: wsl.locate(distro, folder)
     if not IS_WINDOWS or service.mode is not Mode.SANDBOX:
         return None
     from . import private_node
@@ -130,6 +136,13 @@ def slow_setup(service: Service, dirs: DataDirs, *, task: list[str] | None = Non
     except (IsolationError, ValueError, OSError):
         return None  # prepare() says why
     return private_node.pending_copy(argv, dirs, node_service=service.runtime in ("node", "bun"))
+
+
+def setup_note(service: Service) -> str:
+    """What :func:`slow_setup`'s work is doing, for the console."""
+    if service.mode is Mode.WSL:
+        return f"Waiting for WSL ({service.wsl.distro or 'default distribution'}), which may be starting…"
+    return "Copying Node.js for sandboxes (once per Node version, in the background)…"
 
 
 def prepare(service: Service, dirs: DataDirs, *, task: list[str] | None = None, cmdline: str | None = None) -> Command:
@@ -151,6 +164,10 @@ def prepare(service: Service, dirs: DataDirs, *, task: list[str] | None = None, 
         else:
             cmd.shown = cmd.argv[cmd.argv.index(container.image_for(service)):]
         return cmd
+    if service.mode is Mode.WSL:  # runs as your Linux user: like Full access, no folder is off limits
+        from . import wsl
+
+        return wsl.wrap(service, task=task)
     argv = service_argv(service, task)
     _check_windows_batch(argv)
     env = base_env(service, sandboxed=service.mode is Mode.SANDBOX)

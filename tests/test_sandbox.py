@@ -142,7 +142,7 @@ def test_full_mode_is_plain(dirs: DataDirs, project: Path) -> None:
 def test_container_flags(dirs: DataDirs, project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from pythonator.isolation import container
 
-    monkeypatch.setattr(container, "engine", lambda _choice="auto": "/usr/bin/podman")
+    monkeypatch.setattr(container, "engine", lambda _choice="auto", _distro="": "/usr/bin/podman")
     (project / "app.py").write_text("")
     service = Service.model_validate({"name": "c", "folder": str(project), "entry": "app.py", "mode": "container",
                                       "env": {"API_TOKEN": "s3cret-value"}, "network": {"ports": [8000]},

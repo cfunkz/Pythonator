@@ -1,13 +1,14 @@
 # Isolation modes
 
-Every service runs in one of three modes, set on its **Isolation** tab. New services default to **Sandbox**; the
-`default_mode` key in `settings.json` changes this.
+Every service runs in one of three modes (four on Windows), set on its **Isolation** tab. New services default to
+**Sandbox**; the `default_mode` key in `settings.json` changes this.
 
 | Mode | What the program can reach | Requirements |
 | --- | --- | --- |
 | **Sandbox** | Its project folder, its runtime's files, and the network only if enabled, on the listed ports | None: built into Windows, macOS and Linux |
 | **Container** | Only the project folder, mounted at `/app` inside a container image | Docker or Podman |
 | **Full access** | Everything the user's account can read, change and connect to | Trust in the code |
+| **WSL** (Windows) | Linux in a WSL 2 distribution as the user's Linux account, and the Windows files under `/mnt` | WSL 2, and trust in the code |
 
 One rule applies in every mode: **if a protection cannot be applied, the service does not start.** It never runs
 with less than its mode promises. The first console line of each start states exactly what was applied.
@@ -146,6 +147,16 @@ and can be any named image, optionally pinned by digest (`python:3.13-slim@sha25
 creates `/app/.venv-container`, which the container then uses, so it does not conflict with a `.venv` made for the
 host.
 
+**Docker inside WSL** (Windows): the engine `wsl` runs the container with Docker Engine installed inside a WSL 2
+distribution (the one on the Isolation tab's WSL box, or WSL's default), for computers without Docker Desktop. Docker
+Desktop's own WSL 2 backend needs nothing extra: that is the `docker` engine. With `wsl`, Pythonator runs
+`wsl.exe --distribution <name> --exec docker run …` with the same flags as above. It mounts the folder as WSL sees it
+(`/mnt/c/…`, found with [`wslpath`](https://learn.microsoft.com/en-us/windows/wsl/filesystems)), runs as the Linux
+user who owns it there (`--user`), and passes variables through
+[`WSLENV`](https://devblogs.microsoft.com/commandline/share-environment-vars-between-wsl-and-windows/). Ports published
+to `127.0.0.1` reach Windows through WSL's localhost forwarding. Other computers reach them only with WSL's mirrored
+networking. Compose projects need Docker Desktop. `auto` never chooses `wsl`, since asking would start WSL.
+
 To reach another container, such as a database, see
 [Connecting to other containers](networking.md#connecting-to-other-containers).
 
@@ -182,6 +193,35 @@ ends everything it started.
 
 It is intended for trusted tools that need the desktop or the whole disk.
 
+## WSL (Windows)
+
+WSL mode runs the service in a [WSL 2](https://learn.microsoft.com/en-us/windows/wsl/) Linux distribution with
+Linux's own runtimes, for projects that need Linux (uvloop, gunicorn, shell scripts, Linux-only packages). It is
+**not a sandbox**: the program runs as the distribution's user, who can change the Windows files under `/mnt` and
+everything in the Linux home. Like Full access, it asks for confirmation before the first start, and the
+[Guard](plugins.md#guard) plugin's "no Full access" rule blocks it too. For isolation on Linux, use Container mode with
+the `wsl` engine.
+
+Pythonator starts it with Microsoft's `wsl.exe` from `System32`: `wsl.exe --distribution <name> --cd <folder> --exec
+/bin/sh -lc 'exec "$0" "$@"' <program> …`. The login shell gives the PATH of `~/.profile` (`~/.local/bin`, Cargo, Go).
+Version managers that only set themselves up in `~/.bashrc`, such as nvm, need their program's full path as a Custom
+command. Variables from the service and its env file reach Linux through `WSLENV`, never on a command line. Nothing
+else of the Windows environment does.
+
+* **Packages:** Packages ▾ → Install packages runs WSL's runtime in the project. Python gets `.venv-wsl` (made with
+  `python3 -m venv`, so Ubuntu and Debian need `python3-venv`), next to any Windows `.venv`. Node.js uses the project's
+  `node_modules`, which native modules built on Windows do not share.
+* **Stop:** every process of a run carries a mark (`PYTHONATOR_WSL_RUN`). Stop sends `SIGTERM` to each process with it
+  inside Linux, and `SIGKILL` after the grace period. This also ends processes that left the run's session, which
+  ending `wsl.exe` alone is not documented to do.
+* **Ports:** `PORT` and `HOST` are set as in other modes. WSL's localhost forwarding makes a server reachable at
+  `127.0.0.1` on Windows. Other computers reach it only with WSL's
+  [mirrored networking](https://learn.microsoft.com/en-us/windows/wsl/networking).
+* **Not available:** RAM and CPU limits for one service (`.wslconfig` limits all of WSL) and turning the network
+  off. A start with either set is refused, not run without it.
+* **Speed:** files under `/mnt/c` are slower for Linux than its own disk. A project in the distribution
+  (`\\wsl.localhost\<name>\home\…`) can be chosen as the folder instead.
+
 ## Choosing a mode
 
 | Situation | Suggested mode |
@@ -190,6 +230,7 @@ It is intended for trusted tools that need the desktop or the whole disk.
 | Newly cloned code that has not been reviewed | Sandbox with the network off at first, or Container |
 | A service that needs a database or other containers | Container, on their network |
 | A tool that must control the desktop or reach every folder | Full access, if trusted |
+| Trusted code that needs Linux, on Windows | WSL, or Container with the `wsl` engine for isolation |
 
 The [Guard](plugins.md#guard) plugin can enforce policies of this kind across all services, for example *no Full
 access* or *only ports 8000–8100*.

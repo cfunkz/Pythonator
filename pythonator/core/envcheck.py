@@ -89,13 +89,15 @@ def service_report(service: Service) -> list[Item]:
         return [("error", f"The folder {folder} doesn't exist")]
     if service.mode is Mode.FULL:
         items.append(("warn", "Full access: it can read and change everything your account can"))
+    if service.mode is Mode.WSL:
+        items.append(("warn", "WSL: it runs as your Linux user and can change your Windows files under /mnt"))
     if service.runtime == runtimes.CUSTOM:
         prog = service.command[0] if service.command else ""
         if prog and not (Path(prog).is_absolute() or runtimes.which(prog)):
             items.append(("error", f"{prog} wasn't found on PATH"))
         return items
     rt = runtimes.RUNTIMES[service.runtime]
-    if service.mode is not Mode.CONTAINER:
+    if not service.mode.linux_inside:  # a container's or WSL's runtime isn't this computer's
         found = runtimes.program(rt, folder)
         prog = found or ""
         if not found:
@@ -115,7 +117,8 @@ def service_report(service: Service) -> list[Item]:
             items.append(("warn", "composer.json found but vendor is missing: Install packages"))
     if service.entry and not (folder / service.entry).exists():
         items.append(("error", f"{service.entry} doesn't exist"))
-    summary = runtimes.env_summary(rt.key, folder, own=service.own_env, container=service.mode is Mode.CONTAINER)
+    summary = runtimes.env_summary(rt.key, folder, own=service.own_env, container=service.mode is Mode.CONTAINER,
+                                   wsl=service.mode is Mode.WSL)
     items.append(("warn" if summary.startswith("Own environment is off") else "ok", summary))
     return items
 
@@ -123,7 +126,7 @@ def service_report(service: Service) -> list[Item]:
 def port_problems(service: Service) -> list[str]:
     """Before a start: each listed port this computer won't let it listen on, and why, in words. A refused port
     otherwise shows up only as a server nobody can reach, or a framework that exits saying little."""
-    if service.mode is Mode.CONTAINER or not service.network.enabled:
+    if service.mode.linux_inside or not service.network.enabled:
         return []
     out = []
     for port in service.network.ports:

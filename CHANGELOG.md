@@ -7,7 +7,20 @@ All notable changes to Pythonator are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Windows: **WSL mode** runs a service in a WSL 2 Linux distribution, with Linux's own runtimes, through Microsoft's
+  `wsl.exe` (`--distribution`, `--cd`, `--exec`). It is not a sandbox, so it asks for the same confirmation as Full
+  access, and Guard's "no Full access" rule blocks it too. Variables cross into Linux only through `WSLENV`. Stop ends
+  every process of the run inside Linux by its mark. RAM/CPU limits and network off are refused, not ignored. Python
+  gets its own `.venv-wsl`. See [WSL](docs/isolation.md#wsl-windows).
+- Windows: Container mode's engine `wsl` runs containers with Docker Engine installed inside a WSL distribution, for
+  computers without Docker Desktop, with the same hardening flags. `auto` never starts WSL.
+
 ### Fixed
+
+- Container mode on Windows: Python ran `py` inside the container when there was no `.venv-container` yet, and Node.js
+  without an entry file and the install steps ran `npm.cmd`. Both now use the Linux names (`python`, `npm`).
 
 - Windows: closing the window while removing a service was still undoing its Make reachable (or while Make
   reachable or Open was still checking) raised an error in the event loop: the answer reached a part of the window

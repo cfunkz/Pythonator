@@ -138,7 +138,7 @@ def test_default_images_are_current_and_exist() -> None:
 
 def test_container_caches_live_in_the_project_and_php_installs_with_composer(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(container, "engine", lambda choice="auto": "/usr/bin/docker")
+    monkeypatch.setattr(container, "engine", lambda _choice="auto", _distro="": "/usr/bin/docker")
     for rt, var in (("go", "GOMODCACHE"), ("rust", "CARGO_HOME"), ("ruby", "BUNDLE_PATH"), ("deno", "DENO_DIR"),
                     ("dotnet", "NUGET_PACKAGES")):
         service = Service.model_validate({"name": rt, "folder": str(tmp_path), "runtime": rt, "entry": "x",

@@ -44,6 +44,7 @@ def test_guard_rules(sent: list[dict[str, Any]]) -> None:
                               "max_memory_mb": 512})
     g.on_start()
     assert g.check_start(info(mode="full"))
+    assert g.check_start(info(mode="wsl")) == "WSL mode isn't allowed (Guard)"  # not isolated either
     assert g.check_start(info(ports=[8000], expose="lan", network=True))
     assert g.check_start(info(ports=[22], network=True))
     assert g.check_start(info(memory_limit_mb=4096))

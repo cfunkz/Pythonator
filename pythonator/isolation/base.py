@@ -17,6 +17,14 @@ class IsolationError(Exception):
     """The isolation a service asked for can't be set up here. The service is not started (fail closed)."""
 
 
+@dataclass(frozen=True, slots=True)
+class WslRun:
+    """A program Pythonator started in WSL: the distribution, and the mark its processes carry to be stopped by."""
+
+    distro: str  # "" for WSL's default
+    token: str
+
+
 @dataclass(slots=True)
 class Command:
     """A program ready to start: its argv, folder and environment, after isolation was applied."""
@@ -31,6 +39,7 @@ class Command:
     shown: list[str] = field(default_factory=list)  # the service's own command, for the console
     compose: list[str] = field(default_factory=list)  # a Compose project: ``<engine> compose … -p <name>``
     sandboxed: bool = False  # it runs in Pythonator's own sandbox (not Full access, not a container)
+    wsl: WslRun | None = None  # WSL mode: stopped through WSL, since ending wsl.exe may not end it
 
 
 @dataclass(frozen=True, slots=True)

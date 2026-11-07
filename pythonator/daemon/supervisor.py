@@ -582,7 +582,7 @@ class Supervisor:
         if slot.runner or slot.task or slot.state in (State.STARTING, State.STOPPING, State.TASK):
             return
         service = slot.service
-        if service.mode is Mode.FULL and not service.full_access_ok:
+        if service.mode.runs_as_you and not service.full_access_ok:
             if not confirmed:
                 raise NeedsConfirmation(service.name)
             slot.service = service = service.model_copy(update={"full_access_ok": True})
@@ -622,7 +622,7 @@ class Supervisor:
         service never falls back to the computer's global packages."""
         service = slot.service
         why = ""
-        if service.own_env and service.mode is not Mode.CONTAINER and service.runtime in runtimes.OWN_ENV:
+        if service.own_env and not service.mode.linux_inside and service.runtime in runtimes.OWN_ENV:
             why = runtimes.env_missing(service.runtime, Path(service.folder))
         if not why:
             self._launch(slot)
@@ -660,7 +660,7 @@ class Supervisor:
             work = None
         if work is None:
             return False
-        self.note(slot, "Copying Node.js for sandboxes (once per Node version, in the background)…")
+        self.note(slot, isolation.setup_note(slot.service))
 
         def run() -> None:
             with contextlib.suppress(Exception):  # prepare() tries again and says why
@@ -676,13 +676,13 @@ class Supervisor:
             return
         if not set_up and self._set_up_first(slot, None, lambda: self._launch_after_set_up(slot)):
             return
-        if service.mode is not Mode.CONTAINER:
+        if not service.mode.linux_inside:
             self._started(slot, *self._start(service))
             return
 
         state = slot.state
 
-        def work() -> None:  # the engine's CLI can take many seconds (Docker Desktop still starting): not here
+        def work() -> None:  # the engine or WSL can take many seconds (Docker Desktop, WSL starting): not here
             result = self._start(service)
             self.post(lambda: self._started(slot, *result, state=state))
 
@@ -796,12 +796,12 @@ class Supervisor:
         service = slot.service
         if slot.task or slot.state is State.TASK:
             raise ValueError("Wait for its install to finish")
-        if slot.pulling and service.mode is not Mode.FULL:
+        if slot.pulling and not service.mode.runs_as_you:
             raise ValueError("Wait for git to finish pulling its folder")
         self._no_pull_here(slot)
-        if service.mode is Mode.FULL and not service.full_access_ok:
-            raise ValueError("Start it once and confirm Full access first: its shell runs with the same access")
-        argv, cmdline = runtimes.shell_argv(line, container=service.mode is Mode.CONTAINER)
+        if service.mode.runs_as_you and not service.full_access_ok:
+            raise ValueError("Start it once and confirm its access first: its shell runs with the same access")
+        argv, cmdline = runtimes.shell_argv(line, container=service.mode.linux_inside)
         try:
             cmd = isolation.prepare(service, self.dirs, task=argv, cmdline=cmdline)
         except (isolation.IsolationError, OSError) as exc:
@@ -833,7 +833,7 @@ class Supervisor:
             slot = self.slots.get(sid)
             if slot is None or slot.runner or slot.task or slot.state in (State.STARTING, State.STOPPING, State.TASK):
                 continue
-            if slot.service.mode is Mode.FULL and not slot.service.full_access_ok:
+            if slot.service.mode.runs_as_you and not slot.service.full_access_ok:
                 continue  # needs the user's consent: Start on that service asks for it
             self._launches = [(s, a) for s, a in self._launches if s != sid]
             self._launches.append((sid, auto))
@@ -902,9 +902,11 @@ class Supervisor:
         if slot.task or slot.state is State.TASK:
             raise ValueError("Wait for what it is doing to finish")
         self._no_pull_here(slot)
-        prog = containers.engine(service.container.engine)
+        prog = containers.engine(service.container.engine, service.wsl.distro)
         if not prog:
             raise ValueError("No container engine is running: start Docker or Podman")
+        if containers.is_wsl(prog):
+            raise ValueError(containers.COMPOSE_IN_WSL)
         try:
             steps = compose.steps(prog, service, verb)
         except isolation.IsolationError as exc:
@@ -934,6 +936,10 @@ class Supervisor:
     def _install_steps(self, service: Service) -> list[list[str]]:
         if service.mode is Mode.CONTAINER:
             return containers.install_steps(service)
+        if service.mode is Mode.WSL:
+            from ..isolation import wsl
+
+            return wsl.install_steps(service)
         if service.runtime in runtimes.RUNTIMES and (rt := runtimes.RUNTIMES[service.runtime]).install:
             system = next((p for name in rt.programs if (p := runtimes.which(name))), None)
             if not system:
@@ -958,8 +964,9 @@ class Supervisor:
         self._no_pull_here(slot)
         service = slot.service
         folder = Path(service.folder)
-        container = service.mode is Mode.CONTAINER
-        targets = runtimes.env_folders(service.runtime, folder, container=container)
+        container = service.mode.linux_inside
+        targets = runtimes.env_folders(service.runtime, folder, container=service.mode is Mode.CONTAINER,
+                                       wsl=service.mode is Mode.WSL)
         if not container and service.runtime in runtimes.CACHE_VARS:
             targets.append(isolation.base.env_cache(self.dirs, service))
         targets = [t for t in targets if t.exists() or t.is_symlink()]
@@ -1062,7 +1069,7 @@ class Supervisor:
             return
         if not set_up and self._set_up_first(slot, slot.steps[0], lambda: self._steps_after_set_up(slot)):
             return
-        if slot.service.mode is not Mode.FULL and (puller := self._pulling_here(slot)) is not None:
+        if not slot.service.mode.runs_as_you and (puller := self._pulling_here(slot)) is not None:
             self._task_failed(slot, f"git is pulling {puller.service.name}'s folder; try again once it's done")
             return
         step = slot.steps.pop(0)
@@ -1106,7 +1113,7 @@ class Supervisor:
         if slot.service.git is None:
             # The checkout's own origin is the service's to change: a pull fetches only the saved address.
             raise ValueError("Add the Git address in this service's settings first: Pythonator pulls only from it")
-        if slot.service.mode is not Mode.FULL and (slot.runner or slot.shell):
+        if not slot.service.mode.runs_as_you and (slot.runner or slot.shell):
             # git runs as you, outside the sandbox: nothing sandboxed may change the checkout while it does
             raise ValueError("Stop it first: a sandboxed service can't run while git pulls its folder")
         if writers := self._checkout_writers(slot):
@@ -1117,7 +1124,7 @@ class Supervisor:
     def _checkout_writers(self, slot: Slot) -> list[Slot]:
         """Other services running or starting anything sandboxed (the service, an install, a console command) in
         this service's folder, inside it or around it: each could rewrite .git/config while git pulls."""
-        return [o for o in self.slots.values() if o is not slot and o.service.mode is not Mode.FULL
+        return [o for o in self.slots.values() if o is not slot and not o.service.mode.runs_as_you
                 and (o.runner or o.task or o.shell or o.state in (State.STARTING, State.TASK))
                 and o.service.id not in self._pull_waits
                 and any(_overlap(w, slot.service.folder) for w in _write_folders(o.service))]
@@ -1130,7 +1137,7 @@ class Supervisor:
     def _wait_for_pull(self, slot: Slot, then: Callable[[], None]) -> bool:
         """True when git is pulling this folder for another service and this one is sandboxed: it waits, and
         ``then`` runs once the pull is over. Nothing sandboxed starts in a folder git is pulling."""
-        if slot.service.mode is Mode.FULL or (puller := self._pulling_here(slot)) is None:
+        if slot.service.mode.runs_as_you or (puller := self._pulling_here(slot)) is None:
             return False
         if slot.service.id not in self._pull_waits:
             self.note(slot, f"Waiting for git to finish pulling {puller.service.name}'s folder")
@@ -1139,7 +1146,7 @@ class Supervisor:
 
     def _no_pull_here(self, slot: Slot) -> None:
         """Raise ValueError while git pulls this folder for another service, unless this one has Full access."""
-        if slot.service.mode is not Mode.FULL and (puller := self._pulling_here(slot)) is not None:
+        if not slot.service.mode.runs_as_you and (puller := self._pulling_here(slot)) is not None:
             raise ValueError(f"Wait for git to finish pulling {puller.service.name}'s folder")
 
     def _pull(self, slot: Slot, then: Callable[[], None] | None) -> None:
@@ -1248,7 +1255,7 @@ class Supervisor:
         port = slot.service.network.ports[0] if slot.service.network.enabled and slot.service.network.ports else 0
         if slot.listen_checked or not port or slot.state is not State.RUNNING or slot.runner is None:
             return
-        if slot.service.mode is Mode.CONTAINER:  # a container's port is the engine's
+        if slot.service.mode.linux_inside:  # a container's port is the engine's, a WSL service's is in WSL
             slot.listen_checked = True
             return
         shared = _other_programs(slot.stats.others.get(port, []), port)

@@ -4,7 +4,7 @@ Each process has one thread, which reads the merged stdout/stderr in 64 KiB chun
 the exit, and (once something is typed into it) one that writes its input, so a program that doesn't read never
 holds up the supervisor. Everything it learns goes into the supervisor's queue; the supervisor handles it on its
 own thread, so no state is shared between threads. Stopping asks first (SIGTERM to the process group, Ctrl+C on Windows,
-``stop`` for a container) and kills the tree after the grace period.
+``stop`` for a container, SIGTERM inside WSL) and kills the tree after the grace period.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from typing import IO
 import psutil
 
 from ..core import limits
-from ..isolation import Command
+from ..isolation import Command, wsl
 from ..isolation import container as containers
 from ..paths import quiet_start
 from . import winproc
@@ -84,6 +84,7 @@ class Runner:
         self._read_done = threading.Event()
         self._exit_once = threading.Lock()
         self._exit_posted = False
+        self._wsl_ended = False
 
     @property
     def pid(self) -> int:
@@ -236,6 +237,8 @@ class Runner:
             compose.stop(self.cmd.compose, self.cmd.env, grace)
         elif self.cmd.container and self.cmd.engine:
             containers.stop(self.cmd.engine, self.cmd.container, grace)
+        elif self.cmd.wsl is not None:
+            wsl.signal(self.cmd.wsl, "TERM")  # ending wsl.exe alone may leave the program running in Linux
         elif sys.platform == "win32":
             if not winproc.request_ctrl_c(proc.pid):
                 self.kill()
@@ -269,6 +272,7 @@ class Runner:
             proc.kill()
         self._kill_seen()
         self._kill_marked()
+        self._kill_wsl()
 
     def _cleanup_tree(self) -> None:
         """Children left behind by a process that exited (a daemonising server, a stray worker)."""
@@ -277,6 +281,13 @@ class Runner:
                 os.killpg(self.proc.pid, signal.SIGKILL)
         self._kill_seen()
         self._kill_marked()
+        self._kill_wsl()
+
+    def _kill_wsl(self) -> None:
+        """WSL mode: what is left of the run inside Linux, by its mark (also processes that left its session)."""
+        if self.cmd.wsl is not None and not self._wsl_ended:
+            self._wsl_ended = True
+            wsl.signal(self.cmd.wsl, "KILL")
 
     def _kill_marked(self) -> None:
         """Processes of this sandboxed run that left both its process group and its tree. On Linux the sandbox

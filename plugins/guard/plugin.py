@@ -63,8 +63,8 @@ class Guard(Plugin):
         return reason
 
     def start_problem(self, s: ServiceInfo) -> str | None:
-        if self.settings.get("block_full") and s.mode == "full":
-            return "Full access mode isn't allowed (Guard)"
+        if self.settings.get("block_full") and s.mode in ("full", "wsl"):  # WSL runs as you too, outside any sandbox
+            return f"{'WSL' if s.mode == 'wsl' else 'Full access'} mode isn't allowed (Guard)"
         if self.settings.get("block_lan") and s.expose == "lan" and s.ports:
             return "Other computers may not reach services (Guard)"
         ranges = parse_ranges(str(self.settings.get("allowed_ports", "")))
@@ -136,7 +136,7 @@ class Guard(Plugin):
     def render(self) -> None:
         rules = []
         if self.settings.get("block_full"):
-            rules.append("no Full access")
+            rules.append("no Full access or WSL")
         if self.settings.get("block_lan"):
             rules.append("this computer only")
         if self.settings.get("allowed_ports"):

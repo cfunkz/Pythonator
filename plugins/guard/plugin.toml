@@ -12,7 +12,7 @@ homepage = "https://github.com/cfunkz/Pythonator/tree/main/plugins/guard"
 
 [[plugin.settings]]
 key = "block_full"
-label = "Don't start services in Full access mode"
+label = "Don't start services in Full access or WSL mode"
 kind = "bool"
 default = false
 

@@ -229,7 +229,7 @@ def activated(env: dict[str, str], folder: Path) -> dict[str, str]:
 
 def shell_argv(line: str, *, container: bool = False) -> tuple[list[str], str | None]:
     """A command line typed into the console's shell: ``(argv, Windows command line)``. cmd.exe on Windows (its
-    ``/s /c "…"`` takes the line exactly as typed), sh elsewhere and in containers."""
+    ``/s /c "…"`` takes the line exactly as typed), sh elsewhere and in Linux (``container``: a container or WSL)."""
     if IS_WINDOWS and not container:
         comspec = str(Path(os.environ.get("SYSTEMROOT", r"C:\Windows"), "System32", "cmd.exe"))
         return [comspec, "/d", "/s", "/c", line], f'"{comspec}" /d /s /c "{line}"'
@@ -297,11 +297,11 @@ CACHE_VARS: dict[str, str] = {"deno": "DENO_DIR", "go": "GOMODCACHE", "dotnet": 
 OWN_ENV = frozenset({"python", "node", "bun", "ruby", "php", *CACHE_VARS})  # runtimes "Own environment" applies to
 
 
-def env_folders(runtime: str, folder: Path, *, container: bool = False) -> list[Path]:
+def env_folders(runtime: str, folder: Path, *, container: bool = False, wsl: bool = False) -> list[Path]:
     """The folders in the project that hold its environment: what Recreate environment deletes."""
     if runtime == "python":
-        if container:
-            return [folder / ".venv-container"]
+        if container or wsl:
+            return [folder / (".venv-container" if container else ".venv-wsl")]
         venv = project_venv(folder)
         return [venv] if venv is not None else []
     names = {"node": ("node_modules",), "bun": ("node_modules",), "ruby": ("vendor/bundle",),
@@ -337,10 +337,14 @@ def env_missing(runtime: str, folder: Path) -> str:
     return ""
 
 
-def env_summary(runtime: str, folder: Path, *, own: bool, container: bool = False) -> str:
+def env_summary(runtime: str, folder: Path, *, own: bool, container: bool = False, wsl: bool = False) -> str:
     """One line for the UI: where this service's packages live and whether they're ready."""
     if container:
         return "Packages live inside the container and the project folder, never on this computer's runtime."
+    if wsl:
+        venv_note = " (.venv-wsl for Python)" if runtime == "python" else ""
+        return (f"WSL's own {RUNTIMES[runtime].label if runtime in RUNTIMES else 'programs'} runs it; packages go to "
+                f"the project folder{venv_note}: Packages ▾ → Install packages.")
     rt = RUNTIMES.get(runtime)
     if rt is None or runtime not in OWN_ENV:
         return f"Packages go to {rt.packages if rt and rt.packages else 'wherever the program puts them'}."

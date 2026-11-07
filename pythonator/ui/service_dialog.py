@@ -34,7 +34,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..core import envcheck, runtimes, validate
-from ..core.models import Mode, Service
+from ..core.models import Service
 from ..paths import IS_WINDOWS
 from . import theme
 from .run_settings import LimitsTab, ScheduleTab
@@ -223,7 +223,12 @@ class ServiceDialog(QDialog):
             "container": ("Container", "Runs in Docker or Podman: only the project folder is mounted, all "
                                        "capabilities dropped, image read only."),
             "full": ("Full access", "Runs as you, like in a terminal. Only for code you trust."),
+            "wsl": ("WSL (Linux)", "Runs in a WSL 2 Linux distribution as your Linux user, with Linux's own runtimes. "
+                                   "Not a sandbox: it can change your Windows files under /mnt. Only for code you "
+                                   "trust."),
         }
+        if not IS_WINDOWS and mode != "wsl":
+            del texts["wsl"]  # WSL is Windows' own
         for key, (title, text) in texts.items():
             radio = QRadioButton(title)
             radio.setProperty("mode", key)
@@ -252,8 +257,12 @@ class ServiceDialog(QDialog):
         self.container_box = QGroupBox("Container")
         cf = QFormLayout(self.container_box)
         self.engine = QComboBox()
-        self.engine.addItems(["auto", "podman", "docker"])
+        wsl_engine = IS_WINDOWS or ct.get("engine") == "wsl"
+        self.engine.addItems(["auto", "podman", "docker", *(["wsl"] if wsl_engine else [])])
         self.engine.setCurrentText(ct.get("engine", "auto"))
+        self.engine.setToolTip("wsl: Docker Engine installed inside a WSL distribution (no Docker Desktop needed). "
+                               "Docker Desktop's own WSL 2 backend is the docker engine.")
+        self.engine.currentTextChanged.connect(lambda *_: self._mode_changed())
         self.image = line(ct.get("image", ""), "Empty: picked by language, e.g. python:3.13-slim")
         self.cnet = line(ct.get("network", ""), "Join a container network (to reach a database)")
         self.ro_root = QCheckBox("Image read only (only /app, /tmp and home are writable)")
@@ -262,10 +271,39 @@ class ServiceDialog(QDialog):
         cf.addRow("Image", self.image)
         cf.addRow("Network", self.cnet)
         cf.addRow("", self.ro_root)
+        self.wsl_box = QGroupBox("WSL")
+        wf = QFormLayout(self.wsl_box)
+        self.distro = QComboBox()
+        self.distro.setEditable(True)
+        self.distro.addItem("", "")
+        if (current := d.get("wsl", {}).get("distro", "")):
+            self.distro.addItem(current, current)
+        self.distro.setCurrentText(current)
+        line_edit = self.distro.lineEdit()
+        if line_edit is not None:
+            line_edit.setPlaceholderText("Empty: WSL's default distribution")
+        self._distros_listed = False
+        wf.addRow("Distribution", self.distro)
+        wf.addRow("", _muted("Programs are found on the PATH of a login shell (~/.profile). The project's packages "
+                             "are installed by WSL's runtime: Packages ▾ → Install packages."))
         layout.addWidget(self.sandbox_box)
         layout.addWidget(self.container_box)
+        layout.addWidget(self.wsl_box)
         layout.addStretch(1)
         return w
+
+    def _list_distros(self) -> None:
+        """Fill the distribution list once, when it is first shown (wsl.exe answers in a moment)."""
+        if self._distros_listed or not IS_WINDOWS:
+            return
+        self._distros_listed = True
+        from ..isolation import wsl
+
+        typed = self.distro.currentText()
+        for name in wsl.distros():
+            if self.distro.findText(name) < 0:
+                self.distro.addItem(name, name)
+        self.distro.setCurrentText(typed)
 
     def _network(self, d: dict[str, Any]) -> QWidget:
         n = d.get("network", {})
@@ -375,6 +413,10 @@ class ServiceDialog(QDialog):
         mode = self.mode()
         self.sandbox_box.setVisible(mode == "sandbox")
         self.container_box.setVisible(mode == "container")
+        uses_wsl = mode == "wsl" or (mode == "container" and self.engine.currentText() == "wsl")
+        self.wsl_box.setVisible(uses_wsl)
+        if uses_wsl:
+            self._list_distros()
         self._env_changed()
 
     def _runtime_changed(self) -> None:
@@ -400,13 +442,15 @@ class ServiceDialog(QDialog):
             return  # still being built
         key = str(self.runtime.currentData())
         container = self.mode() == "container"
-        applies = key in runtimes.OWN_ENV and not container
+        in_wsl = self.mode() == "wsl"
+        applies = key in runtimes.OWN_ENV and not container and not in_wsl
         self.own_env.setEnabled(applies)
         if key == runtimes.CUSTOM:
             self.env_line.setText("A custom command manages its own packages.")
             return
         self.env_line.setText(runtimes.env_summary(key, Path(self.folder.text().strip() or "."),
-                                                   own=self.own_env.isChecked(), container=container))
+                                                   own=self.own_env.isChecked(), container=container,
+                                                   wsl=in_wsl))
 
     def _browse_folder(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Project folder", self.folder.text())
@@ -490,6 +534,7 @@ class ServiceDialog(QDialog):
                                     for p, w in self.folders.pairs()]},
             "container": {"engine": self.engine.currentText(), "image": self.image.text(),
                           "network": self.cnet.text(), "read_only_root": self.ro_root.isChecked()},
+            "wsl": {"distro": self.distro.currentText().strip()},
             "restart": self.restart.value(), "max_restarts": self.max_restarts.value(),
             "stop_timeout": self.stop_timeout.value(), "memory_mb": memory_mb, "cpu_percent": cpu_percent,
             "autostart": self.autostart.isChecked(), "schedule": self.schedule_tab.schedule_text(),
@@ -498,7 +543,9 @@ class ServiceDialog(QDialog):
         }
         if self.original is not None:
             data["id"] = self.original.id
-            data["full_access_ok"] = self.original.full_access_ok and self.mode() == Mode.FULL.value
+            # Confirmed once for this mode: switching between Full access and WSL asks again
+            data["full_access_ok"] = (self.original.full_access_ok and self.original.mode.runs_as_you
+                                      and self.mode() == self.original.mode.value)
         if not Path(data["folder"]).is_dir():
             raise ValueError("The folder doesn't exist")
         return Service.model_validate(data)
