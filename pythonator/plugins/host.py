@@ -658,13 +658,17 @@ class PluginHost:
         if len(self.proposals) >= 5:
             raise files.FileRefused("Too many changes are waiting for review")
         summary = _clean(str(msg.get("summary", "")))[:300]
-        proposal = self._files(service).propose(p.id, service.id, str(msg.get("path", "")), msg.get("edits"),
-                                               summary)
+        if "changes" in msg:  # several files, one review (API 5)
+            proposal = self._files(service).propose_many(p.id, service.id, msg.get("changes"), summary)
+        else:
+            proposal = self._files(service).propose(p.id, service.id, str(msg.get("path", "")), msg.get("edits"),
+                                                   summary)
+        names = ", ".join(proposal.paths)
         if self.test_mode(p):
-            self._activity(p, f"Test mode: would suggest a change to {service.name}: {proposal.path}")
+            self._activity(p, f"Test mode: would suggest a change to {service.name}: {names}")
             raise files.FileRefused("Test mode: the change was only recorded in the plugin's Activity")
         self.proposals[proposal.id] = proposal
-        self._activity(p, f"Suggests a change to {service.name}: {proposal.path} (waiting for review)")
+        self._activity(p, f"Suggests a change to {service.name}: {names} (waiting for review)")
         self.sup.emit(self._proposal_event(proposal))
         return {"proposal": proposal.id}
 
@@ -674,8 +678,11 @@ class PluginHost:
         return {"ev": "proposal", "proposal": {
             "id": x.id, "plugin": x.plugin, "plugin_name": plugin.manifest.name if plugin else x.plugin,
             "service": x.service, "service_name": slot.service.name if slot else x.service, "path": x.path,
-            "folder": slot.service.folder if slot else "", "summary": x.summary, "new_file": x.before is None,
-            "warnings": x.warnings, "diff": files.diff(x)}}
+            "paths": x.paths, "new_files": [part.path for part in x.parts if part.before is None],
+            "folder": slot.service.folder if slot else "", "summary": x.summary,
+            "new_file": all(part.before is None for part in x.parts),
+            "warnings": [f"{part.path}: {w}" if x.others else w for part in x.parts for w in part.warnings],
+            "diff": "\n\n".join(files.diff(part) for part in x.parts)}}
 
     def pending_proposals(self) -> list[dict[str, Any]]:
         return [self._proposal_event(x) for x in self.proposals.values()]
@@ -693,11 +700,17 @@ class PluginHost:
             self._end_proposal(x, "failed", "The service was removed")
             raise ValueError("The service was removed")
         try:
-            backup = self._files(slot.service).apply(x, self.dirs.root / "backups" / x.service)
+            backups = self._files(slot.service).apply_all(x, self.dirs.root / "backups" / x.service)
         except (files.FileRefused, OSError) as exc:
             self._end_proposal(x, "failed", str(exc))
             raise ValueError(str(exc)) from None
-        note = f"Saved {x.path}" + (f"; the old version is in {backup}" if backup else " (new file)")
+        if not x.others:
+            note = f"Saved {x.path}" + (f"; the old version is in {backups[0]}" if backups[0] else " (new file)")
+        else:
+            new = [part.path for part, backup in zip(x.parts, backups, strict=True) if not backup]
+            kept = [backup for backup in backups if backup]
+            note = (f"Saved {len(x.parts)} files: {', '.join(x.paths)}" + (f" ({', '.join(new)} new)" if new else "")
+                    + (f"; the old versions are in {Path(kept[0]).parent}" if kept else ""))
         self._end_proposal(x, "applied", note)
         return note
 
@@ -705,7 +718,7 @@ class PluginHost:
         self.proposals.pop(x.id, None)
         p = self.plugins.get(x.plugin)
         if p is not None:
-            self._activity(p, f"Change to {x.path}: {status}{f' ({note})' if note else ''}")
+            self._activity(p, f"Change to {', '.join(x.paths)}: {status}{f' ({note})' if note else ''}")
             if tell_plugin:
                 self._send(p, {"t": "proposal", "id": x.id, "status": status, "note": note})
         self.sup.emit({"ev": "proposal_done", "id": x.id, "status": status, "note": note})

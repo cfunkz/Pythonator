@@ -7,6 +7,17 @@ All notable changes to Pythonator are recorded here. The format follows
 
 ## [Unreleased]
 
+Bundled plugins: AI assistant 1.4.0.
+
+### Added
+
+- AI assistant: an answer that lays out a project (a changed `main.py`, a new `static/index.html`, a new
+  `static/js/game.js`) is one **Review changes to 3 files** button and one review window that lists every file
+  with its diff. **Apply all** writes them all, making new folders, or none. Each file follows the usual rules: no
+  `.env` or other secret files, no scripts, nothing outside the service's folder or through a link. A new file
+  named like `script.js` is no longer taken for the prompt's example path and dropped, and the prompt asks for one
+  edit block per file instead of a folder tree. Plugins get `propose_changes` for this (see the plugin API).
+
 ## [0.0.17] - 2026-11-07
 
 Bundled plugins: AI assistant 1.3.2.

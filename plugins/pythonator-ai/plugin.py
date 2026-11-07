@@ -51,7 +51,7 @@ class Turn:
     notes: list[str] = field(default_factory=list)
     edits: dict[str, list[context.Edit]] = field(default_factory=dict)
     proposals: dict[str, str] = field(default_factory=dict)  # path -> status text
-    proposal_ids: dict[str, str] = field(default_factory=dict)  # proposal id -> path
+    proposal_ids: dict[str, list[str]] = field(default_factory=dict)  # proposal id -> its files
     sent: str = ""  # what was sent, in short
     known: list[str] = field(default_factory=list)  # the service's files, as listed to the model
     shown: dict[str, str] = field(default_factory=dict)  # path -> the text the model saw
@@ -166,8 +166,7 @@ class Assistant(Plugin):
         with self.lock:
             for turns in self.chats.values():
                 for turn in turns:
-                    if proposal_id in turn.proposal_ids:
-                        path = turn.proposal_ids[proposal_id]
+                    for path in turn.proposal_ids.get(proposal_id, []):
                         turn.proposals[path] = {"applied": "Applied", "rejected": "You rejected it",
                                                 "expired": "Not reviewed in time",
                                                 "failed": "Not applied"}.get(status, status) + (
@@ -345,24 +344,35 @@ class Assistant(Plugin):
         return "\n".join(lines)
 
     def _propose(self, sid: str, index: int, path: str) -> None:
+        """Open the review window for one file's change, or (``path`` ``*``) for every file the answer offers."""
         with self.lock:
             turns = self.chats.get(sid, [])
             turn = turns[index] if 0 <= index < len(turns) else None
-            edits = turn.edits.get(path) if turn else None
-        if turn is None or not edits:
+            if turn is None:
+                return
+            paths = _offerable(turns, index) if path == ALL else [path] if turn.edits.get(path) else []
+        if not paths:
             return
         if "propose_changes" not in self.permissions:
-            turn.proposals[path] = "Needs the propose_changes permission (Plugins → AI assistant)"
+            for p in paths:
+                turn.proposals[p] = "Needs the propose_changes permission (Plugins → AI assistant)"
         else:
-            turn.proposals[path] = "Opening the review window…"
+            for p in paths:
+                turn.proposals[p] = "Opening the review window…"
             self.render(force=True)
             try:
                 summary = f"Suggested by the AI assistant using {providers.find(self.settings.get('provider')).label}"
-                pid = self.propose_change(sid, path, [(e.old, e.new) for e in edits], summary)
-                turn.proposal_ids[pid] = path
-                turn.proposals[path] = "Waiting for your review in the review window"
+                changes = [(p, [(e.old, e.new) for e in turn.edits[p]]) for p in paths]
+                if len(changes) == 1:
+                    pid = self.propose_change(sid, paths[0], changes[0][1], summary)
+                else:  # one review window for all of them: a project's main.py, static/index.html...
+                    pid = self.propose_changes(sid, changes, summary)
+                turn.proposal_ids[pid] = paths
+                for p in paths:
+                    turn.proposals[p] = "Waiting for your review in the review window"
             except PluginError as exc:
-                turn.proposals[path] = f"Refused: {exc}"
+                for p in paths:
+                    turn.proposals[p] = f"Refused: {exc}"
         self.render(force=True)
 
     # -- the model picker --
@@ -592,24 +602,43 @@ class Assistant(Plugin):
             items.append(ui.message("note", "Stopped."))
         for note in turn.notes:
             items.append(ui.message("error" if turn.status == "error" else "note", note[:2000]))
-        for path, state in turn.proposals.items():
-            items.append(ui.message("note", f"{path}: {state}"))
+        by_state: dict[str, list[str]] = {}
+        for path, state in turn.proposals.items():  # the files of one review share one line
+            by_state.setdefault(state, []).append(path)
+        for state, paths in by_state.items():
+            items.append(ui.message("note", f"{', '.join(paths)}: {state}"))
         return items
 
     def _reviews(self, index: int, turn: Turn, offered: set[str]) -> list[dict[str, Any]]:
-        """A Review button for each file the answer would change, until its change is applied, waiting or refused.
-        A file a later answer also changes gets no button here (``offered``): that change was written for the file
-        as it is now, so two buttons for one file would only make you guess."""
-        out = []
-        for path, edits in turn.edits.items():
-            if path in offered:
-                continue
-            offered.add(path)
-            state = turn.proposals.get(path, "")
-            if not state or state.startswith(("Not applied", "You rejected", "Not reviewed")):
-                out.append(ui.row(ui.button(f"Review change to {path} ({len(edits)} edit"
-                                            f"{'s' if len(edits) > 1 else ''})", "propose", f"{index}:{path}")))
-        return out
+        """The Review button for what the answer would change, until it is applied, waiting or refused: one for a
+        file, one for all of them when it changes several (one review window, all written or none). A file a later
+        answer also changes gets no button here (``offered``): that change was written for the file as it is now,
+        so two buttons for one file would only make you guess."""
+        paths = [p for p in turn.edits if p not in offered and _retry(turn.proposals.get(p, ""))]
+        offered.update(turn.edits)
+        if not paths:
+            return []
+        if len(paths) == 1:
+            n = len(turn.edits[paths[0]])
+            return [ui.row(ui.button(f"Review change to {paths[0]} ({n} edit{'s' if n > 1 else ''})", "propose",
+                                     f"{index}:{paths[0]}"))]
+        shown = ", ".join(paths[:4]) + (f" and {len(paths) - 4} more" if len(paths) > 4 else "")
+        return [ui.row(ui.button(f"Review changes to {len(paths)} files ({shown})", "propose", f"{index}:{ALL}"))]
+
+
+ALL = "*"
+
+
+def _retry(state: str) -> bool:
+    """Whether a file's change may be offered (again): not yet proposed, or not applied in a way asking again fixes."""
+    return not state or state.startswith(("Not applied", "You rejected", "Not reviewed"))
+
+
+def _offerable(turns: list[Turn], index: int) -> list[str]:
+    """The files the answer ``index`` offers: not changed again by a later answer, not applied, waiting or refused."""
+    later = {p for turn in turns[index + 1:] for p in turn.edits}
+    turn = turns[index]
+    return [p for p in turn.edits if p not in later and _retry(turn.proposals.get(p, ""))]
 
 
 def _chunks(text: str, size: int) -> list[str]:

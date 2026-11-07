@@ -414,3 +414,18 @@ def test_plugin_settings_labels_are_never_cut_off(qtbot: Any) -> None:
     bools = [s for s in settings if s["kind"] == "bool"]
     checks = box.findChildren(QCheckBox)
     assert len(checks) == len(bools) and [c.isChecked() for c in checks] == [bool(s["default"]) for s in bools]
+
+
+def test_review_window_for_several_files(qtbot: Any) -> None:
+    from pythonator.ui.proposal_dialog import ProposalDialog
+
+    dlg = ProposalDialog({"id": "0" * 16, "plugin": "pythonator-ai", "plugin_name": "AI assistant", "path": "main.py",
+                          "paths": ["main.py", "static/index.html"], "new_files": ["static/index.html"],
+                          "service_name": "web", "folder": "/x", "new_file": False, "warnings": [],
+                          "diff": "--- a/main.py\n+++ b/main.py\n+x\n\n--- /dev/null\n+++ b/static/index.html\n+y"},
+                         lambda *a: None)
+    qtbot.addWidget(dlg)
+    assert dlg.windowTitle() == "Review a change: main.py and 1 more"
+    assert dlg.apply_button.text() == "Apply all 2 files"
+    text = " ".join(w.text() for w in dlg.findChildren(QLabel))
+    assert "changes to 2 files" in text and "new  static/index.html" in text and "changed  main.py" in text

@@ -35,6 +35,7 @@ MAX_READ = 256 * 1024
 MAX_LIST = 3000
 MAX_VISIT = 30_000
 MAX_EDITS = 20
+MAX_FILES = 12  # files in one change (a small project: main.py, static/index.html, requirements.txt...)
 MAX_NEW_FILE = 48 * 1024
 MAX_RESULT = 512 * 1024
 MAX_DIFF = 300_000
@@ -65,6 +66,14 @@ BLOCKED_SUFFIXES = {
 }
 BLOCKED_NAMES = {"Makefile", "makefile", "Dockerfile", "Containerfile", "Procfile", ".gitattributes", ".gitmodules",
                  "crontab", ".bashrc", ".profile", ".zshrc"}
+# Compared without case (Windows and macOS write "dockerfile" over Dockerfile). Besides those above: files that make
+# a tool run something or look elsewhere without being code themselves (pyvenv.cfg gave a service your folders,
+# .npmrc can set the shell npm runs scripts with, sitecustomize.py runs in every Python that finds it).
+BLOCKED_LOWER = {n.lower() for n in BLOCKED_NAMES} | {
+    "gnumakefile", "pyvenv.cfg", "sitecustomize.py", "usercustomize.py", ".npmrc", ".yarnrc", ".yarnrc.yml",
+    ".pnpmfile.cjs", "pip.conf", "pip.ini", ".pypirc", ".netrc", "_netrc", ".gitconfig", ".git", "desktop.ini",
+    "autorun.inf", ".bash_profile", ".bash_login", ".zprofile", ".zshenv", ".login", ".cshrc", ".tcshrc",
+    "docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml", "vagrantfile", "justfile"}
 DEPENDENCY_FILES = ("requirements*.txt", "pyproject.toml", "setup.py", "setup.cfg", "Pipfile", "package.json",
                     "go.mod", "Cargo.toml", "Gemfile", "composer.json", "*.csproj", "pom.xml", "build.gradle*")
 
@@ -121,6 +130,16 @@ class Proposal:
     after: str
     warnings: list[str]
     created: float = field(default_factory=time.monotonic)
+    others: list[Proposal] = field(default_factory=list)  # the other files of one change, reviewed together
+
+    @property
+    def parts(self) -> list[Proposal]:
+        """Every file of the change, in order."""
+        return [self, *self.others]
+
+    @property
+    def paths(self) -> list[str]:
+        return [x.path for x in self.parts]
 
     @property
     def before_hash(self) -> str:
@@ -146,6 +165,11 @@ def is_secret(rel: str, env_file: str = "") -> bool:
     return any(part.lower() in (".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker") for part in parts[:-1])
 
 
+_WINDOWS_BAD = re.compile(r'[:*?"<>|]')
+_DEVICES = {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$", *(f"{d}{i}" for d in ("COM", "LPT") for i in range(10)),
+            *(f"{d}{c}" for d in ("COM", "LPT") for c in "¹²³")}
+
+
 def clean_rel(raw: str) -> str:
     """A safe relative path with forward slashes, or FileRefused."""
     if not isinstance(raw, str) or not raw.strip() or len(raw) > 400 or "\0" in raw or not raw.isprintable():
@@ -156,6 +180,12 @@ def clean_rel(raw: str) -> str:
     parts = [p for p in text.split("/") if p not in ("", ".")]
     if not parts or any(p == ".." for p in parts):
         raise FileRefused("Only paths inside the service's folder")
+    for part in parts:
+        # Windows would write another file than the name says: "run.bat." and "run.bat " are run.bat, "a.txt:x"
+        # is a hidden stream of a.txt (and "run.bat::$DATA" is run.bat), CON and NUL are devices.
+        if (_WINDOWS_BAD.search(part) or part.endswith((".", " "))
+                or part.split(".")[0].upper().rstrip() in _DEVICES):
+            raise FileRefused(f"{'/'.join(parts)} isn't a name every system writes as itself")
     if any(p in SKIP_DIRS for p in parts[:-1]):
         raise FileRefused(f"{'/'.join(parts)} is in a folder plugins can't see")
     return "/".join(parts)
@@ -266,7 +296,8 @@ class ServiceFiles:
         if is_secret(rel, self.env_file):
             raise FileRefused(f"{rel} may hold secrets; the assistant can't change it")
         suffix = "".join(PurePosixPath(rel).suffixes[-1:]).lower()
-        if suffix in BLOCKED_SUFFIXES or name in BLOCKED_NAMES or rel.startswith((".github/", ".gitlab-ci")):
+        if (suffix in BLOCKED_SUFFIXES or name.lower() in BLOCKED_LOWER or suffix == ".pth"
+                or rel.lower().startswith((".github/", ".gitlab-ci", ".circleci/", ".husky/"))):
             raise FileRefused(f"{rel} is a script or program; the assistant can't change those")
         if not isinstance(edits, list) or not 1 <= len(edits) <= MAX_EDITS:
             raise FileRefused(f"A change has 1 to {MAX_EDITS} edits")
@@ -315,6 +346,69 @@ class ServiceFiles:
             warnings.append("It changes what gets installed: packages are installed when you press Install")
         return Proposal(_new_id(), pid, sid, rel, summary.strip()[:300], before, text, warnings)
 
+    def propose_many(self, pid: str, sid: str, changes: Any, summary: str) -> Proposal:
+        """One change to several files, reviewed and applied together: ``[{"path", "edits"}...]``, each file by
+        the rules of :meth:`propose`. New files may be in new folders. One file refused refuses the change."""
+        if not isinstance(changes, list) or not 1 <= len(changes) <= MAX_FILES:
+            raise FileRefused(f"A change is to 1 to {MAX_FILES} files")
+        parts: list[Proposal] = []
+        seen: set[str] = set()
+        size = 0
+        for change in changes:
+            if not isinstance(change, dict) or not isinstance(change.get("path"), str):
+                raise FileRefused("A file's change is {path, edits}")
+            rel = clean_rel(change["path"])
+            if rel.lower() in seen:  # one file, twice (Windows and macOS ignore case)
+                raise FileRefused(f"{rel} is in the change twice; put all its edits together")
+            seen.add(rel.lower())
+            try:
+                part = self.propose(pid, sid, rel, change.get("edits"), summary)
+            except FileRefused as exc:
+                raise FileRefused(f"{rel}: {exc}") from None
+            size += len(part.after.encode())
+            if size > MAX_RESULT * 2:
+                raise FileRefused("The change is larger than 1 MB in all")
+            parts.append(part)
+        first, *others = parts
+        first.others = others
+        return first
+
+    def apply_all(self, proposal: Proposal, backups: Path) -> list[str]:
+        """Write every file of the change, if none changed since; if one can't be written, the ones already
+        written are put back. Returns where each backup is ("" for a new file)."""
+        for part in proposal.parts:
+            if _hash(self.current(part.path)) != part.before_hash:
+                raise FileRefused(f"{part.path} changed after the change was suggested; ask again")
+        made = self._missing_folders(proposal)
+        done: list[tuple[Proposal, str]] = []
+        try:
+            for part in proposal.parts:
+                done.append((part, self.apply(part, backups)))
+        except BaseException:
+            for part, backup in reversed(done):
+                with contextlib.suppress(OSError, FileRefused):
+                    target = resolve(self.folder, part.path)
+                    if backup:
+                        shutil.copy2(backup, target)
+                    else:
+                        target.unlink()
+            for folder in made:  # deepest first; only if still empty
+                with contextlib.suppress(OSError):
+                    folder.rmdir()
+            raise
+        return [backup for _, backup in done]
+
+    def _missing_folders(self, proposal: Proposal) -> list[Path]:
+        """The folders the change would make, deepest first."""
+        root = self.folder.resolve()
+        out: list[Path] = []
+        for part in proposal.parts:
+            folder = (root / part.path).parent
+            while folder != root and not folder.exists() and folder not in out:
+                out.append(folder)
+                folder = folder.parent
+        return sorted(out, key=lambda f: -len(f.parts))
+
     def apply(self, proposal: Proposal, backups: Path) -> str:
         """Write it, if the file is still as it was. Returns where the backup is ("" for a new file)."""
         now = self.current(proposal.path)
@@ -329,12 +423,14 @@ class ServiceFiles:
             shutil.copy2(target, dest)
             backup = str(dest)
         target.parent.mkdir(parents=True, exist_ok=True)
+        target = resolve(self.folder, proposal.path)  # again: a folder may have become a link meanwhile
         fd, tmp = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
         try:
             with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
                 fh.write(proposal.after)
             if proposal.before is not None:
                 shutil.copymode(target, tmp)
+            resolve(self.folder, proposal.path)  # and right before it is put in place
             Path(tmp).replace(target)
         except BaseException:
             with contextlib.suppress(OSError):

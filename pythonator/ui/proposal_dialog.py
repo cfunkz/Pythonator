@@ -33,12 +33,18 @@ class ProposalDialog(QDialog):
         self.proposal = proposal
         self.send = send
         self.done_ = False
-        self.setWindowTitle(f"Review a change: {proposal.get('path', '')}")
+        paths = [str(x) for x in proposal.get("paths") or [proposal.get("path", "")]]
+        new_files = set(proposal.get("new_files") or [])
+        many = len(paths) > 1
+        self.setWindowTitle(f"Review a change: {paths[0]}" + (f" and {len(paths) - 1} more" if many else ""))
         self.resize(900, 640)
         layout = QVBoxLayout(self)
-        head = QLabel(f"{proposal.get('plugin_name', 'A plugin')} suggests "
-                      f"{'a new file' if proposal.get('new_file') else 'a change to'} {proposal.get('path', '')} "
-                      f"in {proposal.get('service_name', '')}")
+        if many:
+            what = f"changes to {len(paths)} files"
+        else:
+            what = f"{'a new file' if proposal.get('new_file') else 'a change to'} {paths[0]}"
+        head = QLabel(f"{proposal.get('plugin_name', 'A plugin')} suggests {what} in "
+                      f"{proposal.get('service_name', '')}")
         head.setTextFormat(Qt.TextFormat.PlainText)  # the path and names come from the plugin
         head.setProperty("heading", True)
         head.setWordWrap(True)
@@ -47,6 +53,9 @@ class ProposalDialog(QDialog):
             layout.addWidget(label(str(proposal["summary"]), plain=True))
         where = label(f"Folder: {proposal.get('folder', '')}", plain=True, muted=True)
         layout.addWidget(where)
+        if many:  # every file, before the diff: what is new, what changes
+            listing = "\n".join(f"  {'new' if p in new_files else 'changed'}  {p}" for p in paths)
+            layout.addWidget(label(listing, plain=True))
         for warning in proposal.get("warnings", []):
             w = label(f"⚠ {warning}", plain=True)
             w.setStyleSheet(f"color: {theme.color('warn')}")
@@ -58,10 +67,11 @@ class ProposalDialog(QDialog):
         self._fill(str(proposal.get("diff", "")))
         layout.addWidget(self.diff, 1)
         note = label("Nothing is written unless you press Apply. Pythonator keeps a copy of the old file, and refuses "
-                     "if the file changed since. Read the whole change: it comes from an AI or a plugin.", muted=True)
+                     "if the file changed since. Read the whole change: it comes from an AI or a plugin."
+                     + (" Every file is written, or none." if many else ""), muted=True)
         layout.addWidget(note)
         buttons = QDialogButtonBox()
-        self.apply_button = QPushButton("Apply change")
+        self.apply_button = QPushButton(f"Apply all {len(paths)} files" if many else "Apply change")
         self.apply_button.setProperty("primary", True)
         reject = QPushButton("Reject")
         buttons.addButton(self.apply_button, QDialogButtonBox.ButtonRole.AcceptRole)

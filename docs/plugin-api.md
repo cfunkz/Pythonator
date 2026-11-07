@@ -117,6 +117,7 @@ An exception in any of them is reported in the plugin's Activity with its traceb
 | `list_files(id)` | `{"files": [{"path", "size"}], "hidden", "truncated", "entry"}` | `read_files` |
 | `read_file(id, path)` | `{"path", "text", "truncated", "size"}` | `read_files` |
 | `propose_change(id, path, edits, summary)` | Returns a proposal id; the answer comes as `on_proposal` | `propose_changes` |
+| `propose_changes(id, [(path, edits)...], summary)` | Several files in one review, applied all or none; one proposal id and one `on_proposal` | `propose_changes` |
 | `project_templates()` | `{"templates": [{"key", "label", "tool", "port", "kind", "ready", "needs"}], "folder"}`: what can be made on this computer | `create_services` |
 | `create_project(template, name, folder="", start=False)` | `{"id", "folder", "port"}`: the new service; it is made in its own sandbox, its progress shows in its console and as events | `create_services` |
 | `list_projects()` | `[{"id", "name", "template", "folder", "state", "port"}]`: the services made from templates | `create_services` |
@@ -147,6 +148,11 @@ edit with an empty `old` creates a new file of up to 48 KB). Pythonator applies 
 review window with the diff and any warnings. **Nothing is written unless the user chooses Apply there.** Apply
 refuses if the file has changed in the meantime, and keeps a copy of the previous file in the data folder's
 `backups` folder.
+
+`propose_changes` does the same for up to 12 files at once, each with its own edits: one review window lists every
+file and shows their diffs, and Apply writes all of them or none (if one can't be written, those already written are
+put back). New files may be in folders that don't exist yet; they are made. Every file follows the rules above, and
+one file refused refuses the whole change.
 
 Some changes are refused regardless of what the user would choose: scripts and executables (`.sh`, `.bat`, `.ps1`,
 `.exe`, `Makefile`, …), CI configuration (`.github/`, `.gitlab-ci`), secret files, any path through a symbolic link,

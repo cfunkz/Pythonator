@@ -214,6 +214,12 @@ class FakeAI(BaseHTTPRequestHandler):
                 self._chunk(f"event: {name}\ndata: {json.dumps(data)}\n\n")
                 if FakeAI.mode == "slow":
                     time.sleep(1)
+        elif FakeAI.mode == "project":  # a project laid out in one answer: a changed file, two in a new folder
+            answer = ("Here is the layout.\n\n<<<<<<< EDIT app.py\nPORT = 80\n=======\nPORT = 8080\n>>>>>>> END\n\n"
+                      "<<<<<<< EDIT static/index.html\n=======\n<h1>Game</h1>\n>>>>>>> END\n\n"
+                      "<<<<<<< EDIT static/js/game.js\n=======\nconsole.log('play')\n>>>>>>> END\n")
+            self._chunk(f"data: {json.dumps({'choices': [{'delta': {'content': answer}}]})}\n\n")
+            self._chunk("data: [DONE]\n\n")
         elif FakeAI.mode in ("edit", "placeholder"):
             # "placeholder": as models do, the example's path and the line with a trailing space
             path, old = ("app.py", "PORT = 80") if FakeAI.mode == "edit" else ("path/to/file.py", "PORT = 80 ")
@@ -457,3 +463,40 @@ def test_kill_switch_locks_the_assistant(harness: Any, fake: str) -> None:
     harness.wait(lambda: "locked" in panel_text(), timeout=10_000)
     assert FakeAI.seen == []
     assert (harness.daemon.dirs.plugin_data / "pythonator-ai" / "locked").exists(), "it stays locked after a restart"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows keeps the plugin's AppContainer off this PC's own "
+                    "servers, so it can't reach the fake AI server on 127.0.0.1 (real AI services are remote)")
+def test_an_answer_that_lays_out_several_files_is_one_review(harness: Any, project: Path, fake: str) -> None:
+    """0.0.18: main code changed and new files in a new folder, from one answer: one Review button, one review
+    window with every file, and Apply writes them all."""
+    FakeAI.mode = "project"
+    harness.daemon.plugins.vault.use_keychain = False
+    (project / "app.py").write_text("import time\nPORT = 80\ntime.sleep(60)\n", encoding="utf-8")
+    harness.add(name="web", folder=str(project), runtime="python", entry="app.py", mode="full", full_access_ok=True)
+    harness.ok({"op": "plugin_settings", "plugin": "pythonator-ai", "values": {
+        "provider": "Ollama (self-hosted)", "base_url": fake, "model": "test-model"}})
+    perms = ["network", "ui", "read_logs", "read_files", "propose_changes"]
+    harness.ok({"op": "plugin_grant", "plugin": "pythonator-ai", "permissions": perms, "live": True})
+    harness.ok({"op": "plugin_enable", "plugin": "pythonator-ai", "enabled": True})
+
+    def panel_text() -> str:
+        panels = [e for e in harness.events if e.get("ev") == "panel" and e.get("plugin") == "pythonator-ai"]
+        return json.dumps(panels[-1]["panel"]) if panels and panels[-1]["panel"] else ""
+
+    harness.wait(lambda: "Explain the crash" in panel_text(), timeout=30_000)
+    harness.ok({"op": "plugin_action", "plugin": "pythonator-ai", "action": "ask", "value": "make it a web game"})
+    harness.wait(lambda: "Review changes to 3 files" in panel_text(), timeout=30_000)
+    assert "Review change to app.py" not in panel_text(), "one button, not one per file"
+    harness.ok({"op": "plugin_action", "plugin": "pythonator-ai", "action": "propose", "value": "0:*"})
+    harness.wait(lambda: any(e.get("ev") == "proposal" for e in harness.events), timeout=20_000)
+    proposal = next(e["proposal"] for e in harness.events if e.get("ev") == "proposal")
+    assert proposal["paths"] == ["app.py", "static/index.html", "static/js/game.js"]
+    assert proposal["new_files"] == ["static/index.html", "static/js/game.js"]
+    assert "+PORT = 8080" in proposal["diff"] and "+<h1>Game</h1>" in proposal["diff"]
+    assert not (project / "static").exists(), "nothing is written before Apply"
+    harness.ok({"op": "plugin_proposal", "plugin": "pythonator-ai", "proposal": proposal["id"], "apply": True})
+    assert (project / "static" / "js" / "game.js").read_text() == "console.log('play')\n"
+    assert (project / "static" / "index.html").read_text() == "<h1>Game</h1>\n"
+    assert "PORT = 8080\n" in (project / "app.py").read_text()
+    harness.wait(lambda: "app.py, static/index.html, static/js/game.js: Applied" in panel_text(), timeout=20_000)

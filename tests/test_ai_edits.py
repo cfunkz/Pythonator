@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -213,3 +214,148 @@ def test_pythonator_still_wants_the_text_to_replace_in_a_file_with_content(tmp_p
     (tmp_path / "main.py").write_text("print('hi')\n", encoding="utf-8")
     with pytest.raises(FileRefused, match="isn't empty"):
         ServiceFiles(tmp_path).propose("p", "s", "main.py", [{"old": "", "new": SCRIPT}], "")
+
+
+# -- several files, one review (0.0.18) -------------------------------------------------------------------------
+
+
+def _project(tmp_path: Path) -> ServiceFiles:
+    (tmp_path / "main.py").write_text("print('hi')\n", encoding="utf-8")
+    (tmp_path / "templates").mkdir()
+    (tmp_path / "templates" / "index.html").write_text("<p>old</p>\n", encoding="utf-8")
+    return ServiceFiles(tmp_path)
+
+
+def test_one_change_creates_files_in_new_folders_and_changes_another(tmp_path: Path) -> None:
+    files = _project(tmp_path)
+    proposal = files.propose_many("p", "s", [
+        {"path": "main.py", "edits": [{"old": "print('hi')\n", "new": "print('game')\n"}]},
+        {"path": "static/index.html", "edits": [{"old": "", "new": "<h1>Game</h1>\n"}]},
+        {"path": "static/js/game.js", "edits": [{"old": "", "new": "console.log(1)\n"}]}], "")
+    assert proposal.paths == ["main.py", "static/index.html", "static/js/game.js"]
+    assert not (tmp_path / "static").exists()
+    backups = files.apply_all(proposal, tmp_path.parent / "backups")
+    assert (tmp_path / "static" / "js" / "game.js").read_text() == "console.log(1)\n"
+    assert (tmp_path / "main.py").read_text() == "print('game')\n"
+    assert backups[0] and backups[1:] == ["", ""]  # a copy of the old main.py; the others are new
+
+
+@pytest.mark.parametrize(("path", "why"), [
+    (".env", "secrets"), ("config/.env.local", "secrets"), ("../outside.py", "inside the service's folder"),
+    ("deploy.sh", "script or program"), ("main.py", "twice"), ("templates/index.html", "isn't empty")])
+def test_one_bad_file_refuses_the_whole_change(tmp_path: Path, path: str, why: str) -> None:
+    files = _project(tmp_path)
+    with pytest.raises(FileRefused, match=why):
+        files.propose_many("p", "s", [
+            {"path": "main.py", "edits": [{"old": "print('hi')\n", "new": "print('game')\n"}]},
+            {"path": path, "edits": [{"old": "", "new": "X = 1\n"}]}], "")
+
+
+def test_a_new_folder_through_a_link_is_refused(tmp_path: Path) -> None:
+    files = _project(tmp_path)
+    outside = tmp_path.parent / "outside"
+    outside.mkdir()
+    try:
+        (tmp_path / "static").symlink_to(outside, target_is_directory=True)
+    except OSError:  # Windows without the right to make links
+        pytest.skip("can't make a link here")
+    with pytest.raises(FileRefused):
+        files.propose_many("p", "s", [{"path": "static/index.html", "edits": [{"old": "", "new": "x\n"}]}], "")
+    assert not list(outside.iterdir())
+
+
+def test_all_files_or_none(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    files = _project(tmp_path)
+    proposal = files.propose_many("p", "s", [
+        {"path": "main.py", "edits": [{"old": "print('hi')\n", "new": "print('game')\n"}]},
+        {"path": "static/index.html", "edits": [{"old": "", "new": "<h1>Game</h1>\n"}]},
+        {"path": "notes.md", "edits": [{"old": "", "new": "# Notes\n"}]}], "")
+    (tmp_path / "notes.md").write_text("mine\n", encoding="utf-8")  # made meanwhile: nothing is written
+    with pytest.raises(FileRefused, match=r"notes\.md changed"):
+        files.apply_all(proposal, tmp_path.parent / "backups")
+    assert (tmp_path / "main.py").read_text() == "print('hi')\n" and not (tmp_path / "static").exists()
+    (tmp_path / "notes.md").unlink()
+    real = ServiceFiles.apply
+
+    def fail_third(self: ServiceFiles, part: Any, backups: Path) -> str:
+        if part.path == "notes.md":
+            raise OSError("disk full")
+        return real(self, part, backups)
+
+    monkeypatch.setattr(ServiceFiles, "apply", fail_third)
+    with pytest.raises(OSError):
+        files.apply_all(proposal, tmp_path.parent / "backups")
+    assert (tmp_path / "main.py").read_text() == "print('hi')\n", "put back"
+    assert not (tmp_path / "static").exists(), "taken away again, with the folder it made"
+
+
+def test_the_assistant_offers_several_files_as_one_review(tmp_path: Path) -> None:
+    a = _assistant(tmp_path, model="m")
+    a.selected = "s1"
+    a.permissions = frozenset({"ui", "propose_changes"})
+    sent: list[Any] = []
+    def propose(sid: str, changes: Any, summary: str) -> str:
+        sent.append(changes)
+        return "abc"
+
+    a.propose_changes = propose
+    turn = sys.modules["ai_plugin_under_test"].Turn("make a game", status="done")
+    turn.edits = {"main.py": [context.Edit("main.py", "a\n", "b\n")],
+                  "static/index.html": [context.Edit("static/index.html", "", "<h1>x</h1>\n")]}
+    a.chats["s1"] = [turn]
+    a.render(force=True)
+    buttons = [i for row in a.panels[-1]["items"] if row["type"] == "row" for i in row["items"]
+               if i.get("action") == "propose"]
+    assert [(b["label"], b["value"]) for b in buttons] == [
+        ("Review changes to 2 files (main.py, static/index.html)", "0:*")]
+    a._propose("s1", 0, "*")
+    assert sent == [[("main.py", [("a\n", "b\n")]), ("static/index.html", [("", "<h1>x</h1>\n")])]]
+    a.on_proposal("abc", "applied", "Saved 2 files")
+    a.render(force=True)
+    text = json.dumps(a.panels[-1])
+    assert "main.py, static/index.html: Applied: Saved 2 files" in text and "Review change" not in text
+
+
+def test_a_new_file_in_a_named_folder_stays_there() -> None:
+    """static/index.html is a new file, not the one index.html the service already has."""
+    answer = "<<<<<<< EDIT static/index.html\n=======\n<h1>Game</h1>\n>>>>>>> END\n"
+    shown = {"templates/index.html": "<p>old</p>\n"}
+    edits, notes = context.resolve_paths(context.parse_edits(answer, shown), ["templates/index.html"], shown)
+    assert list(edits) == ["static/index.html"] and notes == []
+
+
+@pytest.mark.parametrize("path", ["script.js", "some_module.py", "static/script.js", "your_bot.py"])
+def test_a_new_file_with_a_common_name_is_created(path: str) -> None:
+    edits, notes = context.resolve_paths(context.parse_edits(f"<<<<<<< EDIT {path}\n=======\nx = 1\n>>>>>>> END\n"),
+                                         ["main.py"], {"main.py": "print()\n"})
+    assert list(edits) == [path] and notes == []
+
+
+@pytest.mark.parametrize("path", ["path/to/file.py", "<file>.py", "file.py"])
+def test_a_placeholder_new_file_is_still_left_out(path: str) -> None:
+    edits, _ = context.resolve_paths(context.parse_edits(f"<<<<<<< EDIT {path}\n=======\nx = 1\n>>>>>>> END\n"),
+                                     ["main.py"], {"main.py": "print()\n"})
+    assert edits == {}
+
+
+
+@pytest.mark.parametrize("path", [
+    "run.bat.", "run.bat ", "notes.txt:hidden", "run.bat::$DATA", "con.txt", "static/NUL", "lpt1.js",
+    "dockerfile", "DOCKERFILE", "Makefile", "pyvenv.cfg", ".npmrc", "lib/extra.pth", "sitecustomize.py",
+    ".github/workflows/ci.yml", ".GitHub/workflows/ci.yml", ".git/config", ".git", "node_modules/x/index.js",
+    ".venv/lib/x.py", "compose.yaml", ".ssh/authorized_keys", "keys/server.pem", "deploy.SH", "start.ps1",
+])
+def test_the_assistant_can_never_write_these(tmp_path: Path, path: str) -> None:
+    """Names a tool would run, or that Windows writes as another file, and the folders plugins never see."""
+    with pytest.raises(FileRefused):
+        ServiceFiles(tmp_path).propose_many("p", "s", [{"path": path, "edits": [{"old": "", "new": "x = 1\n"}]}], "")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_at_most_twelve_files_and_a_megabyte_in_one_change(tmp_path: Path) -> None:
+    files = ServiceFiles(tmp_path)
+    many = [{"path": f"f{i}.txt", "edits": [{"old": "", "new": "x\n"}]} for i in range(13)]
+    with pytest.raises(FileRefused, match="1 to 12 files"):
+        files.propose_many("p", "s", many, "")
+    big = [{"path": f"f{i}.txt", "edits": [{"old": "", "new": "x" * 40_000 + "\n"}]} for i in range(12)]
+    assert files.propose_many("p", "s", big, "").paths[-1] == "f11.txt"  # 480 KB: fine

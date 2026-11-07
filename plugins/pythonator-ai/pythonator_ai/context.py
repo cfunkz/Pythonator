@@ -51,9 +51,12 @@ lines, never nest blocks, and don't wrap blocks in ``` fences. (If a file alread
 them into the part to replace, and leave them out of the new lines, to remove them.) Keep the part to replace short: \
 only the lines that change and a line or two around them, copied character for character with the same \
 indentation, never "..." for skipped lines. For several changes to one file, write one block per change, in file \
-order. To create a new file, leave the part before ======= empty. The user reviews every change before anything is \
-written. Pythonator refuses changes to scripts and programs (.sh, .bat, .ps1, .exe...), to secret files, changes \
-that empty a file, and code that runs shell commands, deletes files or evaluates strings.
+order. To create a new file, leave the part before ======= empty; its path may be in a new folder \
+(static/index.html). To set up or change several files (a project layout), write one block per file, each with \
+its full contents: a folder tree or "create these files" in prose can't be applied. The user reviews every change \
+before anything is written, all files of one answer together. Pythonator refuses changes to scripts and programs \
+(.sh, .bat, .ps1, .exe...), to secret files and tool settings (.env, .npmrc, pyvenv.cfg...), changes that empty a \
+file, paths outside the service's folder, and code that runs shell commands, deletes files or evaluates strings.
 
 Answer in plain text with short paragraphs; use ``` fences for code that isn't an edit block."""
 
@@ -178,6 +181,7 @@ def _join(lines: list[str]) -> str:
 
 
 PLACEHOLDER = re.compile(r"^(?:path/to/|your[_-]?|some[_-]?|example/|<)|^(?:file|filename|script)\.\w+$", re.I)
+NEW_PLACEHOLDER = re.compile(r"^(?:path/to/|example/|<)|[<>{}]|^(?:file|filename)\.\w+$", re.I)
 
 
 def resolve_paths(edits: dict[str, list[Edit]], known: list[str],
@@ -299,15 +303,18 @@ def _real_path(path: str, items: list[Edit], known: list[str], shown: dict[str, 
         return path
     name = path.rsplit("/", 1)[-1]
     same = {k for k in [*shown, *known] if k.rsplit("/", 1)[-1] == name}
-    if len(same) == 1 and not PLACEHOLDER.search(path):
-        return same.pop()
     olds = [e.old for e in items if e.old.strip()]
+    # A new file in a folder the model names (static/index.html next to templates/index.html) stays where it says.
+    if len(same) == 1 and not PLACEHOLDER.search(path) and (olds or "/" not in path):
+        return same.pop()
     holders = [p for p, text in shown.items() if olds and all(_holds(text, old) for old in olds)]
     if len(holders) == 1:
         return holders[0]
-    if PLACEHOLDER.search(path) or (olds and known):
+    if olds and (PLACEHOLDER.search(path) or known):
         return None  # a placeholder, or an edit of text no file of the service holds
-    return path  # a new file
+    if not olds and NEW_PLACEHOLDER.search(path):
+        return None  # it would create path/to/file.py
+    return path  # a new file (script.js and some_module.py are real names for one)
 
 
 def _holds(text: str, old: str) -> bool:

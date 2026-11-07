@@ -267,6 +267,16 @@ class Plugin:
                          "edits": [{"old": o, "new": n} for o, n in edits]}, timeout)
         return str(data.get("proposal", ""))
 
+    def propose_changes(self, service_id: str, changes: list[tuple[str, list[tuple[str, str]]]], summary: str = "",
+                        timeout: float = 15.0) -> str:
+        """Suggest a change to several files at once, as ``[(path, edits)...]`` (each like ``propose_change``; new
+        files may be in new folders). The user reviews them in one window and applies all or none. Returns the
+        proposal's id; the answer comes as one ``on_proposal`` (``propose_changes``, API 5)."""
+        data = _request({"op": "propose", "id": service_id, "summary": summary,
+                         "changes": [{"path": path, "edits": [{"old": o, "new": n} for o, n in edits]}
+                                     for path, edits in changes]}, timeout)
+        return str(data.get("proposal", ""))
+
 
     # API 4: new projects as services (``create_services``), from Pythonator's own templates only.
 

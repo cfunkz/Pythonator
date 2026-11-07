@@ -83,6 +83,8 @@ These rules are implemented in code, not settings, so they cannot be relaxed by 
    check the connection. Then pick a question from **Quick question…** (*Explain the crash*, *Check the logs*,
    *Suggest a fix*, *Long-run check*, *Explain it*) or type one and press Enter.
 4. If an answer suggests a change, choose **Review change to …**, read the diff, then **Apply change** or **Reject**.
+   An answer that changes or creates several files (a project layout) has one **Review changes to N files**
+   button: one window shows every file, and **Apply all** writes them all or none.
 
 **Ollama on the same Windows PC.** Windows blocks sandboxes from connecting to servers on the same computer. To allow
 it once, run in PowerShell as administrator
