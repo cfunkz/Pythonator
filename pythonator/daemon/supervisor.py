@@ -80,6 +80,8 @@ class Stats:
     processes: int = 0
     ports: list[int] = field(default_factory=list)
     remote: list[str] = field(default_factory=list)  # outgoing connections, "host:port"
+    addresses: dict[int, list[str]] = field(default_factory=dict)  # port -> the addresses it listens on
+    others: dict[int, list[int]] = field(default_factory=dict)  # its listed port -> other programs listening there
     procs: list[psutil.Process] = field(default_factory=list)  # the process tree it was measured on
 
 
@@ -1200,8 +1202,10 @@ class Supervisor:
             kids = _children()
             conns = _connections() if n % 3 == 1 else None
             out: dict[str, Stats] = {}
+            wanted = {s.service.id: s.service.network.ports for s in list(self.slots.values())}
             for sid, runner in runners.items():
-                out[sid] = st = _tree_stats(runner.pid, procs, ports=n % 3 == 1, kids=kids, conns=conns)
+                out[sid] = st = _tree_stats(runner.pid, procs, ports=n % 3 == 1, kids=kids, conns=conns,
+                                            wanted=wanted.get(sid, []))
                 runner.seen = tuple(st.procs)  # Stop ends these too, even ones that left its process group
             if n % 30 == 0:  # forget processes that ended (cpu_percent needs the same object each time)
                 procs = {k: v for k, v in procs.items() if v.is_running()}
@@ -1218,6 +1222,7 @@ class Supervisor:
                 continue
             if not st.ports and slot.stats.ports and st.processes:
                 st.ports, st.remote = slot.stats.ports, slot.stats.remote  # ports are sampled every third time
+                st.addresses, st.others = slot.stats.addresses, slot.stats.others
             slot.stats = st
             self._check_listening(slot)
             limit = slot.service.memory_mb
@@ -1233,15 +1238,30 @@ class Supervisor:
         yet gets a note saying so, with what its processes are doing, for any runtime. A start that hangs without
         a word (a dev server stuck on something) is then visible, with where it is stuck."""
         port = slot.service.network.ports[0] if slot.service.network.enabled and slot.service.network.ports else 0
-        if slot.listen_checked or not port or slot.state is not State.RUNNING or slot.runner is None \
-                or time.time() - slot.started_wall < LISTEN_AFTER:
+        if slot.listen_checked or not port or slot.state is not State.RUNNING or slot.runner is None:
+            return
+        if slot.service.mode is Mode.CONTAINER:  # a container's port is the engine's
+            slot.listen_checked = True
+            return
+        shared = _other_programs(slot.stats.others.get(port, []), port)
+        if port in slot.stats.ports:
+            slot.listen_checked = True
+            if (where := set(slot.stats.addresses.get(port, []))) and where <= {"::1"}:
+                self.note(slot, f"It listens on port {port} on IPv6 only ([::1], what \"localhost\" can mean). The "
+                                f"Open button, Make reachable and HOST all use 127.0.0.1, so http://127.0.0.1:{port}/ "
+                                "won't answer: set the program's address to 127.0.0.1, or have it read HOST")
+            if shared:
+                self.note(slot, f"{shared}: connections to 127.0.0.1:{port} may reach it instead of this service. "
+                                f"Stop it, or choose another port{_free_near(port)}")
+            return
+        if time.time() - slot.started_wall < LISTEN_AFTER:
             return
         slot.listen_checked = True
-        if port in slot.stats.ports or slot.service.mode is Mode.CONTAINER:  # a container's port is the engine's
-            return
         others = f" (it listens on {', '.join(map(str, slot.stats.ports))})" if slot.stats.ports else ""
         self.note(slot, f"Not listening on port {port} after {LISTEN_AFTER} s{others}. If it is still starting, "
                         f"wait; else its output above says why. Its processes now: {_process_tree(slot.runner.pid)}")
+        if shared:
+            self.note(slot, f"{shared} already: choose another port{_free_near(port)}")
 
     # -- crash safety -------------------------------------------------------------------------------------
 
@@ -1371,7 +1391,8 @@ def _connections() -> dict[int, list[Any]] | None:
 
 
 def _tree_stats(pid: int, cache: dict[int, psutil.Process], *, ports: bool,
-                kids: dict[int, list[int]] | None = None, conns: dict[int, list[Any]] | None = None) -> Stats:
+                kids: dict[int, list[int]] | None = None, conns: dict[int, list[Any]] | None = None,
+                wanted: Iterable[int] = ()) -> Stats:
     st = Stats()
     if kids is None:
         kids = _children()
@@ -1391,13 +1412,22 @@ def _tree_stats(pid: int, cache: dict[int, psutil.Process], *, ports: bool,
             st.procs.append(proc)
             if ports:
                 for c in conns.get(p, []) if conns is not None else proc.net_connections(kind="inet"):
-                    if c.status == psutil.CONN_LISTEN and c.laddr and c.laddr.port not in st.ports:
-                        st.ports.append(c.laddr.port)
+                    if c.status == psutil.CONN_LISTEN and c.laddr:
+                        if c.laddr.port not in st.ports:
+                            st.ports.append(c.laddr.port)
+                        st.addresses.setdefault(c.laddr.port, []).append(str(c.laddr.ip))
                     elif c.raddr and c.status == psutil.CONN_ESTABLISHED:
                         st.remote.append(f"{c.raddr.ip}:{c.raddr.port}")
         except psutil.Error:
             continue
     st.ports.sort()
+    if ports and conns is not None and (want := set(wanted)):
+        for other, items in conns.items():  # another program on its port takes connections meant for it
+            if other not in seen and any(c.status == psutil.CONN_LISTEN and c.laddr and c.laddr.port in want
+                                         for c in items):
+                for c in items:
+                    if c.status == psutil.CONN_LISTEN and c.laddr and c.laddr.port in want:
+                        st.others.setdefault(c.laddr.port, []).append(other)
     return st
 
 
@@ -1503,6 +1533,24 @@ def _remove_env(path: Path, allowed: list[Path]) -> None:
             if attempt == 3:
                 raise
             time.sleep(0.5 * (attempt + 1))
+
+
+def _other_programs(pids: list[int], port: int) -> str:
+    """"Another program, deno.exe (pid 12), also listens on port 8000", or "" for none."""
+    names = []
+    for pid in dict.fromkeys(pids):
+        try:
+            names.append(f"{psutil.Process(pid).name()} (pid {pid})")
+        except psutil.Error:
+            names.append(f"pid {pid}")
+    if not names:
+        return ""
+    return f"Another program, {', '.join(names[:3])}, also listens on port {port}"
+
+
+def _free_near(port: int) -> str:
+    near = envcheck.free_port_near(port)
+    return f" (port {near} is free), on the Network tab and in the program" if near else " on the Network tab"
 
 
 def _write_folders(service: Service) -> list[str]:

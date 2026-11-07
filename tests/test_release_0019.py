@@ -370,3 +370,69 @@ def test_system_check_wraps_long_paths_and_hides_the_home_folder() -> None:
     assert about._breakable("a / b") == "a / b"  # only inside a path
     if shutil.which("true"):
         assert about._private("nothing to hide") == "nothing to hide"
+
+
+# -- Ports: taken, reserved, IPv6 only ------------------------------------------------------------------------------
+
+
+def test_a_port_in_use_is_named_with_a_free_one_to_use_instead() -> None:
+    import socket
+
+    from pythonator.core import envcheck
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        s.listen()
+        port = s.getsockname()[1]
+        text = envcheck.port_problem(port)
+        assert f"Port {port} is already in use" in text
+        near = envcheck.free_port_near(port)
+        assert near > port and f"Port {near} is free" in text
+    assert envcheck.port_problem(near) == ""
+
+
+def test_a_service_listening_on_ipv6_only_or_beside_another_program_gets_a_note(
+        dirs: DataDirs, tmp_path: Path) -> None:
+    from pythonator.daemon.supervisor import State, Stats
+
+    sup = Supervisor(dirs, Store(dirs))
+    try:
+        service = Service.model_validate({"name": "deno", "folder": str(tmp_path), "runtime": "deno",
+                                          "entry": "main.ts", "network": {"enabled": True, "ports": [8000]}})
+        sup.add(service)
+        slot = sup.slots[service.id]
+        notes: list[str] = []
+        sup.note = lambda _slot, text: notes.append(text)  # type: ignore[method-assign,assignment]
+        slot.state, slot.runner, slot.started_wall = State.RUNNING, SimpleNamespace(pid=1), time.time()  # type: ignore[assignment]
+        slot.stats = Stats(ports=[8000], addresses={8000: ["::1"]}, others={8000: [os.getpid()]})
+        sup._check_listening(slot)
+        assert any("IPv6 only" in n and "127.0.0.1" in n for n in notes), notes
+        assert any("also listens on port 8000" in n for n in notes), notes
+        notes.clear()
+        slot.listen_checked = False
+        slot.stats = Stats(ports=[8000], addresses={8000: ["127.0.0.1"]})
+        sup._check_listening(slot)
+        assert notes == []
+    finally:
+        sup.close()
+
+
+def test_tree_stats_see_other_programs_on_its_port() -> None:
+    import socket
+
+    from pythonator.daemon import supervisor
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        s.listen()
+        port = s.getsockname()[1]
+        conns = supervisor._connections()
+        if conns is None:
+            pytest.skip("this system lists other programs' connections only to root")
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        try:
+            st = supervisor._tree_stats(child.pid, {}, ports=True, conns=conns, wanted=[port])
+        finally:
+            child.kill()
+            child.wait()
+        assert st.others.get(port) == [os.getpid()]

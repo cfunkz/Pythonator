@@ -140,6 +140,29 @@ def port_problems(service: Service) -> list[str]:
     return out
 
 
+def port_problem(port: int) -> str:
+    """One port, as the Network tab is typed: "" when this computer lets a program listen on it now, else what is
+    wrong and a port that is free."""
+    why = _port_refused(port)
+    if not why:
+        return ""
+    near = free_port_near(port)
+    instead = f" Port {near} is free." if near else ""
+    if why == "in use":
+        return f"Port {port} is already in use{_owner(port)}.{instead}"
+    if why == "reserved":
+        return f"Windows has reserved port {port} for itself (Hyper-V, WSL or Docker).{instead}"
+    return f"Port {port} is below 1024: only an administrator may listen on it.{instead}"
+
+
+def free_port_near(port: int, taken: set[int] | None = None) -> int:
+    """The first port above ``port`` (from 1024) that nothing uses and Windows hasn't reserved, or 0."""
+    for p in range(max(port + 1, 1024), min(port + 200, 65536)):
+        if p not in (taken or set()) and not _port_refused(p):
+            return p
+    return 0
+
+
 def _port_refused(port: int) -> str:
     """"" when this computer lets a program listen on ``port`` now, else "in use", "reserved" or "privileged"."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:

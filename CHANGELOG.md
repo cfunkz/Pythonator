@@ -7,6 +7,14 @@ All notable changes to Pythonator are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- The Network tab warns as you type when a port is already in use (and by which program) or reserved by Windows for
+  Hyper-V, WSL or Docker, and names a free port near it. Make reachable refuses a reserved port.
+- A running server gets a note when it listens on IPv6 only (`[::1]`, what `localhost` can mean), since the Open
+  button, Make reachable and `HOST` use `127.0.0.1`, and when another program listens on the same port and may take
+  its connections.
+
 ### Changed
 
 - Container mode's default images: Deno `denoland/deno:debian` (the `2` tag never existed, so Deno couldn't start),
