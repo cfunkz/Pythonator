@@ -29,6 +29,7 @@ class Command:
     cmdline: str | None = None  # Windows: the exact command line, when argv can't express it
     shown: list[str] = field(default_factory=list)  # the service's own command, for the console
     compose: list[str] = field(default_factory=list)  # a Compose project: ``<engine> compose … -p <name>``
+    sandboxed: bool = False  # it runs in Pythonator's own sandbox (not Full access, not a container)
 
 
 @dataclass(frozen=True, slots=True)

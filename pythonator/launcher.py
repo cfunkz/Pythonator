@@ -412,6 +412,10 @@ def seccomp_rules(*, block_net: bool, block_unix: bool) -> list[tuple[int, str, 
     rules.append((_errno(_EPERM), "unshare", [(0, _SCMP_CMP_MASKED_EQ, _CLONE_NEWUSER, _CLONE_NEWUSER)]))
     # No typing into the terminal it was started from (the kernel only looks at the low 32 bits of cmd).
     rules += [(_errno(_EPERM), "ioctl", [(1, _SCMP_CMP_MASKED_EQ, _LOW32, cmd)]) for cmd in (_TIOCSTI, _TIOCLINUX)]
+    # Nothing leaves the service's process group: setsid and setpgid report success and change nothing. So Stop
+    # and the clean-up after an exit (a signal to the whole group) reach every process it ever started, even one
+    # that daemonised and was handed to init. A program that starts a "detached" child still works.
+    rules += [(_errno(0), name, []) for name in ("setsid", "setpgid")]
     if block_unix:
         rules.append((_errno(_EACCES), "socket", [(0, _SCMP_CMP_MASKED_EQ, _LOW32, _AF_UNIX)]))
     if block_net:  # every address family but Unix sockets and netlink (interface lists, no traffic)

@@ -64,7 +64,7 @@ if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("PORT", "{port}")))
 '''
 
-GITIGNORE = ".venv/\n__pycache__/\n*.pyc\n.env\n"
+GITIGNORE = ".venv/\n.venv-container/\n__pycache__/\n*.pyc\n.env\n"
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,7 +104,7 @@ NEEDS: dict[str, tuple[tuple[str, ...], str]] = {
 
 VITE = ("--host", "127.0.0.1", "--port", "{port}", "--strictPort")
 VITE_NODE = "^20.19.0 || >=22.12.0"  # create-vite 9 and Vite 8
-NODE_LTS = ">=20"
+NODE_LTS = ">=22"  # Node.js 20 reached its end of life on 2026-04-30
 
 
 def _vite(key: str, label: str, template: str) -> Template:
@@ -121,7 +121,7 @@ def _node(key: str, label: str, tool: str, files: dict[str, str], deps: dict[str
 
 
 def _python(key: str, label: str, tool: str, requirements: str, files: dict[str, str], *, port: int = 0,
-            engines: str = ">=3.10") -> Template:
+            engines: str = ">=3.11") -> Template:  # 3.10 reached its end of life on 2026-10-01
     return Template(key, label, tool, "python", port, "python", next(iter(files)), requirements=requirements,
                     files=files, engines=engines, group="Python")
 
@@ -147,7 +147,7 @@ TEMPLATES: dict[str, Template] = {t.key: t for t in (
     Template("next", "Next.js", "create-next-app, Next.js's official tool (npm create next-app@16, its defaults)",
              "npm", 3000, "node", "node_modules/next/dist/bin/next", ("dev", "-H", "127.0.0.1", "-p", "{port}"),
              command=("create", "next-app@16", "{name}", "--", "--yes", "--use-npm", "--skip-install",
-                      "--disable-git"), engines=">=20.9.0", group="Node.js"),
+                      "--disable-git"), engines=">=22", group="Node.js"),  # Next says 20.9; 20 has ended
     Template("astro", "Astro", "Astro's minimal starter (astro 7, as npm create astro makes it)",
              "npm", 4321, "node", "node_modules/astro/bin/astro.mjs",
              ("dev", "--host", "127.0.0.1", "--port", "{port}", "--ignore-lock"),
@@ -176,7 +176,7 @@ TEMPLATES: dict[str, Template] = {t.key: t for t in (
             {"app.py": FLASK_APP}, port=5050),
     Template("django", "Django", "venv and pip with Django 5.2 LTS, then django-admin startproject (Django's own tool)",
              "python", 8000, "python", "manage.py", ("runserver", "127.0.0.1:{port}"),
-             requirements="Django>=5.2.19,<6\n", engines=">=3.10", group="Python"),
+             requirements="Django>=5.2.19,<6\n", engines=">=3.11", group="Python"),
     _python("litestar", "Litestar API", "venv and pip with Litestar and Uvicorn, and a hello-world app",
             "litestar>=2.25,<3\nuvicorn>=0.54\n", {"app.py": tf.LITESTAR_PY}, port=8000),
     _python("streamlit", "Streamlit data app", "venv and pip with Streamlit, and a small app",
@@ -185,48 +185,48 @@ TEMPLATES: dict[str, Template] = {t.key: t for t in (
             "gradio>=6.31,<7\n", {"app.py": tf.GRADIO_PY}, port=7860),
     # Other runtimes
     Template("go", "Go web server", "the Go standard library (net/http): nothing to install", "go", 8080, "go",
-             ".", files={"go.mod": tf.GO_MOD, "main.go": tf.GO_HTTP}, engines=">=1.22", group="Go"),
+             ".", files={"go.mod": tf.GO_MOD, "main.go": tf.GO_HTTP}, engines=">=1.26", group="Go"),
     Template("gin", "Gin API (Go)", "Gin and its quickstart app (go mod tidy fetches it)", "go", 8080, "go", ".",
-             files={"go.mod": tf.GO_MOD, "main.go": tf.GIN_GO}, setup=(("mod", "tidy"),), engines=">=1.22",
+             files={"go.mod": tf.GO_MOD, "main.go": tf.GIN_GO}, setup=(("mod", "tidy"),), engines=">=1.26",
              group="Go"),
     Template("axum", "Axum API (Rust)", "Axum 0.8 on Tokio (the first start compiles it: a minute or two)",
              "cargo", 3000, "rust", "", files={"Cargo.toml": tf.AXUM_TOML, "src/main.rs": tf.AXUM_RS}, engines=">=1.85",
              group="Rust"),
     Template("bun-hono", "Hono API (Bun)", "Hono 4 on Bun.serve", "bun", 3000, "bun", "index.ts",
-             files={"index.ts": tf.HONO_BUN_TS}, dependencies={"hono": "^4.13.16"}, engines=">=1.1", group="Bun"),
+             files={"index.ts": tf.HONO_BUN_TS}, dependencies={"hono": "^4.13.16"}, engines=">=1.2", group="Bun"),
     Template("elysia", "Elysia API (Bun)", "Elysia 1 and its hello-world app", "bun", 3000, "bun", "index.ts",
              files={"index.ts": tf.ELYSIA_TS}, dependencies={"elysia": "^1.4.31"}, engines=">=1.2", group="Bun"),
     Template("deno", "Deno web server", "Deno.serve: nothing to install", "deno", 8000, "deno", "main.ts",
              files={"main.ts": tf.DENO_TS, "deno.json": tf.DENO_JSON}, engines=">=2", group="Deno"),
     Template("java", "Java web server", "the JDK's own HttpServer, one file run as is (java Main.java)", "java",
-             8080, "java", "Main.java", files={"Main.java": tf.JAVA_MAIN}, engines=">=11", group="Java"),
+             8080, "java", "Main.java", files={"Main.java": tf.JAVA_MAIN}, engines=">=21", group="Java"),
     Template("php", "PHP site", "PHP's built-in web server (php -S) and an index.php", "php", 8000,
              runtimes.CUSTOM, "", files={"public/index.php": tf.PHP_INDEX},
-             serve=("-S", "127.0.0.1:{port}", "-t", "public"), engines=">=8.0", group="PHP"),
+             serve=("-S", "127.0.0.1:{port}", "-t", "public"), engines=">=8.3", group="PHP"),
     Template("sinatra", "Sinatra (Ruby)", "Bundler with Sinatra and Puma, and a hello-world app", "bundle", 4567,
-             "ruby", "app.rb", files={"Gemfile": tf.SINATRA_GEMFILE, "app.rb": tf.SINATRA_RB}, engines=">=3.0",
+             "ruby", "app.rb", files={"Gemfile": tf.SINATRA_GEMFILE, "app.rb": tf.SINATRA_RB}, engines=">=3.3",
              group="Ruby"),
     # Bots and workers
     Template("discord-py", "Discord bot (Python)", "venv and pip with discord.py, and a /ping bot",
-             "python", 0, "python", "bot.py", requirements="discord.py>=2.7,<3\n", files={"bot.py": tf.DISCORD_PY},
-             env=("DISCORD_TOKEN",), kind="bot", engines=">=3.8", group="Python"),
+             "python", 0, "python", "bot.py", requirements="discord.py>=2.7,<3\naiohttp>=3.14.5\n",
+             files={"bot.py": tf.DISCORD_PY}, env=("DISCORD_TOKEN",), kind="bot", engines=">=3.11", group="Python"),
     _node("discord-js", "Discord bot (Node.js)", "discord.js 14 and a /ping bot", {"index.js": tf.DISCORD_JS},
           {"discord.js": "^14.28.1"}, port=0, kind="bot", env=("DISCORD_TOKEN",)),
     Template("telegram-py", "Telegram bot (Python)", "venv and pip with python-telegram-bot, and an echo bot",
              "python", 0, "python", "bot.py", requirements="python-telegram-bot>=22.8,<23\n",
-             files={"bot.py": tf.TELEGRAM_PY}, env=("TELEGRAM_TOKEN",), kind="bot", engines=">=3.10", group="Python"),
+             files={"bot.py": tf.TELEGRAM_PY}, env=("TELEGRAM_TOKEN",), kind="bot", engines=">=3.11", group="Python"),
     _node("telegram-js", "Telegram bot (Node.js)", "grammY and an echo bot", {"index.js": tf.TELEGRAM_JS},
           {"grammy": "^1.46.0"}, port=0, kind="bot", env=("TELEGRAM_TOKEN",)),
     Template("whatsapp-py", "WhatsApp bot (Python)", "Flask and a webhook for Meta's WhatsApp Cloud API",
              "python", 5060, "python", "app.py", requirements="Flask>=3.1.3,<4\n", files={"app.py": tf.WHATSAPP_PY},
-             env=("WHATSAPP_TOKEN", "WHATSAPP_VERIFY_TOKEN", "WHATSAPP_APP_SECRET"), kind="bot", engines=">=3.9",
+             env=("WHATSAPP_TOKEN", "WHATSAPP_VERIFY_TOKEN", "WHATSAPP_APP_SECRET"), kind="bot", engines=">=3.11",
              group="Python"),
     _node("whatsapp-js", "WhatsApp bot (Node.js)", "Express and a webhook for Meta's WhatsApp Cloud API",
           {"index.js": tf.WHATSAPP_JS}, {"express": "^5.3.0"}, port=3010, kind="bot",
           env=("WHATSAPP_TOKEN", "WHATSAPP_VERIFY_TOKEN", "WHATSAPP_APP_SECRET")),
     Template("worker-py", "Python worker", "a venv and a script that does a job every minute, and stops cleanly",
              "python", 0, "python", "worker.py", files={"worker.py": tf.WORKER_PY}, env=("INTERVAL",),
-             kind="worker", engines=">=3.9", group="Python"),
+             kind="worker", engines=">=3.11", group="Python"),
     _node("worker-js", "Node.js worker", "a script that does a job every minute, and stops cleanly",
           {"index.js": tf.WORKER_JS}, {}, port=0, kind="worker", env=("INTERVAL",)),
 )}
@@ -339,7 +339,8 @@ def plan(key: str, name: str, parent: Path, taken_ports: set[int]) -> Plan:
                    if t.key == "astro" else None)
         files["package.json"] = tf.package_json(name, t.dependencies, t.entry, bun=t.needs == "bun",
                                                 engines=t.engines or NODE_LTS, scripts=scripts)
-        files[".gitignore"] = "node_modules/\n.env\n" + ("dist/\n.astro/\n" if t.key == "astro" else "")
+        files[".gitignore"] = ("node_modules/\n.container-cache/\n.env\n"
+                               + ("dist/\n.astro/\n" if t.key == "astro" else ""))
     elif t.needs == "python":
         files["requirements.txt"] = t.requirements
         files[".gitignore"] = GITIGNORE
@@ -348,12 +349,13 @@ def plan(key: str, name: str, parent: Path, taken_ports: set[int]) -> Plan:
             py = str(runtimes.venv_python(folder / ".venv"))
             steps.append([py, "-m", "django", "startproject", module, "."])
     else:
-        files[".gitignore"] = OTHER_IGNORE.get(t.runtime, ".env\n")
+        files[".gitignore"] = OTHER_IGNORE.get(t.runtime, ".container-cache/\n.env\n")
     steps += [[prog, *step] for step in t.setup]
     return Plan(service, steps, files, flatten)
 
 
-OTHER_IGNORE = {"rust": "target/\n.env\n", "ruby": "vendor/bundle/\n.bundle/\n.env\n", "java": "*.class\n.env\n"}
+OTHER_IGNORE = {"rust": "target/\n.container-cache/\n.env\n",
+                "ruby": "vendor/bundle/\n.bundle/\n.container-cache/\n.env\n", "java": "*.class\n.env\n"}
 
 
 def _python_steps(folder: Path, prog: str) -> list[list[str]]:

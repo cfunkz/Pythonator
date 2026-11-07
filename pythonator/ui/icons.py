@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from functools import cache
-from pathlib import Path
 
 from PyQt6.QtCore import QFileInfo, QPointF, QRectF, Qt
 from PyQt6.QtGui import (
@@ -303,13 +302,26 @@ def icon(name: str, color: str = "") -> QIcon:
 class FileIcons(QFileIconProvider):
     """Folders in amber, files in their language's colour."""
 
+    def __init__(self) -> None:
+        super().__init__()
+        self._by_ext: dict[str, QIcon] = {}
+
     def icon(self, what: QAbstractFileIconProvider.IconType | QFileInfo) -> QIcon:
-        if isinstance(what, QFileInfo):
-            if what.isDir():
+        # Qt calls this once for every entry of every folder it lists (60,000 in a big node_modules), so it is a
+        # dictionary lookup; and it never raises, since an error here would end the window.
+        try:
+            if isinstance(what, QFileInfo):
+                if what.isDir():
+                    return icon("folder")
+                name = what.fileName().lower()
+                dot = name.rfind(".")
+                ext = ".env" if name.startswith(".env") else name[dot:] if dot > 0 else ""
+                found = self._by_ext.get(ext)
+                if found is None:
+                    found = self._by_ext[ext] = icon("file", LANG.get(ext, TINT["file"]))
+                return found
+            if what == QAbstractFileIconProvider.IconType.Folder:
                 return icon("folder")
-            name = what.fileName().lower()
-            ext = ".env" if name.startswith(".env") else Path(name).suffix
-            return icon("file", LANG.get(ext, TINT["file"]))
-        if what == QAbstractFileIconProvider.IconType.Folder:
-            return icon("folder")
-        return icon("file")
+            return icon("file")
+        except Exception:
+            return QIcon()

@@ -24,7 +24,7 @@ from typing import Any
 from PyQt6.QtCore import QCoreApplication, QTimer
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 
-from .. import __version__, isolation
+from .. import __version__, errors, isolation
 from ..core.envcheck import app_report
 from ..core.store import Store, write_atomic
 from ..instance import InstanceLock
@@ -372,6 +372,7 @@ def main() -> int:
         handlers.append(logging.StreamHandler(sys.stderr))
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",
                         handlers=handlers)
+    errors.keep_running()  # a bug in one handler is logged; it never ends the service, and every program with it
     app = QCoreApplication(sys.argv[:1])
     app.setApplicationName("Pythonator")
     lock = InstanceLock(dirs.root / "daemon.lock")

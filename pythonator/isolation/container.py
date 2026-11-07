@@ -92,6 +92,19 @@ def install_steps(service: Service) -> list[list[str]]:
     return [[Path(a[0]).name, *a[1:]] for a in rt.install(Path(service.folder), prog)]
 
 
+# Package caches inside the project folder (the only place that is kept, and writable with a read-only root),
+# so an install step's downloads are there when the service runs: the official images keep them elsewhere.
+CACHE = f"{APP}/.container-cache"
+CONTAINER_CACHE_VARS: dict[str, dict[str, str]] = {
+    "go": {"GOMODCACHE": f"{CACHE}/go/mod", "GOCACHE": f"{CACHE}/go/build", "GOFLAGS": "-modcacherw"},
+    "rust": {"CARGO_HOME": f"{CACHE}/cargo"},
+    "ruby": {"BUNDLE_PATH": f"{CACHE}/bundle"},
+    "deno": {"DENO_DIR": f"{CACHE}/deno"},
+    "dotnet": {"NUGET_PACKAGES": f"{CACHE}/nuget", "DOTNET_CLI_HOME": "/tmp"},
+}
+PHP_INSTALL_IMAGE = "composer:2"  # php:*-cli has no composer: installs run in Composer's own image
+
+
 def image_for(service: Service) -> str:
     if service.container.image:
         return service.container.image
@@ -147,6 +160,7 @@ def wrap(service: Service, *, task: list[str] | None = None) -> Command:
            "DOCKER_HOST": os.environ.get("DOCKER_HOST", ""), "XDG_RUNTIME_DIR": os.environ.get("XDG_RUNTIME_DIR", "")}
     env = {k: v for k, v in env.items() if v}
     passed = {"PYTHONUNBUFFERED": "1", "FORCE_COLOR": "1"}
+    passed.update(CONTAINER_CACHE_VARS.get(service.runtime, {}))  # the service's own values below win
     passed.update(env_file_values(service))
     passed.update(service.env)
     if net.ports:
@@ -156,6 +170,8 @@ def wrap(service: Service, *, task: list[str] | None = None) -> Command:
         argv += ["-e", key]
     env.update(passed)
     image = image_for(service)
+    if task is not None and service.runtime == "php" and not service.container.image:
+        image = PHP_INSTALL_IMAGE
     argv += [image, *_inner_argv(service, task)]  # the image name is validated: it can't start with "-"
     where = "this computer" if net.expose == "local" else "other computers too"
     published = f", ports {', '.join(map(str, net.ports))} for {where}" if net.ports and net.enabled else ""

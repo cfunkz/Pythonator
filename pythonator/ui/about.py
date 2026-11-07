@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import contextlib
 import platform
+import re
+import sys
 import threading
 from importlib import metadata
 from pathlib import Path
@@ -20,6 +22,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -193,6 +196,29 @@ def _card() -> tuple[QFrame, QGridLayout]:
     return card, grid
 
 
+def _private(text: str) -> str:
+    """``text`` with your home folder shown as ``~``: a program's path would otherwise show your user name."""
+    home = str(Path.home())
+    if len(home) < 3:
+        return text
+    return re.sub(re.escape(home), "~", text, flags=re.IGNORECASE if sys.platform == "win32" else 0)
+
+
+def _breakable(text: str) -> str:
+    """Lets a long path wrap after each folder (a zero-width space after every slash) instead of widening the
+    whole dialog past its window."""
+    return re.sub(r"([\\/])(?=\S)", "\\1\u200b", text)
+
+
+def _wrapping(widget: QLabel, full: str) -> QLabel:
+    """A label that wraps inside its column and never makes the dialog wider; the whole text is its tooltip."""
+    widget.setMinimumWidth(1)
+    widget.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+    if len(full) > 60:
+        widget.setToolTip(full)
+    return widget
+
+
 def _row(grid: QGridLayout, mark: str, tone: str, name: str, value: str, note: str = "") -> None:
     r = grid.rowCount()
     sign = QLabel(mark)
@@ -200,7 +226,8 @@ def _row(grid: QGridLayout, mark: str, tone: str, name: str, value: str, note: s
     sign.setStyleSheet(f"color: {theme.color(tone)}; font-weight: 600")
     key = QLabel(name)
     key.setStyleSheet(f"color: {theme.color('muted')}")
-    text = label(value + (f"  ·  {note}" if note else ""), plain=True)
+    full = _private(value + (f"  ·  {note}" if note else ""))
+    text = _wrapping(label(_breakable(full), plain=True), full)
     text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
     grid.addWidget(sign, r, 0, Qt.AlignmentFlag.AlignTop)
     grid.addWidget(key, r, 1, Qt.AlignmentFlag.AlignTop)
@@ -270,6 +297,8 @@ class SystemCheckDialog(QDialog):
         self._look_left()
         note = label("“Not enforced” protections are explained in the documentation, under Isolation modes, with how "
                      "to turn them on. Host and user names are never shown or copied.", plain=True, muted=True)
+        note.setMinimumWidth(1)
+        note.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.column.addWidget(note)
         self.column.addStretch(1)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)

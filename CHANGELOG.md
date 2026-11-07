@@ -7,6 +7,44 @@ All notable changes to Pythonator are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Container mode's default images: Deno `denoland/deno:debian` (the `2` tag never existed, so Deno couldn't start),
+  Go `golang:1.27` (1.24 has ended), .NET `sdk:10.0` (9.0 ends on 2026-11-10), Node.js `node:24-slim`.
+- Container mode keeps Go, Rust, Ruby, Deno and NuGet packages in the project's `.container-cache` folder, so
+  installs work with the read-only image. PHP installs run in the `composer:2` image (`php:*-cli` has no Composer).
+- Project templates ask for supported runtimes: Node.js 22, Python 3.11, Go 1.26, Ruby 3.3, PHP 8.3, Java 21. The
+  discord.py template requires aiohttp 3.14.5 or later.
+- The discord.py, discord.js and grammY bot templates log out cleanly when stopped on Linux and macOS (SIGTERM).
+- The file tree shows `node_modules`, `.venv`, `.git`, `target` and similar folders without listing them: a big
+  `node_modules` held the window for over a second each time it was opened.
+
+### Fixed
+
+- A crashed service whose child still held its output (a worker pool, an ffmpeg) showed as running and was never
+  restarted. The exit is now seen when the program itself ends, and what it left behind is ended 2 s later.
+- An error that nothing caught, anywhere in the window or the background service, ended the whole program (PyQt's
+  default). It is now written to `window.log` or `daemon.log`, and the window says so in its status bar.
+- System check: long paths wrap instead of pushing the dialog past its window, the note at the bottom wraps, and
+  paths in your home folder show as `~` (they showed your user name).
+- Ending a plugin ends every process it started: its process group, and on Windows its own job object (the
+  sandboxed worker outlived the launcher before).
+
+### Security
+
+- Linux: nothing a sandboxed service starts can leave its process group. seccomp makes `setsid` and `setpgid` do
+  nothing, so Stop reaches a child that started a new session and kept changing its process ID. Without bubblewrap
+  such a child outlived Stop and could rewrite `.git/config` while git pulled the folder. macOS finds such children
+  by a marker in their environment.
+- git: `GIT_ALLOW_PROTOCOL=https:ssh`. A checkout's own `protocol.ext.allow=always` beat the command-line pin.
+- A pull also waits for, or refuses while, a sandboxed service that may write the checkout through *More folders*.
+- Official plugins no longer run without a sandbox where it can't be set up (0.0.18 ran them with your full rights
+  on Linux with Landlock but neither libseccomp nor bubblewrap). They show why they didn't start.
+- Windows: WSL's `bash.exe` and `wsl.exe` in System32 are refused in Sandbox mode. They would run the script inside
+  WSL, outside the AppContainer.
+- Release builds install Pythonator with `--no-build-isolation`, so setuptools comes from the hash-locked build lock
+  instead of an unchecked download.
+
 ## [0.0.18] - 2026-11-07
 
 Bundled plugins: AI assistant 1.4.0.

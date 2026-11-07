@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import threading
 from typing import Any
 
 CREATE_NO_WINDOW = 0x08000000
@@ -28,6 +29,7 @@ class Job:
 
     def __init__(self, memory_mb: int = 0, cpu_rate: int = 0) -> None:
         self.handle = 0
+        self._lock = threading.Lock()  # terminate() and close() come from different threads
         if sys.platform != "win32":
             return
         api = _kernel32()
@@ -59,13 +61,15 @@ class Job:
         ntdll.NtResumeProcess(handle)
 
     def terminate(self) -> None:
-        if sys.platform == "win32" and self.handle:
-            _kernel32().TerminateJobObject(self.handle, 1)
+        with self._lock:  # never a closed handle, which Windows may already have given to something else
+            if sys.platform == "win32" and self.handle:
+                _kernel32().TerminateJobObject(self.handle, 1)
 
     def close(self) -> None:
-        if sys.platform == "win32" and self.handle:
-            _kernel32().CloseHandle(self.handle)
-        self.handle = 0
+        with self._lock:
+            if sys.platform == "win32" and self.handle:
+                _kernel32().CloseHandle(self.handle)
+            self.handle = 0
 
 
 def request_ctrl_c(pid: int) -> bool:

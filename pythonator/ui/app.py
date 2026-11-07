@@ -9,7 +9,7 @@ from PyQt6.QtGui import QIcon
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 from PyQt6.QtWidgets import QApplication
 
-from .. import __version__
+from .. import __version__, errors
 from ..core.store import Store
 from ..instance import InstanceLock
 from ..paths import IS_WINDOWS, DataDirs, leave_current_folder
@@ -36,6 +36,18 @@ def wake_first(dirs: DataDirs) -> bool:
     return True
 
 
+def _log_to(path: Path) -> None:
+    import logging
+    from logging.handlers import RotatingFileHandler
+
+    root = logging.getLogger()
+    if not root.handlers:
+        handler = RotatingFileHandler(path, maxBytes=1_000_000, backupCount=1, encoding="utf-8")
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        root.addHandler(handler)
+        root.setLevel(logging.WARNING)
+
+
 def main(args: list[str]) -> int:
     from .login import HIDDEN
 
@@ -49,6 +61,8 @@ def main(args: list[str]) -> int:
         app.setWindowIcon(QIcon(str(icon)))
     dirs = DataDirs()
     dirs.ensure()
+    _log_to(dirs.root / "window.log")
+    errors.keep_running()  # a bug in one panel writes to window.log instead of closing the window
     leave_current_folder(dirs)  # Make reachable starts an elevated PowerShell from this process
     lock = InstanceLock(dirs.root / "window.lock")
     if not lock.acquire():  # one window per data folder: two would each ask every question, and run twice
@@ -61,6 +75,7 @@ def main(args: list[str]) -> int:
     from .main_window import MainWindow  # after the theme, so widgets pick it up
 
     window = MainWindow(dirs, settings)
+    errors.keep_running(lambda text: window._status(text, 15000))
     woken = QLocalServer(app)
     woken.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
     QLocalServer.removeServer(window_socket(dirs))

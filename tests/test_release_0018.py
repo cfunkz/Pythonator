@@ -438,7 +438,8 @@ def test_a_plugin_message_is_read_in_blocks_not_byte_by_byte() -> None:
     from pythonator.plugins.host import MAX_LINE, PluginHost
 
     posted: list[Any] = []
-    stub = SimpleNamespace(sup=SimpleNamespace(post=posted.append))
+    stub = SimpleNamespace(sup=SimpleNamespace(post=posted.append), _jobs={})
+    stub._end = lambda proc: PluginHost._end(stub, proc)  # type: ignore[arg-type]
     # Far more than any pipe buffer holds after the first megabyte: the writer blocks until it is killed.
     code = f"import os; os.write(1, b'a' * {MAX_LINE * 3} + b'\\n')"
     proc = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, bufsize=0)

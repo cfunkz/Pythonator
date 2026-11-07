@@ -359,6 +359,22 @@ def system32() -> Path:
     return Path(os.environ.get("SYSTEMROOT", r"C:\Windows")) / "System32"
 
 
+WSL_PROGRAMS = frozenset({"bash.exe", "wsl.exe", "wslhost.exe", "wslg.exe"})
+
+
+def check_not_wsl(program: str) -> None:
+    """Refuses WSL's own launchers. ``C:\\Windows\\System32\\bash.exe`` (found first on PATH on many PCs)
+    hands the script to WSL, which runs it in its Linux system with your rights there, including your
+    Windows drives under /mnt: out of reach of the AppContainer. Raises IsolationError."""
+    path = Path(program)
+    if path.name.lower() not in WSL_PROGRAMS:
+        return
+    if str(path.parent).rstrip("\\/").lower() == str(system32()).rstrip("\\/").lower() or "windowsapps" in \
+            str(path).lower():
+        raise IsolationError(f"{path.name} here is WSL's: it would run the script inside WSL, outside the Windows "
+                             "sandbox. Install Git for Windows and put its bash first on PATH, or use Container mode")
+
+
 def powershell() -> Path:
     """Windows PowerShell by its full path. A bare ``powershell.exe`` is looked for in the current folder first,
     which may be a project folder a sandboxed service can write: Make reachable would run its program elevated."""

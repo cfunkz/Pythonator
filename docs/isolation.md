@@ -141,7 +141,7 @@ container through the engine's environment (`-e NAME`), so their values do not a
 in the project cannot set the engine's own variables (`DOCKER_*`, `PATH`, `HOME`, `XDG_*`), since these would change
 which engine, or which program, the local CLI talks to.
 
-The **image** defaults to the language's official slim image (`python:3.13-slim`, `node:22-slim`, `golang:1.24`, …)
+The **image** defaults to the language's official slim image (`python:3.13-slim`, `node:24-slim`, `golang:1.27`, …)
 and can be any named image, optionally pinned by digest (`python:3.13-slim@sha256:…`). For Python, Install packages
 creates `/app/.venv-container`, which the container then uses, so it does not conflict with a `.venv` made for the
 host.

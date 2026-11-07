@@ -50,7 +50,10 @@ def git_path() -> str:
 
 def _env() -> dict[str, str]:
     env = {k: v for k, v in os.environ.items() if k not in ("GIT_ASKPASS", "SSH_ASKPASS", "GIT_DIR", "GIT_WORK_TREE")}
-    env.update(GIT_TERMINAL_PROMPT="0", GIT_CONFIG_NOSYSTEM="1", GCM_INTERACTIVE="never", LC_ALL="C")
+    env.update(GIT_TERMINAL_PROMPT="0", GIT_CONFIG_NOSYSTEM="1", GCM_INTERACTIVE="never", LC_ALL="C",
+               # Wins over every protocol.* setting, including a checkout's own protocol.ext.allow=always, which
+               # is more specific than the -c protocol.allow=never on the command line and would beat it.
+               GIT_ALLOW_PROTOCOL="https:ssh")
     if not env.get("GIT_SSH_COMMAND") and env.get("GIT_SSH"):
         # A checkout's core.sshCommand would win over GIT_SSH; GIT_SSH_COMMAND wins over any config.
         env["GIT_SSH_COMMAND"] = "'" + env["GIT_SSH"].replace("'", "'\\''") + "'"

@@ -45,7 +45,7 @@ SKIP_DIRS = {
     ".git", ".hg", ".svn", "__pycache__", "node_modules", ".venv", "venv", "env", ".env", ".tox", ".nox",
     ".mypy_cache", ".pytest_cache", ".ruff_cache", ".idea", ".vscode", "site-packages", "dist", "build",
     ".pythonator", ".cache", "target", ".gradle", ".next", ".terraform", ".ssh", ".gnupg", ".aws", ".azure",
-    ".kube", ".docker",
+    ".kube", ".docker", ".container-cache", ".venv-container",
 }
 SECRET_PATTERNS = (
     ".env", ".env.*", "*.env", ".envrc", "*.pem", "*.key", "*.p12", "*.pfx", "*.jks", "*.keystore", "*.crt", "*.cer",

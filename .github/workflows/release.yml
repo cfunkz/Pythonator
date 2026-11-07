@@ -61,7 +61,7 @@ jobs:
         shell: bash
         run: |
           if [ ! -f "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" ]; then choco install innosetup --no-progress -y; fi
-      - run: python -m pip install --require-hashes -r packaging/requirements-build.lock && python -m pip install --no-deps .
+      - run: python -m pip install --require-hashes -r packaging/requirements-build.lock && python -m pip install --no-deps --no-build-isolation .
       - run: python packaging/build.py
       - name: Start the built app once
         run: python packaging/smoke_test.py ${{ matrix.program }}

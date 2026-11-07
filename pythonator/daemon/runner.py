@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import os
 import queue
+import secrets
 import signal
 import subprocess
 import sys
@@ -33,6 +34,8 @@ SMALL_READ = 16 * 1024  # a read shorter than this: the pipe was nearly empty
 GATHER = 0.004  # seconds to let output gather after a short read (the window shows it every 50 ms anyway)
 MAX_PENDING = 2 * 1024 * 1024  # bytes read but not yet taken; then the reader waits, and so does the program
 MAX_INPUT = 256  # lines typed into it that it hasn't read yet; more are refused
+EXIT_DRAIN = 2.0  # seconds its output may stay open after the program itself exited (children still writing)
+RUN_MARKER = "PYTHONATOR_RUN"  # a sandboxed run's own id, in its environment: finds what left its process tree
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +80,10 @@ class Runner:
         # Its process tree as the stats thread last saw it: Stop and the clean-up after an exit end these too,
         # including any that left its process group (setsid). psutil checks each is still the same process.
         self.seen: tuple[psutil.Process, ...] = ()
+        self.run_id = secrets.token_hex(8) if cmd.sandboxed and sys.platform != "win32" else ""
+        self._read_done = threading.Event()
+        self._exit_once = threading.Lock()
+        self._exit_posted = False
 
     @property
     def pid(self) -> int:
@@ -94,8 +101,9 @@ class Runner:
         else:
             kwargs["start_new_session"] = True  # its own process group: stopping reaches the whole tree
         args = self.cmd.cmdline if (sys.platform == "win32" and self.cmd.cmdline) else self.cmd.argv
+        env = {**self.cmd.env, RUN_MARKER: self.run_id} if self.run_id else self.cmd.env
         self.proc = subprocess.Popen(
-            args, cwd=self.cmd.cwd, env=self.cmd.env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            args, cwd=self.cmd.cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, bufsize=0, close_fds=True, startupinfo=quiet_start(), **kwargs)  # type: ignore[call-overload]
         if self._job is not None:
             try:
@@ -108,7 +116,27 @@ class Runner:
             self._throttle = limits.Throttle(self.proc.pid, self.cpu_percent)
             self._throttle.start()
         threading.Thread(target=self._read, name=f"out-{self.key}", daemon=True).start()
+        threading.Thread(target=self._watch, name=f"exit-{self.key}", daemon=True).start()
         return self.proc.pid
+
+    def _watch(self) -> None:
+        """Waits for the program itself. Its output only ends when every process holding it has ended, so a
+        crashed bot whose child (a worker pool, an ffmpeg) still runs would otherwise look alive and never be
+        restarted. Once the program has exited, what it left behind gets a moment, then is ended."""
+        proc = self.proc
+        if proc is None:
+            return
+        with contextlib.suppress(OSError):
+            proc.wait()
+        if self._read_done.wait(EXIT_DRAIN):
+            return
+        self._cleanup_tree()
+        if self._job is not None:
+            self._job.terminate()  # Windows: everything in its job, so the output closes
+        if self._read_done.wait(EXIT_DRAIN):
+            return
+        # Something still holds its output open and couldn't be ended: report the exit anyway.
+        self._post_exit(proc.returncode)
 
     def _read(self) -> None:
         proc = self.proc
@@ -120,7 +148,7 @@ class Runner:
                 data = os.read(fd, CHUNK)
             except OSError:
                 break
-            if not data:
+            if not data or self._exit_posted:
                 break
             with self._out_ready:
                 while len(self._out) >= MAX_PENDING:
@@ -146,6 +174,14 @@ class Runner:
         if self._input is not None:
             with contextlib.suppress(queue.Full):
                 self._input.put_nowait(None)
+        self._read_done.set()
+        self._post_exit(code)
+
+    def _post_exit(self, code: int | None) -> None:
+        with self._exit_once:
+            if self._exit_posted:
+                return
+            self._exit_posted = True
         self.sink.put(Exited(self.key, code, time.monotonic() - self.started))
 
     def take(self) -> bytes:
@@ -232,6 +268,7 @@ class Runner:
         with contextlib.suppress(OSError):
             proc.kill()
         self._kill_seen()
+        self._kill_marked()
 
     def _cleanup_tree(self) -> None:
         """Children left behind by a process that exited (a daemonising server, a stray worker)."""
@@ -239,6 +276,16 @@ class Runner:
             with contextlib.suppress(OSError):
                 os.killpg(self.proc.pid, signal.SIGKILL)
         self._kill_seen()
+        self._kill_marked()
+
+    def _kill_marked(self) -> None:
+        """Processes of this sandboxed run that left both its process group and its tree. On Linux the sandbox
+        keeps every process in the group (seccomp makes setsid and setpgid do nothing), so this matters on macOS,
+        where a program can start a new session. One that also replaced its environment isn't found here."""
+        if self.run_id:
+            for p in marked({self.run_id}):
+                with contextlib.suppress(psutil.Error):
+                    p.kill()
 
     def _kill_seen(self) -> None:
         for p in self.seen:
@@ -248,6 +295,22 @@ class Runner:
 
     def tree(self) -> list[psutil.Process]:
         return _tree(self.pid) if self.pid else []
+
+
+def marked(run_ids: set[str] | None = None) -> list[psutil.Process]:
+    """This user's processes that carry a sandboxed run's marker: of the runs in ``run_ids``, or of any run."""
+    me = os.getpid()
+    out: list[psutil.Process] = []
+    for p in psutil.process_iter():
+        if p.pid == me:
+            continue
+        try:
+            value = p.environ().get(RUN_MARKER, "")
+        except (psutil.Error, OSError):
+            continue  # another user's, or gone
+        if value and (run_ids is None or value in run_ids):
+            out.append(p)
+    return out
 
 
 def _tree(pid: int) -> list[psutil.Process]:

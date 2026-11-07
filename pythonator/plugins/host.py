@@ -19,6 +19,7 @@ import logging
 import os
 import queue
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -36,6 +37,7 @@ from .. import isolation
 from ..core import git, validate
 from ..core.keychain import IN_FILE, IN_KEYCHAIN, Vault
 from ..core.models import Mode, Service
+from ..daemon import winproc
 from ..isolation.base import Grant, Policy, launcher_files, runtime_folders
 from ..paths import IS_LINUX, IS_MAC, IS_WINDOWS, DataDirs, official_plugins_dir, quiet_start, self_command
 from ..sdk import ICONS
@@ -153,6 +155,7 @@ class PluginHost:
         self._last_tick = 0.0
         self.vault = Vault(dirs.root / "secrets.json")
         self.proposals: dict[str, files.Proposal] = {}
+        self._jobs: dict[int, winproc.Job] = {}  # Windows: each running plugin's job object, by pid
         self.discover()
         self._migrate()
         supervisor.listeners.append(self._on_supervisor_event)
@@ -265,10 +268,25 @@ class PluginHost:
                 return
         try:
             cmd = self._command(p)
-            p.proc = subprocess.Popen(cmd.argv, cwd=cmd.cwd, env=cmd.env, stdin=subprocess.PIPE,
-                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0,
-                                      creationflags=0x08000000 if IS_WINDOWS else 0, startupinfo=quiet_start(),
-                                      start_new_session=not IS_WINDOWS)
+            # Its own job object on Windows (its own process group elsewhere), so ending it ends everything it
+            # started: on Windows the process started here is the launcher, and the worker runs below it.
+            job = winproc.Job() if IS_WINDOWS else None
+            try:
+                p.proc = subprocess.Popen(cmd.argv, cwd=cmd.cwd, env=cmd.env, stdin=subprocess.PIPE,
+                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0,
+                                          creationflags=(0x08000000 | 0x4) if IS_WINDOWS else 0,  # no window, suspended
+                                          startupinfo=quiet_start(), start_new_session=not IS_WINDOWS)
+                if job is not None:
+                    try:
+                        job.adopt(p.proc)
+                    except OSError:
+                        p.proc.kill()
+                        raise
+                    self._jobs[p.proc.pid] = job
+                    job = None
+            finally:
+                if job is not None:
+                    job.close()
         except (isolation.IsolationError, OSError) as exc:
             p.proc, p.error = None, str(exc)
             self._activity(p, f"Not started: {exc}")
@@ -306,11 +324,12 @@ class PluginHost:
                 from ..isolation import linux
 
                 return linux.wrap(argv, data, env, policy, home, tmp)
-        except isolation.IsolationError:
-            if not p.official:
-                raise isolation.IsolationError("Third-party plugins only run sandboxed, and the sandbox isn't "
-                                               "available on this computer") from None
-        return isolation.Command(argv, data, env)  # official only: verified code, the sandbox is missing here
+        except isolation.IsolationError as exc:
+            # Official ones too: a plugin may read logs and files, and the AI assistant reads text anyone could
+            # have written. Without its sandbox it would run with all of your rights.
+            raise isolation.IsolationError(f"Plugins only run sandboxed, and the sandbox isn't available on this "
+                                           f"computer: {exc}") from None
+        raise isolation.IsolationError("Plugins only run sandboxed, and this system has no sandbox for them")
 
     def stop(self, p: Plugin) -> None:
         for prop in [x for x in self.proposals.values() if x.plugin == p.id]:
@@ -328,8 +347,7 @@ class PluginHost:
             try:
                 proc.wait(3)
             except subprocess.TimeoutExpired:
-                with contextlib.suppress(OSError):
-                    proc.kill()
+                self._end(proc)
 
         threading.Thread(target=finish, daemon=True).start()
         self.sup.emit({"ev": "panel", "plugin": p.id, "panel": None})
@@ -353,12 +371,12 @@ class PluginHost:
             if len(line) > MAX_LINE:
                 # Killed here, at once: nobody reads the rest of the message, so a plugin still writing it is
                 # stuck, and proc.wait() below would wait for it forever (Windows pipes hold only a few KB).
-                with contextlib.suppress(OSError):
-                    proc.kill()
+                self._end(proc)
                 self.sup.post(lambda: self._kill(p, proc, "sent a message larger than 1 MB"))
                 break
             self.sup.post(lambda line=line: self._on_line(p, proc, line))
         code = proc.wait()
+        self._end(proc)  # whatever it left behind goes with it
         with contextlib.suppress(queue.Full):
             outbox.put_nowait(None)  # its writer thread ends too
         self.sup.post(lambda: self._on_exit(p, proc, code))
@@ -418,11 +436,22 @@ class PluginHost:
         self.sup.emit({"ev": "panel", "plugin": p.id, "panel": None})
         self.changed()
 
+    def _end(self, proc: subprocess.Popen[bytes]) -> None:
+        """End a plugin process and everything it started: its job object on Windows, its process group
+        elsewhere (it was started in a session of its own). Safe to call from any thread, and more than once."""
+        if (job := self._jobs.pop(proc.pid, None)) is not None:
+            job.terminate()
+            job.close()
+        if not IS_WINDOWS:
+            with contextlib.suppress(OSError):
+                os.killpg(proc.pid, signal.SIGKILL)
+        with contextlib.suppress(OSError):
+            proc.kill()
+
     def _kill(self, p: Plugin, proc: subprocess.Popen[bytes], why: str) -> None:
         p.error = f"Disabled: it {why}"
         self._activity(p, p.error)
-        with contextlib.suppress(OSError):
-            proc.kill()
+        self._end(proc)
         self._disable(p)
 
     def _disable(self, p: Plugin) -> None:

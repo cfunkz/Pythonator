@@ -7,7 +7,7 @@ import json
 
 
 def package_json(name: str, dependencies: dict[str, str], main: str = "index.js", *, bun: bool = False,
-                 engines: str = ">=20", scripts: dict[str, str] | None = None) -> str:
+                 engines: str = ">=22", scripts: dict[str, str] | None = None) -> str:
     """``scripts`` given: a framework's project (``type: module``, its own scripts, no ``main``)."""
     if bun:
         return json.dumps({"name": name, "version": "0.1.0", "private": True, "module": main, "type": "module",
@@ -28,7 +28,10 @@ Make the bot at discord.com/developers/applications (New Application, then Bot, 
 in DISCORD_TOKEN in Configure → Environment, and invite it with OAuth2 → URL Generator (scopes bot and
 applications.commands)."""
 
+import asyncio
+import contextlib
 import os
+import signal
 import sys
 
 import discord
@@ -59,11 +62,22 @@ async def on_ready() -> None:
     print(f"Logged in as {bot.user}", flush=True)
 
 
+async def main() -> None:
+    # Stop sends SIGTERM on Linux and macOS (Ctrl+C on Windows): log out of Discord cleanly on either.
+    loop = asyncio.get_running_loop()
+    with contextlib.suppress(NotImplementedError):  # Windows has no signal handlers here
+        loop.add_signal_handler(signal.SIGTERM, lambda: loop.create_task(bot.close()))
+    async with bot:
+        await bot.start(TOKEN)
+
+
 if __name__ == "__main__":
     if not TOKEN:
         print("No DISCORD_TOKEN yet. Set it in Configure → Environment, then press Start.", file=sys.stderr)
         sys.exit(0)
-    bot.run(TOKEN)
+    discord.utils.setup_logging()
+    with contextlib.suppress(KeyboardInterrupt):
+        asyncio.run(main())
 '''
 
 DISCORD_JS = '''// A Discord bot with discord.js (discord.js.org): it answers /ping.
@@ -93,6 +107,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
     await interaction.reply(`Pong! ${client.ws.ping} ms`);
   }
 });
+
+// Stop sends SIGTERM on Linux and macOS (Ctrl+C on Windows): log out of Discord cleanly on either.
+for (const signal of ["SIGTERM", "SIGINT"]) {
+  process.once(signal, async () => {
+    await client.destroy();
+    process.exit(0);
+  });
+}
 
 client.login(token);
 '''
@@ -152,6 +174,10 @@ const bot = new Bot(token);
 bot.command("start", (ctx) => ctx.reply("Hi! Send me a message and I'll send it back."));
 bot.on("message:text", (ctx) => ctx.reply(ctx.message.text));
 bot.catch((err) => console.error("Error while handling an update:", err.error));
+// Stop sends SIGTERM on Linux and macOS (Ctrl+C on Windows). Stopping cleanly tells Telegram which updates were
+// handled, so none is answered twice after a restart.
+process.once("SIGINT", () => bot.stop());
+process.once("SIGTERM", () => bot.stop());
 bot.start({ onStart: (me) => console.log(`Running as @${me.username}: send it a message in Telegram`) });
 '''
 
@@ -475,7 +501,7 @@ if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("PORT", "{port}")))
 '''
 
-GO_MOD = "module {module}\n\ngo 1.22\n"
+GO_MOD = "module {module}\n\ngo 1.25\n"  # Gin 1.12 needs 1.25
 
 GO_HTTP = '''// A Go web server with the standard library (pkg.go.dev/net/http): nothing to install.
 package main

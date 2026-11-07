@@ -163,6 +163,7 @@ def prepare(service: Service, dirs: DataDirs, *, task: list[str] | None = None, 
     if IS_WINDOWS:
         from . import private_node, windows
 
+        windows.check_not_wsl(runtimes.which(argv[0]) or argv[0])
         argv, env, runtime = private_node.for_sandbox(argv, env, dirs,
                                                       node_service=service.runtime in ("node", "bun"))
         policy = policy_for(service, argv, dirs, task=task is not None, runtime=runtime)
@@ -172,6 +173,7 @@ def prepare(service: Service, dirs: DataDirs, *, task: list[str] | None = None, 
             cmd.describe = f"AppContainer, Node.js from Pythonator's private copy in {runtime}"
         cmd.describe = f"Sandbox ({cmd.describe}): {_summary(service, policy, task is not None)}"
         cmd.shown = argv if runtime is not None else shown  # what really runs: node.exe npm-cli.js, not npm.cmd
+        cmd.sandboxed = True
         return cmd
     policy = policy_for(service, argv, dirs, task=task is not None)
     home, tmp = private_dirs(dirs, name)
@@ -187,6 +189,7 @@ def prepare(service: Service, dirs: DataDirs, *, task: list[str] | None = None, 
         raise IsolationError("No sandbox for this operating system; use Container mode")
     cmd.describe = f"Sandbox ({cmd.describe}): {_summary(service, policy, task is not None)}"
     cmd.shown = shown
+    cmd.sandboxed = True
     return cmd
 
 

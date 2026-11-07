@@ -240,6 +240,27 @@ def _bad_name(name: str) -> str:
     return ""
 
 
+# Folders the tree shows but doesn't list: tools fill them with thousands of files (a node_modules can hold
+# 100,000), and listing, sorting and watching them all would hold up the window. The file manager still opens them.
+NOT_LISTED = frozenset({"node_modules", ".venv", ".venv-container", ".container-cache", ".git", "__pycache__",
+                        ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox", ".nox", ".next", ".gradle", "target"})
+
+
+class _Files(QFileSystemModel):
+    def _unlisted(self, parent: QModelIndex) -> bool:
+        return parent.isValid() and self.fileName(parent) in NOT_LISTED and self.isDir(parent)
+
+    def hasChildren(self, parent: QModelIndex = QModelIndex()) -> bool:  # noqa: B008 - Qt's own default
+        return False if self._unlisted(parent) else super().hasChildren(parent)
+
+    def canFetchMore(self, parent: QModelIndex) -> bool:
+        return False if self._unlisted(parent) else super().canFetchMore(parent)
+
+    def fetchMore(self, parent: QModelIndex) -> None:
+        if not self._unlisted(parent):
+            super().fetchMore(parent)
+
+
 class FileTree(QWidget):
     """The service's folder: under the service list, so the editor and console get the full width."""
 
@@ -252,6 +273,7 @@ class FileTree(QWidget):
         self.icons = FileIcons()  # kept here: a model only points at it
         self.model = self._new_model()
         self.view.setHeaderHidden(True)
+        self.view.setUniformRowHeights(True)  # a folder of 60,000 files: no row is measured on its own
         self.view.setAnimated(True)
         self.view.setIndentation(14)
         self.view.doubleClicked.connect(self._open_index)
@@ -281,7 +303,7 @@ class FileTree(QWidget):
         self.set_root("")
 
     def _new_model(self) -> QFileSystemModel:
-        model = QFileSystemModel(self)
+        model = _Files(self)
         model.setIconProvider(self.icons)
         model.setFilter(QDir.Filter.AllEntries | QDir.Filter.NoDotAndDotDot | QDir.Filter.Hidden)
         self.view.setModel(model)

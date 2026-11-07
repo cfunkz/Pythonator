@@ -1114,12 +1114,13 @@ class Supervisor:
         this service's folder, inside it or around it: each could rewrite .git/config while git pulls."""
         return [o for o in self.slots.values() if o is not slot and o.service.mode is not Mode.FULL
                 and (o.runner or o.task or o.shell or o.state in (State.STARTING, State.TASK))
-                and o.service.id not in self._pull_waits and _overlap(o.service.folder, slot.service.folder)]
+                and o.service.id not in self._pull_waits
+                and any(_overlap(w, slot.service.folder) for w in _write_folders(o.service))]
 
     def _pulling_here(self, slot: Slot) -> Slot | None:
         """Another service whose git pull runs in this service's folder, inside it or around it."""
         return next((o for o in self.slots.values() if o is not slot and o.pulling
-                     and _overlap(o.service.folder, slot.service.folder)), None)
+                     and any(_overlap(w, o.service.folder) for w in _write_folders(slot.service))), None)
 
     def _wait_for_pull(self, slot: Slot, then: Callable[[], None]) -> bool:
         """True when git is pulling this folder for another service and this one is sandboxed: it waits, and
@@ -1502,6 +1503,14 @@ def _remove_env(path: Path, allowed: list[Path]) -> None:
             if attempt == 3:
                 raise
             time.sleep(0.5 * (attempt + 1))
+
+
+def _write_folders(service: Service) -> list[str]:
+    """The folders a service may change: its own, and in Sandbox mode the More folders granted with write."""
+    out = [service.folder]
+    if service.mode is Mode.SANDBOX:
+        out += [f.path for f in service.sandbox.folders if f.write]
+    return out
 
 
 def _overlap(a: str, b: str) -> bool:

@@ -6,12 +6,12 @@ folder, so a project cannot place its own `python` or `node` ahead of the real o
 | Language | Found as | A file runs as | With no file | Install packages | Packages go to | Container image |
 | --- | --- | --- | --- | --- | --- | --- |
 | Python | `python3`, `python` (Windows: `python`, `py`) | `python -u bot.py` | | venv, then pip | `.venv` in the project | `python:3.13-slim` |
-| Node.js | `node` | `node server.js` | `npm start` | `npm ci` / `npm install` / `pnpm` / `yarn` | `node_modules` | `node:22-slim` |
+| Node.js | `node` | `node server.js` | `npm start` | `npm ci` / `npm install` / `pnpm` / `yarn` | `node_modules` | `node:24-slim` |
 | Bun | `bun` | `bun run index.ts` | | `bun install` | `node_modules` | `oven/bun:1` |
-| Deno | `deno` | `deno run --allow-all main.ts` | | | Deno's cache, private to the sandbox | `denoland/deno:2` |
-| Go | `go` | `go run main.go` | `go run .` | `go mod download` | The Go module cache | `golang:1.24` |
+| Deno | `deno` | `deno run --allow-all main.ts` | | | Deno's cache, private to the sandbox | `denoland/deno:debian` |
+| Go | `go` | `go run main.go` | `go run .` | `go mod download` | The Go module cache | `golang:1.27` |
 | Java | `java` | `java -jar app.jar`, `java Main.java` | | | The build's own folders | `eclipse-temurin:21` |
-| .NET | `dotnet` | `dotnet run --project app.csproj` | `dotnet run` | `dotnet restore` | The NuGet cache | `mcr.microsoft.com/dotnet/sdk:9.0` |
+| .NET | `dotnet` | `dotnet run --project app.csproj` | `dotnet run` | `dotnet restore` | The NuGet cache | `mcr.microsoft.com/dotnet/sdk:10.0` |
 | Ruby | `ruby` | `ruby main.rb` | | `bundle install` | `vendor/bundle` | `ruby:3.4-slim` |
 | PHP | `php` | `php index.php` | | `composer install` | `vendor` | `php:8.4-cli` |
 | Rust | `cargo` | | `cargo run --release` | `cargo fetch` | `target` and the Cargo cache | `rust:1-slim` |
