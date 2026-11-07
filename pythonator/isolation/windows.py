@@ -28,7 +28,7 @@ from pathlib import Path
 from .. import launcher
 from ..paths import IS_WINDOWS, DataDirs, quiet_start
 from .base import Command, Grant, IsolationError, Policy, launcher_argv, merge
-from .winloopback import EXIT_WFP, compile_lines, run_lines, script_lines
+from .winloopback import EXIT_WFP, compile_lines, script_lines
 
 SID = re.compile(r"S-1-15-2(?:-\d+){1,14}")
 NAME = re.compile(r"Pythonator\.[A-Za-z0-9.-]{1,53}")
@@ -438,22 +438,52 @@ def reach_left(containers: Sequence[str]) -> list[str] | None:
     return left
 
 
-def unreach_script(entries: Sequence[tuple[str, str]]) -> str:
-    """The PowerShell that takes back everything Make reachable added for each ``(SID, AppContainer name)``: the
-    loopback exemption, the loopback permit and both firewall rules. Each step is skipped quietly when it is
-    already gone, so running it twice is harmless."""
+EXIT_LIST = 6  # the list of sandboxes to undo held something else
+
+
+def unreach_list(entries: Sequence[tuple[str, str]]) -> str:
+    """The list :func:`unreach_script` reads: one ``SID<tab>AppContainer name`` per line. Raises ValueError."""
     for sid, container in entries:
         if not SID.fullmatch(sid) or not NAME.fullmatch(container):
             raise ValueError("not an AppContainer of Pythonator")
+    return "".join(f"{sid}\t{container}\n" for sid, container in entries)
+
+
+def unreach_script(listing: Path) -> str:
+    """The PowerShell that takes back everything Make reachable added for each sandbox in the file ``listing``
+    (:func:`unreach_list`): the loopback exemption, the loopback permit and both firewall rules. Each step is
+    skipped quietly when it is already gone, so running it twice is harmless.
+
+    The list is read from a file, not written into the command: the WFP code alone takes most of what a command
+    line may hold, and a dozen sandboxes made it too long for Windows ("The parameter is incorrect"). The file is
+    yours to change, so the elevated script checks every line again and refuses anything that isn't a Pythonator
+    sandbox: the most a changed file can do is undo Make reachable for another one."""
+    path = str(listing)
+    if any(c in path for c in "\r\n\0"):
+        raise ValueError("not a usable file name")
+    quoted = path.replace("'", "''")  # a single-quoted PowerShell string
     lines = ["$ErrorActionPreference = 'Stop'", "$ProgressPreference = 'SilentlyContinue'",
-             '$tool = Join-Path $env:SystemRoot "System32\\CheckNetIsolation.exe"']
-    lines += [f"& $tool LoopbackExempt -d '-p={sid}' | Out-Null" for sid, _c in entries]
+             '$tool = Join-Path $env:SystemRoot "System32\\CheckNetIsolation.exe"',
+             "$entries = @()",
+             f"foreach ($line in [IO.File]::ReadAllLines('{quoted}')) {{",
+             "  if ($line -eq '') { continue }",
+             "  $sid, $name, $extra = $line.Split([char]9)",
+             "  if ($null -ne $extra -or $sid -cnotmatch '^S-1-15-2(-[0-9]+){1,14}$' -or "
+             f"$name -cnotmatch '^Pythonator\\.[A-Za-z0-9.-]{{1,53}}$') {{ exit {EXIT_LIST} }}",
+             "  $entries += ,@($sid, $name)",
+             "}",
+             "foreach ($e in $entries) { & $tool LoopbackExempt -d \"-p=$($e[0])\" | Out-Null }"]
     lines += compile_lines()
-    for sid, container in entries:
-        lines += run_lines(sid, container, "", undo=True)
-    for _sid, container in entries:
-        lines += [_remove_rule(rule_name(container, local=local)) for local in (True, False)]
-    lines.append("exit 0")
+    lines += ["foreach ($e in $entries) {",
+              "  $wfp = [PythonatorWfp]::Run($e[0], \"Pythonator $($e[1]) (this PC, loopback)\", [int[]]@(), $true)",
+              f"  if (-not $wfp.StartsWith('ok')) {{ [Console]::Error.WriteLine($wfp); exit {EXIT_WFP} }}",
+              "}",
+              "$names = @{}",
+              "foreach ($e in $entries) { $names[\"Pythonator $($e[1])\"] = 1; "
+              "$names[\"Pythonator $($e[1]) (this PC)\"] = 1 }",
+              "Get-NetFirewallRule | Where-Object { $_.Group -eq 'Pythonator' -and "
+              "$names.ContainsKey($_.DisplayName) } | Remove-NetFirewallRule",
+              "exit 0"]
     return "\n".join(lines)
 
 
@@ -464,15 +494,26 @@ def _remove_rule(display: str) -> str:
 def unreach(containers: Sequence[str]) -> tuple[bool, str]:
     """Undo Make reachable for these AppContainers, removed services' included, with one UAC prompt:
     ``(done, message)``. Blocks until done (call it off the GUI thread)."""
+    import tempfile
+
     if not IS_WINDOWS:
         return True, "Nothing to undo: only Windows needs Make reachable."
     if not containers:
         return True, "Nothing to undo."
+    listing: Path | None = None
     try:
         entries = [(launcher.windows_sid(c), c) for c in dict.fromkeys(containers)]
-        code = _run_elevated(unreach_script(entries))
+        with tempfile.NamedTemporaryFile("w", encoding="ascii", suffix=".txt", prefix="pythonator-undo-",
+                                         delete=False) as f:
+            f.write(unreach_list(entries))
+            listing = Path(f.name)
+        code = _run_elevated(unreach_script(listing))
     except (OSError, ValueError, launcher.SandboxError) as exc:
         return False, f"Couldn't change the Windows settings: {exc}"
+    finally:
+        if listing is not None:
+            with contextlib.suppress(OSError):
+                listing.unlink()
     if code:
         return False, _REACH_ERRORS.get(code, f"Windows refused the change (exit code {code}).")
     many = len(entries) > 1
@@ -495,7 +536,8 @@ REACH_NOTE = ("Windows keeps a sandboxed server out of reach, even of the browse
 _REACH_ERRORS = {ERROR_CANCELLED: "Cancelled: Windows didn't get administrator rights.",
                  EXIT_EXEMPT: "Windows refused the loopback exemption (CheckNetIsolation failed).",
                  EXIT_RULE: "Windows refused the firewall rule.",
-                 EXIT_WFP: "Windows refused the loopback permit (Windows Filtering Platform)."}
+                 EXIT_WFP: "Windows refused the loopback permit (Windows Filtering Platform).",
+                 EXIT_LIST: "The list of firewall rules to remove was changed before Windows read it. Try again."}
 
 
 def encoded(command: str) -> str:
@@ -521,8 +563,21 @@ def make_reachable(ident: str, ports: Sequence[int], *, lan: bool, undo: bool = 
     return True, "Done: programs on this PC, your browser included, can reach it on 127.0.0.1."
 
 
+MAX_PARAMETERS = 32_000  # Windows' limit for a command line is 32767 characters, program name included
+
+
+def elevated_parameters(command: str) -> str:
+    """PowerShell's command line for ``command``. Raises OSError when Windows can't start one that long (it says
+    only "The parameter is incorrect")."""
+    parameters = f"-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {encoded(command)}"
+    if len(parameters) > MAX_PARAMETERS:
+        raise OSError(f"the PowerShell command is too long for Windows ({len(parameters)} characters)")
+    return parameters
+
+
 def _run_elevated(command: str) -> int:
-    """Run ``command`` in an elevated, hidden PowerShell: its exit code, or ERROR_CANCELLED."""
+    """Run ``command`` in an elevated, hidden PowerShell: its exit code, or ERROR_CANCELLED when you said no to
+    the administrator prompt. Raises OSError when Windows couldn't start it at all."""
     import ctypes
     from ctypes import wintypes as w
 
@@ -540,13 +595,19 @@ def _run_elevated(command: str) -> int:
     kernel32.CloseHandle.argtypes = (w.HANDLE,)
     info = ShellExecuteInfo()
     info.cbSize = ctypes.sizeof(info)
-    info.fMask = 0x00000040 | 0x00000100  # SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC
+    # SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI: Windows shows no error box of its own,
+    # which also made it report any failure as ERROR_CANCELLED ("you cancelled") after you closed that box.
+    info.fMask = 0x00000040 | 0x00000100 | 0x00000400
     info.lpVerb = "runas"
     info.lpFile = "powershell.exe"
-    info.lpParameters = f"-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {encoded(command)}"
+    info.lpParameters = elevated_parameters(command)
     info.nShow = 0
     if not shell32.ShellExecuteExW(ctypes.byref(info)):
-        return int(ctypes.get_last_error()) or ERROR_CANCELLED  # type: ignore[attr-defined,unused-ignore]
+        error = int(ctypes.get_last_error())  # type: ignore[attr-defined,unused-ignore]
+        if error == ERROR_CANCELLED:
+            return ERROR_CANCELLED
+        reason = ctypes.FormatError(error).strip() if error else "no reason given"  # type: ignore[attr-defined,unused-ignore]
+        raise OSError(f"Windows couldn't start an administrator PowerShell: {reason} ({error})")
     try:
         kernel32.WaitForSingleObject(info.hProcess, 120_000)
         code = w.DWORD(1)

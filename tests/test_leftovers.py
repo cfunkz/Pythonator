@@ -16,7 +16,7 @@ import pytest
 
 from pythonator import isolation, launcher
 from pythonator.core.models import Service
-from pythonator.isolation import leftovers, windows
+from pythonator.isolation import leftovers, windows, winloopback
 from pythonator.isolation.leftovers import Found, Leftover
 from pythonator.paths import IS_WINDOWS, DataDirs
 from tests.conftest import DaemonHarness
@@ -178,18 +178,31 @@ def test_windows_firewall_rules_are_read_with_their_ports() -> None:
     assert windows.parse_rules(text) == {"Pythonator.any": [], "Pythonator.web": [8000, 8001]}
 
 
-def test_undo_takes_back_everything_for_each_sandbox_in_one_script() -> None:
-    script = windows.unreach_script([("S-1-15-2-1-2", "Pythonator.a"), ("S-1-15-2-3-4", "Pythonator.b")])
+def test_undo_reads_its_list_from_a_file_so_any_number_fits_in_one_prompt(tmp_path: Path) -> None:
+    """A dozen leftovers made the command too long for Windows ("The parameter is incorrect"): the list now goes in
+    a file, and the command stays the same size however many sandboxes there are."""
+    entries = [(f"S-1-15-2-{n}-1111111111-2222222222-3333333333-4444444444-555555555-666666666", f"Pythonator.{n:012x}")
+               for n in range(500)]
+    listing = windows.unreach_list(entries)
+    assert listing.splitlines()[0] == f"{entries[0][0]}\t{entries[0][1]}" and len(listing.splitlines()) == 500
+    script = windows.unreach_script(tmp_path / "it's here" / "undo.txt")
+    assert "ReadAllLines('" + str(tmp_path / "it''s here" / "undo.txt") + "')" in script  # quoted for PowerShell
     assert script.count("Add-Type") == 1  # compiled once: a second Add-Type of the same type fails
-    for sid, name in (("S-1-15-2-1-2", "Pythonator.a"), ("S-1-15-2-3-4", "Pythonator.b")):
-        assert f"LoopbackExempt -d '-p={sid}'" in script
-        assert f"[PythonatorWfp]::Run('{sid}', 'Pythonator {name} (this PC, loopback)', [int[]]@(), $true)" in script
-        assert f"-DisplayName 'Pythonator {name} (this PC)'" in script and f"-DisplayName 'Pythonator {name}'" in script
+    assert "-cnotmatch '^S-1-15-2(-[0-9]+){1,14}$'" in script and f"exit {windows.EXIT_LIST}" in script
+    codes = [windows.EXIT_EXEMPT, windows.EXIT_RULE, winloopback.EXIT_WFP, windows.EXIT_LIST, windows.ERROR_CANCELLED]
+    assert len(set(codes)) == len(codes) and all(c in windows._REACH_ERRORS for c in codes[2:])
+    assert '"Pythonator $($e[1]) (this PC, loopback)"' in script  # the permit's name, as winloopback names it
+    assert winloopback.permit_name("Pythonator.x") == "Pythonator Pythonator.x (this PC, loopback)"
     assert "New-NetFirewallRule" not in script and script.endswith("exit 0")
+    assert len(windows.elevated_parameters(script)) < windows.MAX_PARAMETERS
+    with pytest.raises(OSError, match="too long"):
+        windows.elevated_parameters("x" * 20_000)
     with pytest.raises(ValueError):
-        windows.unreach_script([("S-1-5-21-1", "Pythonator.a")])
+        windows.unreach_list([("S-1-5-21-1", "Pythonator.a")])
     with pytest.raises(ValueError):
-        windows.unreach_script([("S-1-15-2-1", "Other'; rm")])
+        windows.unreach_list([("S-1-15-2-1", "Other'; rm")])
+    with pytest.raises(ValueError):
+        windows.unreach_script(Path("a\nb"))
 
 
 def test_windows_finds_what_a_removed_sandbox_still_has(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -263,7 +276,7 @@ def _powershell(script: str) -> subprocess.CompletedProcess[str]:
 
 
 @pytest.mark.skipif(not IS_WINDOWS, reason="only Windows has Make reachable")
-def test_windows_rules_of_a_removed_service_are_found_and_taken_back(dirs: DataDirs) -> None:
+def test_windows_rules_of_a_removed_service_are_found_and_taken_back(dirs: DataDirs, tmp_path: Path) -> None:
     """For real: Make reachable, then remove the service the old way (its rules stay), and the System check's
     finder sees them; the undo takes them back although the sandbox's profile is gone. CI runners are
     administrators, so the elevated script runs here without a UAC prompt."""
@@ -287,15 +300,19 @@ def test_windows_rules_of_a_removed_service_are_found_and_taken_back(dirs: DataD
         assert [i.key for i in leftovers.find({}).items if i.kind == "reach"].count(container) == 1
         assert [i for i in leftovers.find({ident: []}).items if i.key == container] == []  # still a service
     finally:
-        undo = _powershell(windows.unreach_script([(sid, container)]))
+        listing = tmp_path / "undo.txt"
+        listing.write_text(windows.unreach_list([(sid, container)]), encoding="ascii")
+        undo = _powershell(windows.unreach_script(listing))
         launcher.windows_delete_profile(container)
     assert undo.returncode == 0, f"{undo.stdout}\n{undo.stderr}"
     rules = windows.reach_rules()
     assert rules is not None and container not in rules
     assert sid.lower() not in (windows._exempt_sids() or set())
     assert windows.reach_left([container]) == []
-    again = _powershell(windows.unreach_script([(sid, container)]))  # nothing left: still fine
+    again = _powershell(windows.unreach_script(listing))  # nothing left: still fine
     assert again.returncode == 0, f"{again.stdout}\n{again.stderr}"
+    listing.write_text(f"{sid}\tNotPythonator\n", encoding="ascii")  # a changed list is refused
+    assert _powershell(windows.unreach_script(listing)).returncode == windows.EXIT_LIST
 
 
 # -- the System check --------------------------------------------------------------------------------------------
