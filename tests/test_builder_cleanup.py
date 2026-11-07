@@ -5,6 +5,7 @@ requests while services change state, leftover project folders found on Refresh,
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 import threading
@@ -14,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from pythonator import isolation
 from pythonator.core.models import Service
 from pythonator.core.store import Store
 from pythonator.daemon.supervisor import Supervisor
@@ -360,3 +362,135 @@ def test_only_one_process_holds_the_lock(tmp_path: Path) -> None:
     assert subprocess.run(other, check=False, timeout=60).returncode == 3  # a second Pythonator stops
     lock.release()
     assert subprocess.run(other, check=False, timeout=60).returncode == 0  # once the first is gone, it starts
+
+
+def test_only_a_made_project_is_deleted_and_only_when_the_user_confirms(dirs: Any, qtbot: Any,
+                                                                      tmp_path: Path) -> None:
+    from tests.conftest import DaemonHarness
+
+    h = DaemonHarness(dirs, qtbot)
+    try:
+        sup, host = h.daemon.sup, h.daemon.plugins
+        parent = tmp_path / "projects"
+        made = sup.create_project("worker-py", "job", parent)
+        folder = parent / "job"
+        h.wait(lambda: sup.slots[made.id].state.value in ("stopped", "failed"), timeout=240_000)
+        assert sup.slots[made.id].state.value == "stopped", sup.tail(made.id)
+        assert sup.slots[made.id].service.made_by is not None
+        mine = tmp_path / "mine"
+        mine.mkdir()
+        own = h.add(name="mine", folder=str(mine), runtime="python", entry="x.py",
+                    made_by={"template": "flask", "folder": str(mine)})  # the window can't claim it was made
+        assert sup.slots[own].service.made_by is None
+        with pytest.raises(ValueError, match="wasn't made by the Project builder"):
+            sup.project_folder(own)
+
+        builder = host.plugins["builder"]
+        listed = host._answer(builder, {"op": "projects"}, {"create_services"})["projects"]
+        assert [p["name"] for p in listed] == ["job"]
+        assert host._answer(builder, {"op": "delete", "id": made.id}, {"create_services"}) == {"asked": True}
+        h.wait(lambda: any(e.get("ev") == "confirm_delete" and e["id"] == made.id for e in h.events))
+        assert folder.is_dir() and made.id in sup.slots  # a plugin's request deletes nothing by itself
+
+        edited = sup.slots[made.id].service.model_copy(update={"made_by": None, "name": "job2"})
+        h.ok({"op": "update", "service": edited.model_dump(mode="json")})
+        assert sup.slots[made.id].service.made_by is not None  # an edit keeps the mark
+
+        h.ok({"op": "remove", "id": made.id, "files": True})  # the user said yes in the window
+        h.wait(lambda: not folder.exists() and made.id not in sup.slots, timeout=20_000)
+        assert parent.is_dir() and mine.is_dir()
+        ok, _data, err = h.call({"op": "remove", "id": own, "files": True})
+        assert not ok and "wasn't made" in err and mine.is_dir()
+    finally:
+        h.close()
+
+
+def test_a_moved_project_keeps_its_folder(dirs: Any, qtbot: Any, tmp_path: Path) -> None:
+    from tests.conftest import DaemonHarness
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    h = DaemonHarness(dirs, qtbot)
+    try:
+        service = Service.model_validate({"name": "p", "folder": str(elsewhere), "runtime": "python",
+                                          "entry": "x.py", "made_by": {"template": "flask",
+                                                                       "folder": str(tmp_path / "p")}})
+        h.daemon.sup.add(service)
+        with pytest.raises(ValueError, match="moved to another folder"):
+            h.daemon.sup.project_folder(service.id)
+    finally:
+        h.close()
+
+
+def test_a_removal_cleans_up_in_the_background(harness: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                               ) -> None:
+
+    sup = harness.daemon.sup
+    sid = harness.add(name="slow", folder=str(tmp_path), runtime="python", entry="x.py")
+    release = threading.Event()
+    seen: list[tuple[str, Path | None]] = []
+
+    def slow_forget(_service: Service, _dirs: DataDirs, *, deleted: Path | None = None) -> None:
+        seen.append((threading.current_thread().name, deleted))
+        release.wait(10)  # Windows: minutes over a big node_modules
+
+    monkeypatch.setattr(isolation, "forget", slow_forget)
+    done: list[str] = []
+    began = time.monotonic()
+    sup.remove(sid, then=lambda: done.append(threading.current_thread().name), deleted=tmp_path)
+    assert time.monotonic() - began < 1 and sid not in sup.slots  # gone from the list at once
+    assert harness.ok({"op": "ping"}) is not None  # the background service still answers
+    harness.wait(lambda: bool(seen))
+    assert seen == [(f"remove-{sid}", tmp_path)] and not done
+    release.set()
+    harness.wait(lambda: done == [f"remove-{sid}"])
+
+
+def test_a_held_file_doesnt_stop_a_delete(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from pythonator.daemon import supervisor
+
+    folder = tmp_path / "project"
+    (folder / "node_modules").mkdir(parents=True)
+    calls: list[Path] = []
+    real = shutil.rmtree
+
+    def busy_twice(path: Path, **kwargs: Any) -> None:
+        calls.append(Path(path))
+        if len(calls) < 3:
+            raise PermissionError(32, "The process cannot access the file because it is being used")
+        real(path, **kwargs)
+
+    monkeypatch.setattr(shutil, "rmtree", busy_twice)
+    monkeypatch.setattr(time, "sleep", lambda _s: None)
+    assert supervisor._delete_tree(folder) == "" and not folder.exists() and len(calls) == 3
+    calls.clear()
+    folder.mkdir()
+
+    def denied(path: Path, **_kwargs: Any) -> None:
+        calls.append(Path(path))
+        raise PermissionError(5, "Access is denied")
+
+    monkeypatch.setattr(shutil, "rmtree", denied)
+    assert supervisor._delete_tree(folder) == "Access is denied" and len(calls) == 4
+
+
+def test_the_window_lets_go_of_a_folder_before_deleting_it(qtbot: Any, tmp_path: Path) -> None:
+    from pythonator.ui.editor import EditorPanel
+
+    project, other = tmp_path / "project", tmp_path / "other"
+    (project / "src").mkdir(parents=True)
+    other.mkdir()
+    (project / "src" / "app.js").write_text("x", encoding="utf-8")
+    (other / "keep.py").write_text("y", encoding="utf-8")
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+    panel.set_root(str(project), "project")
+    panel.open(project / "src" / "app.js")
+    panel.open(other / "keep.py")
+    panel.current().setText("changed")  # type: ignore[union-attr]  # not asked about: the folder is going
+    watched = panel.files.model
+    panel.release(project)
+    assert panel.files.root == "" and panel.files.model is not watched
+    assert [panel.tabs.widget(i).path for i in range(panel.tabs.count())] == [other / "keep.py"]  # type: ignore[union-attr]
+    panel.files.set_root(str(other), "other")  # the new model works
+    assert panel.files.view.model() is panel.files.model and panel.files.root == str(other)

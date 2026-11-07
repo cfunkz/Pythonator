@@ -4,13 +4,21 @@ from __future__ import annotations
 
 import json
 import os
+import queue
+import socket
+import sys
+import time
 from pathlib import Path
 from typing import Any
 
+import psutil
 import pytest
 from PyQt6.QtNetwork import QLocalSocket
 
+from pythonator.daemon.runner import Exited, Runner
 from pythonator.daemon.server import socket_name
+from pythonator.isolation import base
+from pythonator.isolation.base import Command
 from pythonator.paths import IS_WINDOWS, DataDirs
 from tests.conftest import DaemonHarness
 
@@ -369,3 +377,128 @@ def test_uninstall_ends_only_the_installed_apps_own_processes() -> None:
     from pythonator.daemon import installer
 
     assert installer.end_strays() == []
+
+
+def test_the_background_service_measures_itself_and_its_plugins(dirs: Any) -> None:
+    from pythonator.daemon.supervisor import Stats, _own_stats
+
+    own = _own_stats({}, set(), [Stats(cpu=12.5, memory=1000)])
+    assert own["cpu"] >= 12.5 and own["memory"] > 1000  # this process counts too
+
+
+def test_a_start_that_never_listens_says_where_it_is_stuck(harness: Any, tmp_path: Path,
+                                                          monkeypatch: pytest.MonkeyPatch) -> None:
+    from pythonator.daemon import supervisor
+
+    monkeypatch.setattr(supervisor, "LISTEN_AFTER", 1)
+    folder = tmp_path / "quiet"
+    folder.mkdir()
+    (folder / "quiet.py").write_text("import time\ntime.sleep(60)\n")
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    sid = harness.add(name="quiet", folder=str(folder), runtime="python", entry="quiet.py", mode="sandbox",
+                      own_env=False, network={"ports": [port]})
+    harness.ok({"op": "start", "id": sid})
+    sup = harness.daemon.sup
+    harness.wait(lambda: "Not listening on port" in sup.tail(sid), timeout=30_000)
+    tail = sup.tail(sid)
+    assert f"Not listening on port {port} after 1 s" in tail and "quiet.py" in tail
+    harness.ok({"op": "stop", "id": sid})
+
+
+def test_input_to_a_program_that_never_reads_doesnt_block(tmp_path: Path) -> None:
+    from pythonator.daemon.runner import MAX_INPUT, Runner
+
+    sink: queue.SimpleQueue[Any] = queue.SimpleQueue()
+    cmd = Command([sys.executable, "-c", "import time; time.sleep(30)"], tmp_path, dict(os.environ))
+    runner = Runner("x", cmd, sink)
+    runner.start()
+    try:
+        began = time.monotonic()
+        results = [runner.write("é" * 65_536) for _ in range(MAX_INPUT + 50)]
+        assert time.monotonic() - began < 2
+        assert not results[-1]  # refused once it hasn't read what it was given
+    finally:
+        runner.kill()
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux sandbox without bubblewrap")
+def test_stop_ends_a_program_that_left_its_process_group(harness: Any, project: Path,
+                                                         monkeypatch: pytest.MonkeyPatch) -> None:
+    import psutil
+
+    from pythonator.isolation import linux
+
+    real = linux.support()
+    if not real.landlock or not real.seccomp:
+        pytest.skip("no Landlock or no libseccomp here (Landlock alone isn't a sandbox)")
+    monkeypatch.setattr(linux, "support", lambda: linux.Support(real.landlock, real.seccomp, ""))
+    (project / "d.py").write_text("import os, time\nif os.fork() == 0:\n    os.setsid()\n    if os.fork() == 0:\n"
+                                  "        os.execvp('sleep', ['sleep', '3117'])\n    os._exit(0)\n"
+                                  "print('forked', flush=True)\nwhile True: time.sleep(0.2)\n")
+
+    def daemonised() -> list[psutil.Process]:
+        return [p for p in psutil.process_iter(["cmdline"]) if p.info["cmdline"] == ["sleep", "3117"]]
+
+    sid = harness.add(name="d", folder=str(project), entry="d.py", restart="never")
+    try:
+        harness.ok({"op": "start", "id": sid})
+        harness.wait(lambda: "forked" in harness.output(sid))
+        harness.wait(lambda: bool(daemonised()))
+        time.sleep(2.5)  # the stats thread has seen it in the service's tree
+        harness.ok({"op": "stop", "id": sid})
+        harness.wait(lambda: harness.states(sid)[-1] == "stopped")
+        harness.wait(lambda: not daemonised(), timeout=3000)
+    finally:
+        for p in daemonised():
+            p.kill()
+
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def test_the_window_and_the_service_leave_the_folder_they_were_started_in(
+        dirs: DataDirs, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from pythonator.paths import leave_current_folder
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("NoDefaultCurrentDirectoryInExePath", raising=False)
+    leave_current_folder(dirs)
+    assert Path.cwd().resolve() == dirs.root.resolve()
+    assert os.environ["NoDefaultCurrentDirectoryInExePath"] == "1"  # noqa: SIM112 - the name Windows reads
+    app = (ROOT / "pythonator" / "ui" / "app.py").read_text(encoding="utf-8")
+    assert "leave_current_folder(dirs)" in app  # the window does it too, not only the background service
+
+
+POSIX = pytest.mark.skipif(IS_WINDOWS, reason="process groups and signals")
+
+
+def _wait_exit(sink: queue.SimpleQueue[Any], timeout: float) -> Exited | None:
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        try:
+            item = sink.get(timeout=0.1)
+        except queue.Empty:
+            continue
+        if isinstance(item, Exited):
+            return item
+        item.source.take()  # output: keep the program from waiting on its pipe
+    return None
+
+
+@POSIX
+def test_a_crash_is_seen_while_a_child_still_holds_the_output(tmp_path: Path) -> None:
+    """A bot that crashed while its worker (a pool, an ffmpeg) still runs showed as running and was never
+    restarted: the exit was only reported once every holder of the output had closed it."""
+    code = ("import subprocess, sys; subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+            "sys.exit(3)")
+    sink: queue.SimpleQueue[Any] = queue.SimpleQueue()
+    run = Runner("svc", base.Command([sys.executable, "-c", code], tmp_path, dict(os.environ)), sink)
+    started = time.monotonic()
+    run.start()
+    done = _wait_exit(sink, 20)
+    assert done is not None and done.code == 3
+    assert time.monotonic() - started < 10, "the exit waited for the child"
+    time.sleep(0.3)
+    assert not [p for p in psutil.Process().children(recursive=True) if "time.sleep(60)" in " ".join(p.cmdline())]

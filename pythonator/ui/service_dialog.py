@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
+from PyQt6 import sip
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
@@ -54,6 +55,16 @@ class _Bridge(QObject):
         it: then there is nobody left to tell, and the thread ends quietly instead of raising RuntimeError."""
         with contextlib.suppress(RuntimeError):
             self.text.emit(text)
+
+    def deliver(self, slot: Callable[[str], None]) -> None:
+        """Call ``slot`` with each text, on the window's thread. A text sent just before the window closed still
+        arrives after this object was deleted with it: it is dropped, so ``slot`` never reaches a deleted widget."""
+
+        def guarded(text: str) -> None:
+            if not sip.isdeleted(self):
+                slot(text)
+
+        self.text.connect(guarded)
 
 
 class KeyValueTable(QTableWidget):
@@ -455,7 +466,7 @@ class ServiceDialog(QDialog):
         sid = self.original.id
         self.reach_note.setText("Waiting for the administrator prompt…")
         bridge = _Bridge(self)
-        bridge.text.connect(self.reach_note.setText)
+        bridge.deliver(self.reach_note.setText)
 
         def work() -> None:
             ok, message = windows.make_reachable(sid, ports, lan=lan, undo=undo)

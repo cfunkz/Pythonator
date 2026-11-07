@@ -7,6 +7,12 @@ All notable changes to Pythonator are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Windows: closing the window while removing a service was still undoing its Make reachable (or while Make
+  reachable or Open was still checking) raised an error in the event loop: the answer reached a part of the window
+  that was already gone. It is now dropped.
+
 ## [0.0.19] - 2026-11-07
 
 ### Added

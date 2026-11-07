@@ -822,7 +822,7 @@ class MainWindow(QMainWindow):
             if level != "info":
                 bridge.deleteLater()
 
-        bridge.text.connect(step)
+        bridge.deliver(step)
 
         def work() -> None:
             left = windows.reach_left([windows.container_name(i) for i in ids])
@@ -993,7 +993,7 @@ class MainWindow(QMainWindow):
             bridge.deleteLater()
             QDesktopServices.openUrl(QUrl(url))
 
-        bridge.text.connect(step)
+        bridge.deliver(step)
         threading.Thread(target=check, name="reachable", daemon=True).start()
 
     def open_log(self) -> None:

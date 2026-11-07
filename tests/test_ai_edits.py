@@ -359,3 +359,43 @@ def test_at_most_twelve_files_and_a_megabyte_in_one_change(tmp_path: Path) -> No
         files.propose_many("p", "s", many, "")
     big = [{"path": f"f{i}.txt", "edits": [{"old": "", "new": "x" * 40_000 + "\n"}]} for i in range(12)]
     assert files.propose_many("p", "s", big, "").paths[-1] == "f11.txt"  # 480 KB: fine
+
+
+STRESS = 'p = sub.add_parser("brute")\np.add_argument("--lines", type=int, default=1_000_000)\n'
+
+
+def test_a_placeholder_path_goes_to_the_file_that_holds_the_text() -> None:
+    answer = ("<<<<<<< EDIT path/to/file.py\n" + STRESS + "=======\n"
+              + STRESS.replace("1_000_000", "50_000") + ">>>>>>> END\n")
+    edits, notes = context.resolve_paths(context.parse_edits(answer), ["stress.py", "main.py"],
+                                         {"stress.py": "import x\n" + STRESS, "main.py": "print()\n"})
+    assert list(edits) == ["stress.py"] and "is for stress.py" in notes[0]
+
+
+def test_a_wrong_folder_or_a_placeholder_that_matches_nothing() -> None:
+    known = ["src/app.py", "README.md"]
+    shown = {"src/app.py": "PORT = 80\n"}
+    edits, _ = context.resolve_paths(context.parse_edits("<<<<<<< EDIT app.py\nPORT = 80\n=======\nPORT = 1\n"
+                                                         ">>>>>>> END\n"), known, shown)
+    assert list(edits) == ["src/app.py"]  # the one file of that name
+    edits, notes = context.resolve_paths(context.parse_edits("<<<<<<< EDIT path/to/file.py\nnothing like it\n"
+                                                             "=======\nx\n>>>>>>> END\n"), known, shown)
+    assert edits == {} and "left out" in notes[0]  # never "create path/to/file.py"
+    edits, _ = context.resolve_paths(context.parse_edits("<<<<<<< EDIT docs/NEW.md\n=======\n# New\n"
+                                                         ">>>>>>> END\n"), known, shown)
+    assert list(edits) == ["docs/NEW.md"]  # a new file stays a new file
+
+
+def test_trailing_spaces_and_line_ends_dont_stop_an_edit() -> None:
+    text = "a = 1\nPORT = 80\nb = 2\n"
+    assert context.loose_span(text, "PORT = 80   \n") == (6, 15)
+    assert context.loose_span("x\nx\n", "x") is None  # twice: not a unique place
+    edits, _ = context.resolve_paths(context.parse_edits("<<<<<<< EDIT app.py\nPORT = 80  \n=======\nPORT = 1\n"
+                                                         ">>>>>>> END\n"), ["app.py"], {"app.py": text})
+    fixed = edits["app.py"][0]
+    assert fixed.old == "PORT = 80\n" and text.count(fixed.old) == 1  # what Pythonator replaces, exactly
+
+
+def test_the_prompt_asks_for_real_paths() -> None:
+    assert "path/to/file.py" in context.SYSTEM and "never a placeholder" in context.SYSTEM
+    assert "<<<<<<< EDIT main.py" in context.SYSTEM

@@ -213,3 +213,48 @@ def test_builder_only_asks_for_templates(sent: list[dict[str, Any]], monkeypatch
     assert "Choose a project" in plugin.status[0] and not deletions
     plugin.on_action("delete", "shop")
     assert deletions == ["abc"] and "confirm" in plugin.status[0]  # Pythonator asks the user; nothing else
+
+
+def test_notify_has_two_views(sent: list[dict[str, Any]], tmp_path: Path) -> None:
+    from tests.test_official_plugins import notify_plugin
+
+    plugin = notify_plugin(tmp_path)
+    first = json.dumps(plugin.panel([]))
+    assert '"type": "tabs"' in first and "Problems 24 h" in first and "Detail" not in first
+    plugin.on_action("page", "Events")
+    second = json.dumps(plugin.panel([]))
+    assert "Nothing has happened yet" in second and "Problems 24 h" not in second
+    assert '"icon": "send"' in second and '"icon": "delete"' in second
+
+
+def test_builder_has_two_views(sent: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.test_official_plugins import plugin_module
+
+    builder = plugin_module("builder")
+    plugin = builder.Builder(permissions=frozenset({"ui", "create_services"}))
+    shown: list[dict[str, Any]] = []
+    monkeypatch.setattr(plugin, "project_templates", lambda: {"templates": [], "folder": "/p"})
+    monkeypatch.setattr(plugin, "list_projects", list)
+    monkeypatch.setattr(plugin, "show", shown.append)
+    plugin.on_start()
+    plugin.loading = False
+    plugin.on_action("page", "Projects")
+    assert '"type": "tabs"' in json.dumps(shown[-1]) and "No projects made here yet" in json.dumps(shown[-1])
+
+
+def test_notify_reads_every_retry_after() -> None:
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("notify_plugin", Path(__file__).parent.parent / "plugins"
+                                                  / "notify" / "plugin.py")
+    assert spec is not None and spec.loader is not None
+    notify: Any = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = notify  # its dataclasses look themselves up there
+    try:
+        spec.loader.exec_module(notify)
+    finally:
+        sys.modules.pop(spec.name, None)
+    assert notify.retry_after("7") == 7
+    assert notify.retry_after("-3") == 1
+    assert notify.retry_after("Wed, 21 Oct 2015 07:28:00 GMT") == 1
+    assert notify.retry_after(None) == 5 and notify.retry_after("soon") == 5

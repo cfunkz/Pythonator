@@ -46,7 +46,15 @@ Selected test modules in [`tests/`](https://github.com/cfunkz/Pythonator/tree/ma
 | `test_leftovers.py`, `test_builder_cleanup.py` | System check's *Left behind by services* and the builder's leftover folders |
 | `test_e2e_node_sandbox.py` | A Vite app in the Windows sandbox, made reachable and loaded over HTTP (CI only, `PYTHONATOR_E2E=1`) |
 | `test_ui.py`, `test_run_settings.py` | Parts of the window, offscreen, including About, Licensing, Support and the Limits and Schedule tabs |
-| `test_release_00NN.py` | Regression tests for the fixes in each release |
+| `test_git.py` | Git pulls: settings that run programs, links and files planted in `.git`, only the saved address, the timeout, pulls that wait for the services that may write the checkout |
+| `test_isolation.py` | Sandbox rules without an escape attempt: refused folders, inherited secrets, devices, ports, process groups, files a service plants for Pythonator |
+| `test_container.py` | Container mode: Compose projects and their check, the default images, folders it may not mount |
+| `test_windows.py` | Node.js in the Windows sandbox, program folders, Make reachable, PowerShell and WSL |
+| `test_runtimes.py`, `test_templates.py` | Runtime versions, ports and listeners; the Project builder and its templates |
+| `test_editor.py` | The editor and the file tree |
+| `test_repo.py` | The repository itself: no program by a bare name, current lock files and actions, no committed `.env` |
+
+A fix adds its regression test to the file for its topic, not to a file per release.
 
 UI tests run offscreen (`QT_QPA_PLATFORM=offscreen`, set in `tests/conftest.py`). Sandbox tests skip, with a reason,
 any protection the computer lacks.

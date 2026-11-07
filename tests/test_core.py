@@ -285,3 +285,26 @@ def test_windows_full_access_runs_a_venvs_python_without_its_redirector(tmp_path
     assert runtimes.direct_python(["node", "x.js"], {}) == (["node", "x.js"], {})
     (home / "python.exe").unlink()  # the base Python is gone: leave it to the venv's own launcher to say so
     assert runtimes.direct_python([venv_py], {})[0] == [venv_py]
+
+
+def test_a_cron_line_with_seconds_is_refused() -> None:
+    for text in ("* * * * * *", "*/1 * * * * *", "0 0 1 1 * 2027"):
+        with pytest.raises(ValueError, match="Not a schedule"):
+            schedule.check(text)
+    for text in ("*/5 * * * *", "@daily", "every 15m", "0 9 * * 1-5"):
+        assert schedule.check(text) == text
+
+
+def test_a_six_field_schedule_saved_before_still_loads_without_its_seconds(project: Path) -> None:
+    service = Service.model_validate({"name": "job", "folder": str(project), "runtime": "python", "entry": "a.py",
+                                      "schedule": "0 */5 * * * *"})
+    assert service.schedule == "*/5 * * * *"
+    assert Service.model_validate({**service.model_dump(), "schedule": "every 30s"}).schedule == "every 30s"
+
+
+def test_a_limit_too_big_for_a_number_is_an_error_not_a_crash() -> None:
+    from pythonator.core import limits
+
+    for parse in (limits.parse_memory, limits.parse_cpu):
+        with pytest.raises(limits.LimitError):
+            parse("9" * 400)

@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
 import sys
+import textwrap
+import threading
 from pathlib import Path
 from typing import Any
 
 import pytest
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QLabel, QPushButton
 
+from pythonator import errors
 from pythonator.core.models import Service
+from pythonator.paths import DataDirs
 from pythonator.ui import panels, theme
 from pythonator.ui.about import SUPPORT, AboutDialog, LicensingDialog, SupportDialog, SystemCheckDialog
 from pythonator.ui.console import Console
@@ -429,3 +437,417 @@ def test_review_window_for_several_files(qtbot: Any) -> None:
     assert dlg.apply_button.text() == "Apply all 2 files"
     text = " ".join(w.text() for w in dlg.findChildren(QLabel))
     assert "changes to 2 files" in text and "new  static/index.html" in text and "changed  main.py" in text
+
+
+def test_env_table_adds_deletes_and_imports(qtbot: Any, tmp_path: Path) -> None:
+    from pythonator.ui.service_dialog import ServiceDialog
+
+    (tmp_path / ".env").write_text("A=1\nTOKEN=x\n")
+    dlg = ServiceDialog(None, [], preset={"name": "s", "folder": str(tmp_path), "runtime": "python",
+                                          "entry": "x.py", "env": {"A": "keep"}})
+    qtbot.addWidget(dlg)
+    dlg.env.add("B", "2")
+    dlg.env.add("C", "3")
+    dlg.env.selectRow(1)
+    dlg.env.delete_selected()
+    assert dlg.env.pairs() == [("A", "keep"), ("C", "3")]
+    dlg.env_file.setText(".env")
+    dlg._import_env_file()
+    assert dlg.env.pairs() == [("A", "keep"), ("C", "3"), ("TOKEN", "x")] and "1 variable" in dlg.env_note.text()
+
+
+def test_system_check_says_what_the_computer_is(qtbot: Any, tmp_path: Path) -> None:
+    from PyQt6.QtWidgets import QLabel
+
+    from pythonator.core import sysinfo
+    from pythonator.ui.about import SystemCheckDialog
+
+    facts = sysinfo.facts(tmp_path)
+    computer = dict(facts["This computer"])
+    assert computer["System"] and computer["Processor"] and "GB" in computer["Memory"]
+    dlg = SystemCheckDialog({"app": [["ok", "Python 3.13"]], "sandbox": [["Network off", "enforced"],
+                                                                      ["Only listed ports", "not enforced"]]},
+                            data_folder=tmp_path)
+    qtbot.addWidget(dlg)
+    text = " ".join(w.text() for w in dlg.findChildren(QLabel))
+    assert "1 of 2 protections enforced" in text and "Network off" in text and computer["System"] in text
+    qtbot.waitUntil(lambda: any(line.startswith("Python:") for line in dlg.report), timeout=30_000)
+    assert sys.version.split()[0] in "\n".join(dlg.report) or "Python" in "\n".join(dlg.report)
+
+
+def test_markdown_shows_no_html_and_loads_nothing(qtbot: Any) -> None:
+    from pythonator.ui.panels import ChatText, markdown_html
+
+    html = markdown_html("# Fix\n\n**bold** <b>raw</b> ![x](file:///etc/passwd) [docs](https://example.com)")
+    assert "<img" not in html and "file:///etc/passwd" not in html  # images are dropped: nothing is loaded
+    assert "&lt;b&gt;raw&lt;/b&gt;" in html and "https://example.com" in html  # HTML stays text, links stay
+    text = ChatText(markdown=True)
+    qtbot.addWidget(text)
+    text.set_text("**bold**")
+    assert "bold" in text.text() and "**" not in text.text()
+    plain = ChatText()
+    qtbot.addWidget(plain)
+    plain.set_text("**not markdown** <b>x</b>")
+    assert plain.text() == "**not markdown** <b>x</b>" and plain.textFormat() == Qt.TextFormat.PlainText
+
+
+def test_tables_are_updated_in_place(qtbot: Any) -> None:
+    from PyQt6.QtWidgets import QTableWidget
+
+    from pythonator.sdk import ui
+    from pythonator.ui.panels import PanelPage
+
+    page = PanelPage("n", lambda *a: None)
+    qtbot.addWidget(page)
+    page.show_panel(ui.panel("N", ui.table(["Service", "State"], [["api", "running"]], ["ok"])))
+    table = page.findChild(QTableWidget)
+    assert table is not None
+    page.show_panel(ui.panel("N", ui.table(["Service", "State"], [["api", "failed"], ["web", "running"]])))
+    assert page.findChild(QTableWidget) is table and table.rowCount() == 2
+    item = table.item(0, 1)
+    assert item is not None and item.text() == "failed"
+
+
+def test_plugin_panels_are_tabs(qtbot: Any) -> None:
+    from pythonator.sdk import ui
+    from pythonator.ui.panels import PanelDock
+
+    dock = PanelDock(lambda *a: None)
+    qtbot.addWidget(dock)
+    dock.update_panel("notify", "Notify", ui.panel("Notify", ui.text("ok")))
+    dock.update_panel("ai", "AI", ui.panel("AI assistant", ui.text("hi")))
+    assert dock.count() == 2 and [dock.tabText(i) for i in range(2)] == ["Notify", "AI assistant"]
+    dock.update_panel("ai", "", None)
+    assert dock.count() == 1 and "ai" not in dock.pages
+
+
+def test_a_row_wraps_instead_of_cutting_off(qtbot: Any) -> None:
+    from pythonator.sdk import ui
+    from pythonator.ui.panels import FlowRow, PanelPage
+
+    page = PanelPage("notify", lambda *a: None)
+    qtbot.addWidget(page)
+    page.show_panel(ui.panel("Notify", ui.row(ui.stat("Running", "8 / 17"), ui.stat("Problems, 24 h", "151"),
+                                              ui.stat("Health checks", "0 / 1"))))
+    from PyQt6.QtWidgets import QWidget
+
+    flow = next(f for w in page.findChildren(QWidget) if isinstance(f := w.layout(), FlowRow))
+    assert isinstance(flow, FlowRow) and flow.count() == 3
+    wide, narrow = flow.heightForWidth(900), flow.heightForWidth(260)
+    assert narrow > wide  # two lines, not a row wider than the panel
+    assert flow.minimumSize().width() < 260
+
+
+def test_the_meter_shows_pythonators_share(qtbot: Any) -> None:
+    from pythonator.ui.system_meter import SystemMeter
+
+    meter = SystemMeter()
+    qtbot.addWidget(meter)
+    meter.set_own(cpu=200.0, memory=300 * 1024**2)
+    meter.sample()
+    assert 0 <= meter.own_cpu <= (meter.cpu or 0) + 0.01 and 300 * 1024**2 <= meter.own_mem <= meter.used
+    assert "Pythonator" in meter.toolTip()
+    meter.grab()  # paints both shades
+
+
+def _inside(page: Any) -> list[str]:
+    """Widgets of the page that reach past its right edge."""
+    from PyQt6.QtWidgets import QWidget
+
+    body, edge = page.widget(), page.viewport().width()
+    out = [f"the page is {body.width()} px in a {edge} px dock"] if body.width() > edge else []
+    for w in body.findChildren(QWidget):
+        if not w.isVisibleTo(body):
+            continue
+        right = w.mapTo(body, w.rect().topRight()).x()
+        if right > edge + 1:
+            out.append(f"{type(w).__name__} {w.objectName()} reaches {right} > {edge}")
+    return out
+
+
+@pytest.mark.parametrize("width", [240, 300, 420])
+def test_no_panel_reaches_past_the_dock(qtbot: Any, width: int) -> None:
+    from pythonator.sdk import ui
+    from pythonator.ui.panels import PANEL_MIN_WIDTH, PanelPage
+
+    page = PanelPage("p", lambda *a: None)
+    qtbot.addWidget(page)
+    long = "C:\\Users\\someone\\Pythonator Projects\\a-very-long-project-name\\node_modules\\vite\\bin\\vite.js"
+    page.show_panel(ui.panel(
+        "P", ui.tabs("page", ["New project", "Projects (12)"], "New project"),
+        ui.row(ui.select("t", ["React (Vite) with a very long option name indeed"], label="Template"),
+               ui.button("Refresh", "r", icon="refresh")),
+        ui.text(long), ui.input("create", long[:100], "Create"),
+        ui.row(ui.button("Create my-react-application-with-a-long-name", "c"), ui.button("Delete…", "d")),
+        ui.row(*(ui.stat(f"Statistic {i}", "123 / 456") for i in range(4))),
+        ui.table(["Project", "Template", "State", "Folder"], [["my-react", "react", "failed", long]] * 3)))
+    page.show()
+    page.resize(width, 700)
+    body, port = page.widget(), page.viewport()
+    assert body is not None and port is not None
+    qtbot.waitUntil(lambda: body.width() == port.width())
+    assert page.minimumWidth() == PANEL_MIN_WIDTH
+    assert _inside(page) == []
+
+
+def test_a_button_ends_in_an_ellipsis_instead_of_widening_the_panel(qtbot: Any) -> None:
+    from pythonator.ui.panels import FitButton, breakable
+
+    b = FitButton("Create my-react-application-with-a-long-name")
+    qtbot.addWidget(b)
+    assert b.minimumSizeHint().width() <= 56 < b.sizeHint().width()
+    b.resize(80, 30)
+    b.show()
+    assert b.text().endswith("…") and b.toolTip() == b.full
+    assert "\u200b" in breakable("C:\\Users\\someone\\Pythonator Projects\\my-react\\node_modules")
+    assert breakable("short words only") == "short words only"
+
+
+def test_the_host_checks_tabs_and_icons() -> None:
+    from pydantic import ValidationError
+
+    from pythonator.plugins.host import Panel
+    from pythonator.sdk import ICONS, ui
+
+    Panel.model_validate(ui.panel("ok", ui.tabs("p", ["A", "B"], "A"), ui.button("Refresh", "r", icon="refresh")))
+    for bad in (ui.tabs("p", ["only one"], "x"), ui.tabs("p", [str(i) for i in range(7)], "0"),
+                ui.button("x", "x", icon="https://example.com/a.png")):
+        with pytest.raises(ValidationError):
+            Panel.model_validate(ui.panel("bad", bad))
+    from pythonator.ui import icons
+
+    assert set(ICONS) <= set(icons.SHAPES)
+
+
+def test_tabs_switch_views(qtbot: Any) -> None:
+    from PyQt6.QtWidgets import QPushButton
+
+    from pythonator.sdk import ui
+    from pythonator.ui.panels import PanelPage
+
+    got: list[tuple[str, str]] = []
+    page = PanelPage("p", lambda _p, a, v: got.append((a, v)))
+    qtbot.addWidget(page)
+    page.show_panel(ui.panel("P", ui.tabs("page", ["Services", "Events"], "Services")))
+    buttons = [b for b in page.findChildren(QPushButton) if b.property("segment")]
+    assert [b.isChecked() for b in buttons] == [True, False]
+    buttons[1].click()
+    assert got == [("page", "Events")]
+
+
+def test_service_details_are_in_a_menu(qtbot: Any, dirs: DataDirs, tmp_path: Path) -> None:
+    from PyQt6.QtWidgets import QMenu
+
+    from pythonator.ui.main_window import MainWindow
+
+    window = MainWindow(dirs)
+    qtbot.addWidget(window)
+    try:
+        service = Service.model_validate({"name": "web", "folder": str(tmp_path), "runtime": "python",
+                                          "entry": "app.py"})
+        window.services[service.id] = service
+        window.current = service.id
+        window.states[service.id] = {"state": "running", "pid": 4242}
+        window.stats[service.id] = {"cpu": 3.5, "memory": 50 * 2**20, "ports": [8000]}
+        rows = dict(window.details(service))
+        assert rows["Process"] == "pid 4242" and rows["Listening on"] == "8000" and rows["Folder"] == str(tmp_path)
+        menu = window._details_menu(QMenu(window))
+        texts = [a.text() for a in menu.actions()]
+        assert any(t.startswith("Process\tpid 4242") for t in texts) and "Copy all details" in texts
+        window._update_header()
+        assert "pid" not in window.h_info.full and "pid 4242" in window.h_info.toolTip()
+        assert all(not b.text() or b.text() == "" for b in window.buttons)  # icons, the words in tooltips
+    finally:
+        window.client.close()
+
+
+def _panel(n: int, text: str = "word ") -> dict[str, Any]:
+    return {"title": f"P{n}", "items": [{"type": "text", "text": text * 40} for _ in range(10)]}
+
+
+def test_redraws_are_coalesced_and_hidden_tabs_wait(qtbot: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    from pythonator.ui.panels import REDRAW_MS, PanelDock
+
+    dock = PanelDock(lambda *a: None)
+    qtbot.addWidget(dock)
+    dock.show()
+    drawn: list[str] = []
+    dock.update_panel("a", "A", _panel(0))
+    dock.update_panel("b", "B", _panel(0))
+    original = PanelDock._draw
+
+    def counted(self: PanelDock, page: Any, name: str, panel: dict[str, Any]) -> None:
+        drawn.append(page.plugin)
+        original(self, page, name, panel)
+
+    monkeypatch.setattr(PanelDock, "_draw", counted)
+    for i in range(1, 20):  # a streamed answer: twenty updates
+        dock.update_panel("a", "A", _panel(i))
+        dock.update_panel("b", "B", _panel(i))
+    assert drawn == [] and dock.tabText(dock.indexOf(dock.pages["a"])) == "P19"
+    qtbot.wait(REDRAW_MS * 3)
+    assert drawn == ["a"] and dock.pages["a"].title == "P19"  # once, the latest; b is hidden
+    assert "b" in dock.pending
+    dock.setCurrentWidget(dock.pages["b"])
+    assert drawn == ["a", "b"] and not dock.pending
+    dock.update_panel("a", "A", None)
+    assert "a" not in dock.pages
+
+
+def test_a_resize_lays_the_panel_out_once_it_rests(qtbot: Any) -> None:
+    from pythonator.ui.panels import REFLOW_MS, PanelPage
+
+    page = PanelPage("p", lambda *a: None)
+    qtbot.addWidget(page)
+    page.resize(400, 300)
+    page.show()
+    page.show_panel(_panel(1))
+    body, port = page.widget(), page.viewport()
+    assert body is not None and port is not None
+    qtbot.waitUntil(lambda: body.width() == port.width())
+    first = body.width()
+    for width in range(400, 600, 10):  # a drag
+        page.resize(width, 300)
+        qtbot.wait(5)
+    assert body.width() == first  # not at every step
+    qtbot.wait(REFLOW_MS * 3)
+    assert body.width() == port.width() != first
+
+
+def test_a_label_remembers_its_height_per_width(qtbot: Any) -> None:
+    from pythonator.ui.panels import WrapLabel
+
+    label = WrapLabel("word " * 200)
+    qtbot.addWidget(label)
+    h1 = label.heightForWidth(200)
+    assert label.heightForWidth(200) == h1 and len(label._heights) == 1
+    assert label.heightForWidth(400) < h1 and len(label._heights) == 2
+    label.setText("short")
+    assert label._heights == {} and label.heightForWidth(200) < h1
+    for w in range(100, 140):
+        label.heightForWidth(w)
+    assert len(label._heights) <= 33
+    assert label.textFormat().name == "PlainText"  # a plugin's text is never HTML
+
+
+def test_labels_and_tooltips_never_read_html(qtbot: Any) -> None:
+    from PyQt6.QtCore import Qt
+
+    from pythonator.ui.widgets import label, tip
+
+    assert label("<img src='/dev/zero'>").textFormat() == Qt.TextFormat.PlainText
+    assert tip("plain name") == "plain name"
+    assert tip("<img src='/dev/zero'>") == "<qt>&lt;img src=&#x27;/dev/zero&#x27;&gt;</qt>"
+
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def test_a_worker_thread_can_report_after_the_window_closed(qtbot: Any) -> None:
+    from PyQt6 import sip
+
+    from pythonator.ui.service_dialog import _Bridge
+
+    bridge = _Bridge()
+    got: list[str] = []
+    bridge.text.connect(got.append)
+    bridge.send("one")
+    sip.delete(bridge)  # the window, its parent, closed while the thread still ran
+    bridge.send("two")  # RuntimeError before: "wrapped C/C++ object of type _Bridge has been deleted"
+    assert got == ["one"]
+    source = (ROOT / "pythonator" / "ui" / "main_window.py").read_text(encoding="utf-8")
+    assert "bridge.text.emit(" not in source
+
+
+def test_an_unexpected_error_is_logged_and_the_program_goes_on(monkeypatch: pytest.MonkeyPatch,
+                                                                caplog: pytest.LogCaptureFixture) -> None:
+    said: list[str] = []
+    monkeypatch.setattr(sys, "excepthook", sys.excepthook)
+    errors.keep_running(said.append)
+    try:
+        raise ZeroDivisionError("boom")
+    except ZeroDivisionError:
+        sys.excepthook(*sys.exc_info())
+    assert said and "ZeroDivisionError" in said[0] and "nothing was closed" in said[0]
+    assert "Unexpected error" in caplog.text
+    errors._notify.clear()
+
+
+def test_a_slot_that_raises_doesnt_end_the_window() -> None:
+    code = textwrap.dedent("""
+        from PyQt6.QtCore import QCoreApplication, QTimer
+        from pythonator import errors
+        app = QCoreApplication([])
+        errors.keep_running()
+        QTimer.singleShot(50, lambda: 1 / 0)
+        QTimer.singleShot(300, lambda: (print("ALIVE", flush=True), app.quit()))
+        app.exec()
+    """)
+    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60, check=False,
+                          env={**os.environ, "QT_QPA_PLATFORM": "offscreen"})
+    assert "ALIVE" in done.stdout, done.stderr[-2000:]
+
+
+def test_system_check_wraps_long_paths_and_hides_the_home_folder() -> None:
+    from pythonator.ui import about
+
+    home = str(Path.home())
+    path = home + r"\AppData\Local\Microsoft\WinGet\Packages\DenoLand.Deno_8wekyb3d8bbwe\deno.exe"
+    shown = about._private(path)
+    assert shown.startswith("~") and home not in shown
+    assert about._breakable(r"C:\a\b") == "C:\\\u200ba\\\u200bb"
+    assert about._breakable("a / b") == "a / b"  # only inside a path
+    if shutil.which("true"):
+        assert about._private("nothing to hide") == "nothing to hide"
+
+
+def test_an_error_on_a_worker_thread_reaches_the_status_bar_on_the_window_thread(qtbot: Any) -> None:
+    from PyQt6.QtWidgets import QWidget
+
+    from pythonator.ui.app import _Notice
+
+    seen: list[tuple[str, bool]] = []
+
+    class Window(QWidget):
+        def _status(self, text: str, _ms: int) -> None:
+            seen.append((text, threading.current_thread() is threading.main_thread()))
+
+    window = Window()
+    qtbot.addWidget(window)
+    notice = _Notice(window)  # type: ignore[arg-type]
+    worker = threading.Thread(target=notice.said.emit, args=("boom",))
+    worker.start()
+    worker.join()
+    qtbot.waitUntil(lambda: bool(seen), timeout=2000)
+    assert seen == [("boom", True)]
+
+
+def test_a_worker_answer_that_arrives_after_the_window_closed_is_dropped(qtbot: Any) -> None:
+    """Removing a project on Windows undoes Make reachable on a worker thread, and the window may close before the
+    answer arrives. The answer is dropped instead of reaching a deleted object, which raised in the event loop."""
+    import threading
+
+    from PyQt6 import sip
+    from PyQt6.QtWidgets import QWidget
+
+    from pythonator.ui.service_dialog import _Bridge
+
+    got: list[str] = []
+    for close_first in (False, True):
+        window = QWidget()
+        bridge = _Bridge(window)
+
+        def step(text: str, bridge: _Bridge = bridge) -> None:
+            got.append(text)
+            bridge.deleteLater()
+
+        bridge.deliver(step)
+        worker = threading.Thread(target=bridge.send, args=(f"done:{close_first}",))
+        worker.start()
+        worker.join()
+        if close_first:
+            sip.delete(window)
+        qtbot.wait(50)
+        if not close_first:
+            window.deleteLater()
+    assert got == ["done:False"]

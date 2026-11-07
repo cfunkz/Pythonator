@@ -289,3 +289,45 @@ def test_panel_text_box_keeps_the_draft_and_sends_on_enter(qtbot: Any) -> None:
     assert combo is not None and combo.currentText() == "b"
     combo.activated.emit(0)
     assert sent[-1] == ("ai", "pick", "a")
+
+
+def _link(link: Path, target: Path) -> None:
+    try:
+        link.symlink_to(target)
+    except OSError:
+        pytest.skip("this account can't make symbolic links")
+
+
+def test_plugins_cant_read_through_links(tmp_path: Path) -> None:
+    (tmp_path / "id_rsa").write_text("PRIVATE KEY\n")
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "config").write_text("url = https://ghp_token@github.com/x\n")
+    _link(tmp_path / "readme.md", tmp_path / "id_rsa")
+    _link(tmp_path / "g", tmp_path / ".git")
+    files = ServiceFiles(tmp_path)
+    for name in ("readme.md", "g/config"):
+        with pytest.raises(FileRefused, match="link"):
+            files.read(name)
+    with pytest.raises(FileRefused, match="link"):
+        files.propose("p", "s", "readme.md", [{"old": "PRIVATE", "new": "x"}], "")
+
+
+def test_a_plugin_cant_guess_a_hidden_value(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("KEY = 'live-value-123456'\nprint(KEY)\n")
+    files = ServiceFiles(tmp_path, "", {"API_KEY": "live-value-123456"})
+    answers = set()
+    for guess in ("KEY = 'live", "KEY = 'dead"):
+        with pytest.raises(FileRefused) as info:
+            files.propose("p", "s", "app.py", [{"old": guess, "new": "x"}], "")
+        answers.add(str(info.value))
+    assert len(answers) == 1  # right and wrong guesses get the same answer
+
+
+def test_proposals_cant_add_ci_workflows_or_hidden_process_calls(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("print('hi')\n")
+    files = ServiceFiles(tmp_path)
+    for new in ("from os import system as s", "getattr(os, 'sys' + 'tem')('x')", "__builtins__.eval"):
+        with pytest.raises(FileRefused, match="Blocked"):
+            files.propose("p", "s", "app.py", [{"old": "print('hi')", "new": new}], "")
+    with pytest.raises(FileRefused, match="script"):
+        files.propose("p", "s", ".github/workflows/x.yml", [{"old": "", "new": "on: push"}], "")

@@ -6,14 +6,25 @@ third-party treatment a downloaded plugin would: its own sandbox, test mode and 
 
 from __future__ import annotations
 
+import queue
 import shutil
+import subprocess
 import sys
+import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
+import psutil
 import pytest
 
-from pythonator.paths import official_plugins_dir
+from pythonator import isolation
+from pythonator.core.logs import MASK, Masker, plugin_secrets
+from pythonator.core.models import Service
+from pythonator.core.store import Store
+from pythonator.daemon.supervisor import Slot, Supervisor
+from pythonator.isolation import linux, windows
+from pythonator.paths import IS_WINDOWS, DataDirs, official_plugins_dir
 from pythonator.plugins import trust
 from pythonator.plugins.manifest import load
 from tests.conftest import DaemonHarness, write_plugin
@@ -271,3 +282,146 @@ def test_health_and_webhooks_settings_move_to_notify(dirs: Any, qtbot: Any) -> N
                                                        "health_path": "/health", "health_interval": 9}}
     finally:
         h.close()
+
+
+def test_a_plugin_that_crashed_shows_its_panel_again(harness: Any, tmp_path: Path) -> None:
+    """After an unexpected exit the window's panel is cleared, so the same panel from the restarted plugin must be
+    shown again, not skipped as unchanged (Windows CI: the AI assistant's panel never came back)."""
+    from tests.test_plugins import install
+
+    install(harness, tmp_path, "phoenix", "from pythonator.sdk import ui\nclass P(Plugin):\n    def on_start(self):\n"
+            "        self.show(ui.panel('Same', ui.text('the same panel')))\n"
+            "        mark = self.data_dir / 'crashed'\n"
+            "        if 'ui' in self.permissions and not mark.exists():\n"
+            "            mark.write_text('x')\n"
+            "            time.sleep(0.5)\n"
+            "            os._exit(3)\n", perms=["ui"])
+    harness.ok({"op": "plugin_grant", "plugin": "phoenix", "permissions": ["ui"], "live": True})
+
+    def panels() -> list[Any]:
+        return [e.get("panel") for e in harness.events if e.get("ev") == "panel" and e.get("plugin") == "phoenix"]
+
+    harness.wait(lambda: sum(1 for x in panels() if x) >= 2 and bool(panels()[-1]), timeout=30_000)
+
+
+def test_every_env_value_is_hidden_from_plugins_whatever_its_name() -> None:
+    env = {"DB_PASS": "hunter2hunter2", "DATABASE_URL": "postgres://app:S3cretPw@db/app", "DISCORD": "MTA4.abc.xyz",
+           "BOT_TOKEN": "t0k3n-t0k3n", "PORT": "8080", "NODE_ENV": "production", "DEBUG": "true",
+           "HOST": "127.0.0.1", "LIMIT": "100000", "SHORT": "abc"}
+    secrets = plugin_secrets(env, (8080,))
+    for value in ("hunter2hunter2", "postgres://app:S3cretPw@db/app", "S3cretPw", "MTA4.abc.xyz", "t0k3n-t0k3n"):
+        assert value in secrets
+    for value in ("8080", "production", "true", "127.0.0.1", "100000", "abc"):
+        assert value not in secrets
+    mask = Masker(secrets)
+    line = "connecting to postgres://app:S3cretPw@db/app as DB_PASS=hunter2hunter2; retry with S3cretPw on 8080"
+    assert mask(line) == f"connecting to {MASK} as DB_PASS={MASK}; retry with {MASK} on 8080"
+
+
+def _service(name: str, folder: Path, mode: str = "sandbox", **more: Any) -> Service:
+    return Service.model_validate({"name": name, "folder": str(folder), "runtime": "python", "entry": "app.py",
+                                   "mode": mode, **more})
+
+
+@pytest.fixture
+def sup(dirs: DataDirs) -> Any:
+    supervisor = Supervisor(dirs, Store(dirs))
+    yield supervisor
+    supervisor.close()
+
+
+def _slot(sup: Supervisor, service: Service) -> Slot:
+    sup.add(service)
+    return sup.slots[service.id]
+
+
+def test_plugins_get_output_and_notes_masked(sup: Supervisor, tmp_path: Path) -> None:
+    from pythonator.plugins.host import PluginHost
+
+    project = tmp_path / "bot"
+    project.mkdir()
+    (project / ".env").write_text("DATABASE_URL=postgres://app:S3cretPw@db/app\n", encoding="utf-8")
+    slot = _slot(sup, _service("bot", project, env={"DISCORD": "MTA4.abc.xyz"}, env_file=".env"))
+    sid = slot.service.id
+    sent: list[dict[str, Any]] = []
+    plugin = SimpleNamespace(id="p")
+    stub = SimpleNamespace(sup=sup, _last_tick=1e18, _live=lambda: [plugin], granted=lambda p: {"read_logs"},
+                           _send=lambda p, msg: sent.append(msg), _view=lambda p, s: {"id": s})
+    stub._masked = lambda s, text: PluginHost._masked(stub, s, text)  # type: ignore[arg-type]
+    PluginHost._on_supervisor_event(stub, {"ev": "output", "id": sid,  # type: ignore[arg-type]
+                                           "text": "token MTA4.abc.xyz\nwrong password S3cretPw\n"})
+    PluginHost._on_supervisor_event(stub, {"ev": "state", "id": sid, "kind": "crashed",  # type: ignore[arg-type]
+                                           "note": "Exited: bad token MTA4.abc.xyz"})
+    assert sent[0]["lines"] == [f"token {MASK}", f"wrong password {MASK}"]
+    assert sent[1]["note"] == f"Exited: bad token {MASK}"
+    assert "MTA4.abc.xyz" not in str(sent) and "S3cretPw" not in str(sent)
+
+
+def test_a_plugin_message_is_read_in_blocks_not_byte_by_byte() -> None:
+    """The pipe is unbuffered: readline() on it made one system call per byte, which on Windows took longer than
+    10 seconds for a 1 MB message. The oversized message is now noticed at once, and the plugin killed by the
+    reading thread itself: it is still writing the rest, which nobody reads, so waiting for it would never end."""
+    import queue
+    import threading
+    import time
+
+    from pythonator.plugins.host import MAX_LINE, PluginHost
+
+    posted: list[Any] = []
+    stub = SimpleNamespace(sup=SimpleNamespace(post=posted.append), _jobs={})
+    stub._end = lambda proc: PluginHost._end(stub, proc)  # type: ignore[arg-type]
+    # Far more than any pipe buffer holds after the first megabyte: the writer blocks until it is killed.
+    code = f"import os; os.write(1, b'a' * {MAX_LINE * 3} + b'\\n')"
+    proc = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, bufsize=0)
+    reader = threading.Thread(target=PluginHost._read, args=(stub, SimpleNamespace(), proc, queue.Queue()),
+                              daemon=True)
+    started = time.perf_counter()
+    reader.start()
+    reader.join(15)
+    took = time.perf_counter() - started
+    if reader.is_alive():  # stuck: end it, so the test fails instead of hanging
+        proc.kill()
+        reader.join(15)
+    proc.wait()
+    assert took < 10, f"the reading thread was stuck for {took:.0f} s"
+    assert len(posted) == 2  # the kill for the oversized message, then the exit
+    assert proc.returncode != 0  # killed by the reader, not finished
+
+
+def test_official_plugins_dont_run_without_their_sandbox(dirs: DataDirs, monkeypatch: pytest.MonkeyPatch) -> None:
+    from pythonator.plugins import host
+
+    def refuse(*_a: Any, **_k: Any) -> Any:
+        raise isolation.IsolationError("needs libseccomp2 or bubblewrap")
+
+    for mod in (linux, isolation.macos if hasattr(isolation, "macos") else None, windows):
+        if mod is not None:
+            monkeypatch.setattr(mod, "wrap", refuse)
+    folder = dirs.root / "plugin"
+    folder.mkdir()
+    plugin = SimpleNamespace(id="guard", folder=folder, official=True, manifest=SimpleNamespace(permissions=[]))
+    stub = SimpleNamespace(dirs=dirs, granted=lambda p: set())
+    with pytest.raises(isolation.IsolationError, match="Plugins only run sandboxed"):
+        host.PluginHost._command(stub, plugin)  # type: ignore[arg-type]
+
+
+POSIX = pytest.mark.skipif(IS_WINDOWS, reason="process groups and signals")
+
+
+@POSIX
+def test_ending_a_plugin_ends_what_it_started() -> None:
+    from pythonator.plugins.host import PluginHost
+
+    code = ("import subprocess, sys, time; "
+            "print(subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']).pid, flush=True); "
+            "time.sleep(60)")
+    proc = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, text=True, start_new_session=True)
+    assert proc.stdout is not None
+    child = int(proc.stdout.readline())
+    PluginHost._end(SimpleNamespace(_jobs={}), proc)  # type: ignore[arg-type]
+    proc.wait(10)
+    end = time.monotonic() + 5
+    while psutil.pid_exists(child) and psutil.Process(child).status() != psutil.STATUS_ZOMBIE \
+            and time.monotonic() < end:
+        time.sleep(0.05)
+    assert not psutil.pid_exists(child) or psutil.Process(child).status() == psutil.STATUS_ZOMBIE
