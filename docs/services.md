@@ -156,3 +156,18 @@ installed, the file to run is missing, `package.json` without `node_modules`, a 
 broken venv whose Python was removed. **System check** in the toolbar shows the same for Pythonator itself: which
 Python runs it, whether it runs from a virtual environment, whether it runs as administrator (it shouldn't), and
 what the sandbox enforces on this computer.
+
+Its **Left behind by services** section finds what can keep a port open after a service is gone, and **Clean up…**
+removes it:
+
+- a process still listening on a port that was started for a service that was removed, or for a stopped one
+  (Pythonator marks each service's processes with the `PYTHONATOR_SERVICE` variable; a program that slipped out of
+  its service's process tree, or one a crash of Pythonator's background service left running);
+- a Docker or Podman container of Pythonator's still running for a removed or stopped service (a crashed background
+  service leaves them running, with their published ports taken);
+- on Windows, the firewall rules, loopback exemption and permit of [Make reachable](networking.md#windows-make-reachable)
+  for a service that no longer exists. Removing a service undoes these itself, so this only finds them when that
+  administrator prompt was cancelled. Cleaning them up asks for administrator rights once.
+
+Finding needs no administrator rights. Removing a service already stops its whole process tree and its containers,
+so normally the section says there is nothing.

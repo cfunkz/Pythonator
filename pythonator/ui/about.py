@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QHeaderView,
     QLabel,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -27,8 +28,9 @@ from PyQt6.QtWidgets import (
 
 from .. import __version__
 from ..core import sysinfo
+from ..isolation import leftovers
 from . import theme
-from .widgets import info, label, scroll, warn
+from .widgets import ask, info, label, scroll, warn
 
 REPO = "https://github.com/cfunkz/Pythonator"
 SITE = "https://cfunkz.github.io/Pythonator"
@@ -212,9 +214,11 @@ class SystemCheckDialog(QDialog):
     """What Pythonator runs on: this computer, Pythonator itself, the runtimes and container engines it found,
     and what the sandbox enforces here. Every line is filled; the slow part (versions) arrives a moment later."""
 
-    def __init__(self, data: dict[str, Any], parent: QWidget | None = None, data_folder: Path | None = None) -> None:
+    def __init__(self, data: dict[str, Any], parent: QWidget | None = None, data_folder: Path | None = None,
+                 names: dict[str, str] | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("System check")
+        self.names = dict(names or {})  # service id → name, for the leftovers
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.resize(760, 640)
         self.data = data
@@ -235,10 +239,9 @@ class SystemCheckDialog(QDialog):
         summary = (f"Sandbox: {enforced} of {len(sandbox)} protections enforced on this computer"
                    + (f"  ·  {len(problems)} thing{'s' if len(problems) != 1 else ''} to look at" if problems else
                       "  ·  nothing to fix"))
-        badge = label(summary, plain=True)
-        tone = "warn" if problems or enforced < len(sandbox) else "ok"
-        badge.setStyleSheet(f"color: {theme.color(tone)}; background: {theme.rgba(tone, 0.10)}; border: 1px solid "
-                            f"{theme.rgba(tone, 0.35)}; border-radius: {theme.R_MD}px; padding: 6px 10px;")
+        badge = self.badge = label(summary, plain=True)
+        self.summary = summary
+        self._tone(badge, "warn" if problems or enforced < len(sandbox) else "ok")
         outer.addWidget(badge)
         body = QWidget()
         self.column = QVBoxLayout(body)
@@ -257,6 +260,14 @@ class SystemCheckDialog(QDialog):
         self.tools_card, self.tools_grid = _card()
         _row(self.tools_grid, "…", "muted", "Looking", "Finding the runtimes on PATH and their versions…")
         self.column.addWidget(self.tools_card)
+        self.column.addWidget(_section("Left behind by services"))
+        self.left_card, _grid = _card()
+        _row(_grid, "…", "muted", "Looking", "Firewall rules, containers and listening processes of removed services…")
+        self.column.addWidget(self.left_card)
+        self.left_items: list[leftovers.Leftover] = []
+        self._left = _Found(self)
+        self._left.done.connect(self._leftovers)
+        self._look_left()
         note = label("“Not enforced” protections are explained in the documentation, under Isolation modes, with how "
                      "to turn them on. Host and user names are never shown or copied.", plain=True, muted=True)
         self.column.addWidget(note)
@@ -277,6 +288,11 @@ class SystemCheckDialog(QDialog):
                 found.done.emit(*result)
 
         threading.Thread(target=look, daemon=True, name="system-check").start()
+
+    @staticmethod
+    def _tone(badge: QLabel, tone: str) -> None:
+        badge.setStyleSheet(f"color: {theme.color(tone)}; background: {theme.rgba(tone, 0.10)}; border: 1px solid "
+                            f"{theme.rgba(tone, 0.35)}; border-radius: {theme.R_MD}px; padding: 6px 10px;")
 
     def _facts(self, title: str, rows: list[tuple[str, str]]) -> None:
         self.column.addWidget(_section(title))
@@ -329,6 +345,87 @@ class SystemCheckDialog(QDialog):
             self.column.replaceWidget(self.tools_card, card)
             self.tools_card.deleteLater()
             self.tools_card, self.tools_grid = card, grid
+
+    def _services(self) -> dict[str, list[int]]:
+        raw = self.data.get("services")
+        out: dict[str, list[int]] = {}
+        for sid, pids in (raw.items() if isinstance(raw, dict) else ()):
+            if isinstance(sid, str) and isinstance(pids, list):
+                out[sid] = [int(p) for p in pids if isinstance(p, int) and p > 0]
+        return out
+
+    def _look_left(self) -> None:
+        bridge, services = self._left, self._services()
+
+        def look() -> None:
+            found = leftovers.find(services)
+            with contextlib.suppress(RuntimeError):  # the window closed meanwhile
+                bridge.done.emit(found, None)
+
+        threading.Thread(target=look, daemon=True, name="leftovers").start()
+
+    def _leftovers(self, found: leftovers.Found, _unused: object = None) -> None:
+        with contextlib.suppress(RuntimeError):
+            card, grid = _card()
+            kinds = {"reach": "Make reachable", "container": "Container", "process": "Process"}
+            for item in found.items:
+                _row(grid, "!", "warn", kinds.get(item.kind, item.kind), item.what, leftovers.origin(item, self.names))
+                self.report.append(f"[leftover] {item.what}, {leftovers.origin(item, self.names)}")
+            for note in found.notes:
+                _row(grid, "–", "faint", "Not checked", note)
+                self.report.append(f"[leftover] not checked: {note}")
+            if not found.items:
+                _row(grid, "✓", "ok", "Nothing", "No firewall rules, containers or processes left listening by a "
+                                                   "removed or stopped service")
+            else:
+                clean = QPushButton("Clean up…")
+                clean.setToolTip("Stops the leftover containers and processes and, on Windows, removes the firewall "
+                                 "rules (one administrator prompt)")
+                clean.clicked.connect(self._clean_left)
+                grid.addWidget(clean, grid.rowCount(), 2, Qt.AlignmentFlag.AlignRight)
+            self.left_items = list(found.items)
+            if found.items:
+                n = len(found.items)
+                self.badge.setText(f"{self.summary.removesuffix('  ·  nothing to fix')}  ·  {n} thing"
+                                   f"{'s' if n != 1 else ''} left behind by services")
+                self._tone(self.badge, "warn")
+            else:
+                self.badge.setText(self.summary)
+            self.column.replaceWidget(self.left_card, card)
+            self.left_card.deleteLater()
+            self.left_card = card
+
+    def _clean_left(self) -> None:
+        items = list(self.left_items)
+        if not items:
+            return
+        reach = [i.key for i in items if i.kind == "reach"]
+        lines = "\n".join(f"• {i.what}" for i in items[:12]) + (f"\n…and {len(items) - 12} more"
+                                                               if len(items) > 12 else "")
+        admin = "\n\nWindows asks for administrator rights once, for the firewall rules." if reach else ""
+        if ask(self, "Clean up", f"Stop and remove these?\n\n{lines}{admin}") != QMessageBox.StandardButton.Yes:
+            return
+        bridge = _Found(self)
+
+        def done(ok: object, message: object) -> None:
+            (info if ok else warn)(self, "Clean up", str(message))
+            self._look_left()  # what is left now
+
+        bridge.done.connect(done)
+
+        def work() -> None:  # waits for the administrator prompt and the engine, off the window's thread
+            from ..isolation import windows
+
+            errors = leftovers.clean(items)
+            if reach:
+                ok, message = windows.unreach(reach)
+                if not ok:
+                    errors.append(message)
+            text = ("Couldn't do all of it:\n" + "\n".join(errors)) if errors else "Done: nothing is left behind."
+            with contextlib.suppress(RuntimeError):
+                bridge.done.emit(not errors, text)
+
+        threading.Thread(target=work, daemon=True, name="clean-leftovers").start()
 
     def _share(self, folder: str) -> None:
         from ..isolation import windows

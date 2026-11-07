@@ -280,7 +280,7 @@ class Daemon:
             case p.Simple(op="snapshot"):
                 return s.snapshot()
             case p.Simple(op="capabilities"):
-                return {"sandbox": isolation.capabilities(), "app": app_report(self.dirs)}
+                return {"sandbox": isolation.capabilities(), "app": app_report(self.dirs), "services": s.pids()}
             case p.Simple(op="ping"):
                 return "pong"
             case p.Shutdown(stop_services=stop):

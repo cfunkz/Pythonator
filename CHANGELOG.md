@@ -5,6 +5,23 @@ All notable changes to Pythonator are listed here. The format follows
 [Semantic Versioning](https://semver.org/). Dates are UTC. Plugin and plugin API versions are given where they
 changed.
 
+## [Unreleased]
+
+### Added
+
+- System check: **Left behind by services** lists what can keep a port open or a door unlocked after a service is
+  gone, and **Clean up…** removes it: a process still listening that was started for a removed or stopped service
+  (each service's processes now carry `PYTHONATOR_SERVICE`), a Docker or Podman container of Pythonator's still
+  running for one, and on Windows the firewall rules, loopback exemption and permit of Make reachable for a service
+  that no longer exists. Finding needs no administrator rights.
+
+### Fixed
+
+- Windows: removing a service left its Make reachable firewall rules, loopback exemption and loopback permit
+  behind. Nothing listened behind them, but they would admit whatever later ran under the same AppContainer name.
+  Removing a service now undoes them (one administrator prompt, only when there is something to undo), and so does
+  uninstalling.
+
 ## [0.0.16] - 2026-11-06
 
 Bundled plugins: Project builder 1.4.0, Notify 1.1.1, AI assistant 1.3.1.
@@ -549,6 +566,7 @@ First public release.
   Webhooks, Guard and the AI assistant (Claude, OpenAI, Gemini, DeepSeek, Ollama).
 - A website with guides, a glossary, a dependency list and an API reference.
 
+[Unreleased]: https://github.com/cfunkz/Pythonator/compare/v0.0.16...HEAD
 [0.0.16]: https://github.com/cfunkz/Pythonator/compare/v0.0.15...v0.0.16
 [0.0.15]: https://github.com/cfunkz/Pythonator/compare/v0.0.14...v0.0.15
 [0.0.14]: https://github.com/cfunkz/Pythonator/compare/v0.0.13...v0.0.14

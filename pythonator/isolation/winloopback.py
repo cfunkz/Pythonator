@@ -136,14 +136,23 @@ def permit_name(container: str) -> str:
     return f"Pythonator {container} (this PC, loopback)"
 
 
-def script_lines(sid: str, container: str, listed: str, *, undo: bool) -> list[str]:
-    """PowerShell that compiles the C# and applies (or with ``undo`` removes) the permit. ``sid``, ``container``
-    and ``listed`` (digits and commas) are validated by the caller."""
+def compile_lines() -> list[str]:
+    """PowerShell that compiles the C# once (a second Add-Type of the same type in one PowerShell fails)."""
     source = "\n".join(line.strip() for line in _WFP.splitlines() if line.strip())  # a shorter command line
+    return ["try { Add-Type -TypeDefinition @'\n" + source + "\n'@ -Language CSharp } catch "
+            f"{{ [Console]::Error.WriteLine($_.Exception.Message); exit {EXIT_WFP} }}"]
+
+
+def run_lines(sid: str, container: str, listed: str, *, undo: bool) -> list[str]:
+    """PowerShell that applies (or with ``undo`` removes) the permit, after :func:`compile_lines`."""
     return [
-        "try { Add-Type -TypeDefinition @'\n" + source + "\n'@ -Language CSharp } catch "
-        f"{{ [Console]::Error.WriteLine($_.Exception.Message); exit {EXIT_WFP} }}",
         f"$wfp = [PythonatorWfp]::Run('{sid}', '{permit_name(container)}', [int[]]@({listed}), "
         f"${'true' if undo else 'false'})",
         f"if (-not $wfp.StartsWith('ok')) {{ [Console]::Error.WriteLine($wfp); exit {EXIT_WFP} }}",
     ]
+
+
+def script_lines(sid: str, container: str, listed: str, *, undo: bool) -> list[str]:
+    """PowerShell that compiles the C# and applies (or with ``undo`` removes) the permit. ``sid``, ``container``
+    and ``listed`` (digits and commas) are validated by the caller."""
+    return [*compile_lines(), *run_lines(sid, container, listed, undo=undo)]

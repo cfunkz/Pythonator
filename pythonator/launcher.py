@@ -905,6 +905,19 @@ if sys.platform == "win32":
     def windows_delete_profile(name: str) -> None:
         _Win().uenv.DeleteAppContainerProfile(name)
 
+    def windows_sid(name: str) -> str:
+        """The SID of AppContainer ``name``, whether or not its profile exists (a removed service's too). Never
+        creates the profile."""
+        api = _Win()
+        sid = ctypes.c_void_p()
+        hr = api.uenv.DeriveAppContainerSidFromAppContainerName(name, ctypes.byref(sid))
+        if hr < 0:
+            raise SandboxError(f"could not derive the SID of {name} (0x{hr & 0xFFFFFFFF:08X})")
+        try:
+            return api.sid_string(sid)
+        finally:
+            api.adv.FreeSid(sid)
+
     def windows_revoke(path: str, sids: Iterable[str]) -> list[str]:
         """Take the entries for ``sids`` off ``path`` (and off what inherited them). Returns the SIDs removed."""
         api = _Win()
@@ -1085,6 +1098,9 @@ else:
         raise OSError("AppContainers exist only on Windows")
 
     def windows_delete_profile(name: str) -> None:
+        raise OSError("AppContainers exist only on Windows")
+
+    def windows_sid(name: str) -> str:
         raise OSError("AppContainers exist only on Windows")
 
     def windows_revoke(path: str, sids: Iterable[str]) -> list[str]:

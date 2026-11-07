@@ -28,7 +28,7 @@ from pathlib import Path
 from .. import launcher
 from ..paths import IS_WINDOWS, DataDirs, quiet_start
 from .base import Command, Grant, IsolationError, Policy, launcher_argv, merge
-from .winloopback import EXIT_WFP, script_lines
+from .winloopback import EXIT_WFP, compile_lines, run_lines, script_lines
 
 SID = re.compile(r"S-1-15-2(?:-\d+){1,14}")
 NAME = re.compile(r"Pythonator\.[A-Za-z0-9.-]{1,53}")
@@ -330,9 +330,7 @@ def reach_script(sid: str, container: str, ports: Sequence[int], *, lan: bool, u
     if not undo:
         lines.append(f"if ($LASTEXITCODE -ne 0) {{ exit {EXIT_EXEMPT} }}")
     lines += script_lines(sid, container, listed, undo=undo)
-    for local in (True, False):
-        lines.append(f"Get-NetFirewallRule -DisplayName '{rule_name(container, local=local)}' "
-                     "-ErrorAction SilentlyContinue | Remove-NetFirewallRule")
+    lines += [_remove_rule(rule_name(container, local=local)) for local in (True, False)]
     if not undo:
         port = f" -LocalPort {listed}" if listed else ""
         rules = [f"New-NetFirewallRule -DisplayName '{rule_name(container, local=True)}' -Group 'Pythonator' "
@@ -348,28 +346,156 @@ def reach_script(sid: str, container: str, ports: Sequence[int], *, lan: bool, u
     return "\n".join(lines)
 
 
-def loopback_exempt(ident: str) -> bool | None:
-    """Whether **Make reachable** was done for this service: its AppContainer is in Windows' list of loopback
-    exemptions (``CheckNetIsolation LoopbackExempt -s``, which needs no administrator). None when Windows can't
-    say."""
-    if not IS_WINDOWS:
-        return None
+def _exempt_sids() -> set[str] | None:
+    """The SIDs (lower case) in Windows' list of loopback exemptions (``CheckNetIsolation LoopbackExempt -s``,
+    which needs no administrator). None when Windows can't say."""
     tool = Path(os.environ.get("SYSTEMROOT", r"C:\Windows")) / "System32" / "CheckNetIsolation.exe"
     try:
-        sid, _folder = launcher.windows_profile(container_name(ident))
         done = subprocess.run([str(tool), "LoopbackExempt", "-s"], capture_output=True, text=True,
                               errors="replace", timeout=20, check=False, creationflags=0x08000000,
                               startupinfo=quiet_start())
-    except (OSError, subprocess.SubprocessError, launcher.SandboxError):
+    except (OSError, subprocess.SubprocessError):
         return None
     if done.returncode != 0:
         return None
-    return sid.lower() in {m.group(0).lower() for m in SID.finditer(done.stdout)}
+    return {m.group(0).lower() for m in SID.finditer(done.stdout)}
+
+
+def loopback_exempt(ident: str) -> bool | None:
+    """Whether **Make reachable** was done for this service: its AppContainer is in Windows' list of loopback
+    exemptions. None when Windows can't say."""
+    if not IS_WINDOWS:
+        return None
+    try:
+        sid, _folder = launcher.windows_profile(container_name(ident))
+    except (OSError, launcher.SandboxError):
+        return None
+    exempt = _exempt_sids()
+    return None if exempt is None else sid.lower() in exempt
+
+
+# -- what Make reachable leaves behind, and taking it back after a service is gone ----------------------------
+
+RULE = re.compile(r"Pythonator (Pythonator\.[A-Za-z0-9.-]{1,53})(?: \(this PC\))?")
+# Lists Pythonator's firewall rules with their ports, one per line: "<display name>\t<ports>". Every rule is read
+# (no -Group filter): a filter that matches nothing is an error, and silencing it would hide "access denied" too.
+LIST_RULES = "\n".join([
+    "$ErrorActionPreference = 'Stop'", "$ProgressPreference = 'SilentlyContinue'",
+    "try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }",
+    "foreach ($r in @(Get-NetFirewallRule | Where-Object { $_.Group -eq 'Pythonator' })) {",
+    "  $p = @(($r | Get-NetFirewallPortFilter).LocalPort) -join ','",
+    "  [Console]::Out.WriteLine($r.DisplayName + \"`t\" + $p)",
+    "}",
+    "exit 0"])
+
+
+def reach_rules() -> dict[str, list[int]] | None:
+    """The firewall rules Make reachable added on this PC: AppContainer name → the ports they open ([] for any
+    port). Reading them needs no administrator. None when Windows can't say. Slow (a PowerShell): call it off the
+    GUI thread."""
+    if not IS_WINDOWS:
+        return None
+    try:
+        done = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                               "-EncodedCommand", encoded(LIST_RULES)], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=60, check=False,
+                              creationflags=0x08000000, startupinfo=quiet_start(), stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if done.returncode != 0:
+        return None
+    return parse_rules(done.stdout)
+
+
+def parse_rules(text: str) -> dict[str, list[int]]:
+    found: dict[str, set[int]] = {}
+    for line in text.splitlines():
+        name, _tab, ports = line.strip().partition("\t")
+        if (m := RULE.fullmatch(name.strip())) is None:
+            continue
+        found.setdefault(m.group(1), set()).update(
+            int(p) for p in re.split(r"[,\s]+", ports) if p.isdigit() and 1 <= int(p) <= 65535)
+    return {name: sorted(ports) for name, ports in sorted(found.items())}
+
+
+def reach_left(containers: Sequence[str]) -> list[str] | None:
+    """Which of these AppContainers still have Make reachable's firewall rules or loopback exemption (their
+    services may be gone: nothing is created to find out). None when Windows can't say."""
+    if not IS_WINDOWS:
+        return []
+    rules = reach_rules()
+    exempt = _exempt_sids()
+    if rules is None and exempt is None:
+        return None
+    left = []
+    for container in containers:
+        if container in (rules or {}):
+            left.append(container)
+            continue
+        with contextlib.suppress(OSError, launcher.SandboxError):
+            if exempt and launcher.windows_sid(container).lower() in exempt:
+                left.append(container)
+    return left
+
+
+def unreach_script(entries: Sequence[tuple[str, str]]) -> str:
+    """The PowerShell that takes back everything Make reachable added for each ``(SID, AppContainer name)``: the
+    loopback exemption, the loopback permit and both firewall rules. Each step is skipped quietly when it is
+    already gone, so running it twice is harmless."""
+    for sid, container in entries:
+        if not SID.fullmatch(sid) or not NAME.fullmatch(container):
+            raise ValueError("not an AppContainer of Pythonator")
+    lines = ["$ErrorActionPreference = 'Stop'", "$ProgressPreference = 'SilentlyContinue'",
+             '$tool = Join-Path $env:SystemRoot "System32\\CheckNetIsolation.exe"']
+    lines += [f"& $tool LoopbackExempt -d '-p={sid}' | Out-Null" for sid, _c in entries]
+    lines += compile_lines()
+    for sid, container in entries:
+        lines += run_lines(sid, container, "", undo=True)
+    for _sid, container in entries:
+        lines += [_remove_rule(rule_name(container, local=local)) for local in (True, False)]
+    lines.append("exit 0")
+    return "\n".join(lines)
+
+
+def _remove_rule(display: str) -> str:
+    return f"Get-NetFirewallRule -DisplayName '{display}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule"
+
+
+def unreach(containers: Sequence[str]) -> tuple[bool, str]:
+    """Undo Make reachable for these AppContainers, removed services' included, with one UAC prompt:
+    ``(done, message)``. Blocks until done (call it off the GUI thread)."""
+    if not IS_WINDOWS:
+        return True, "Nothing to undo: only Windows needs Make reachable."
+    if not containers:
+        return True, "Nothing to undo."
+    try:
+        entries = [(launcher.windows_sid(c), c) for c in dict.fromkeys(containers)]
+        code = _run_elevated(unreach_script(entries))
+    except (OSError, ValueError, launcher.SandboxError) as exc:
+        return False, f"Couldn't change the Windows settings: {exc}"
+    if code:
+        return False, _REACH_ERRORS.get(code, f"Windows refused the change (exit code {code}).")
+    many = len(entries) > 1
+    return True, (f"Done: removed the firewall rules and loopback permit{'s' if many else ''} of "
+                  f"{len(entries)} sandbox{'es' if many else ''}.")
+
+
+def unreach_all() -> tuple[bool, str] | None:
+    """Uninstalling: undo every Make reachable found on this PC. None when there was nothing (or Windows can't
+    say)."""
+    rules = reach_rules()
+    return unreach(list(rules)) if rules else None
 
 
 REACH_NOTE = ("Windows keeps a sandboxed server out of reach, even of the browser on this PC, until you allow it "
               "once for this service: press Open (the browser button) or Configure → Network → Make reachable…, "
               "and accept the administrator prompt.")
+
+
+_REACH_ERRORS = {ERROR_CANCELLED: "Cancelled: Windows didn't get administrator rights.",
+                 EXIT_EXEMPT: "Windows refused the loopback exemption (CheckNetIsolation failed).",
+                 EXIT_RULE: "Windows refused the firewall rule.",
+                 EXIT_WFP: "Windows refused the loopback permit (Windows Filtering Platform)."}
 
 
 def encoded(command: str) -> str:
@@ -386,12 +512,8 @@ def make_reachable(ident: str, ports: Sequence[int], *, lan: bool, undo: bool = 
         code = _run_elevated(reach_script(sid, container, ports, lan=lan, undo=undo))
     except (OSError, ValueError, launcher.SandboxError) as exc:
         return False, f"Couldn't change the Windows settings: {exc}"
-    messages = {ERROR_CANCELLED: "Cancelled: Windows didn't get administrator rights.",
-                EXIT_EXEMPT: "Windows refused the loopback exemption (CheckNetIsolation failed).",
-                EXIT_RULE: "Windows refused the firewall rule.",
-                EXIT_WFP: "Windows refused the loopback permit (Windows Filtering Platform)."}
     if code:
-        return False, messages.get(code, f"Windows refused the change (exit code {code}).")
+        return False, _REACH_ERRORS.get(code, f"Windows refused the change (exit code {code}).")
     if undo:
         return True, "Done: this PC and other computers can't reach it any more."
     if lan and ports:

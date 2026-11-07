@@ -63,8 +63,11 @@ then:
    public Wi-Fi).
 
 Every rule is tied to the service's own AppContainer, in a **Pythonator** firewall group, so no other program gains
-anything. **Undo** removes the exemption, the permit and both rules. Removing a service deletes its AppContainer, so its rules no longer
-apply to anything; press Undo first if you'd like them gone from the firewall list as well.
+anything. **Undo** removes the exemption, the permit and both rules. **Removing** a service does the same: when it was
+made reachable, Windows asks for administrator rights once more and the rules go with it. If you cancel that prompt
+(or removed the service with an older Pythonator), nothing listens behind the rules any more, but they stay in the
+firewall list and would admit whatever later runs under that AppContainer's name: **System check** lists them under
+*Left behind by services* and **Clean up…** removes them.
 
 Run it again after you change the ports. Without it, the service runs and listens, but connections time out.
 

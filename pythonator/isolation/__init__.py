@@ -13,7 +13,7 @@ from pathlib import Path
 from ..core import runtimes
 from ..core.models import Mode, Service
 from ..paths import IS_LINUX, IS_MAC, IS_WINDOWS, DataDirs
-from . import container
+from . import container, leftovers
 from .base import (
     Command,
     Grant,
@@ -149,6 +149,7 @@ def prepare(service: Service, dirs: DataDirs, *, task: list[str] | None = None, 
     _check_windows_batch(argv)
     env = base_env(service, sandboxed=service.mode is Mode.SANDBOX)
     env.update(own_env_vars(service, dirs))
+    env[leftovers.MARKER] = service.id  # the System check finds what a removed service left listening by it
     if service.runtime in ("python", "node", "bun", runtimes.CUSTOM):
         env = runtimes.activated(env, folder)
     if service.mode is Mode.FULL:

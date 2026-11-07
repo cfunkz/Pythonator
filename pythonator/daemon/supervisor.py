@@ -181,6 +181,12 @@ class Supervisor:
                 "states": [self.state_event(s) for s in self.slots.values()],
                 "settings": self.settings.model_dump(mode="json")}
 
+    def pids(self) -> dict[str, list[int]]:
+        """Each service → the processes Pythonator runs for it now (the service, a task step, a console command;
+        [] when stopped). What the System check needs to tell a stray listener from the service itself."""
+        return {sid: [r.pid for r in (slot.runner, slot.task, slot.shell) if r is not None and r.pid]
+                for sid, slot in self.slots.items()}
+
     def _services_changed(self) -> None:
         self.store.save_services([s.service for s in self.slots.values()])
         self.emit({"ev": "services", "services": [s.service.model_dump(mode="json") for s in self.slots.values()]})

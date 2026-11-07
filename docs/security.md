@@ -60,7 +60,8 @@ don't start in Sandbox mode.
   then runs, so every process it ever starts is inside.
 * Network capabilities only when the network is on. Reaching its ports needs
   [Make reachable](networking.md#windows-make-reachable), which adds a loopback permit and firewall rules for this AppContainer only,
-  for `127.0.0.1` and, if asked, private networks.
+  for `127.0.0.1` and, if asked, private networks. Removing the service removes them too (one administrator
+  prompt); **System check** finds any a cancelled prompt left.
 * Python services get a `sitecustomize` that makes `os.mkdir(..., 0o700)` produce a folder only the service can open
   (the fix for CVE-2024-4030, for Pythons older than 3.12.4).
 

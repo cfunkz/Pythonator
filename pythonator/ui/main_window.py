@@ -797,10 +797,49 @@ class MainWindow(QMainWindow):
                 if wipe:
                     self.editor.release(Path(service.folder))  # an open file or the watched tree would keep it
                 self._remove(service.id, wipe)
+            if IS_WINDOWS:
+                self._unreach_removed([s.id for s in services])
 
         box.finished.connect(answered)
         self.remove_box = box
         box.open()
+
+    def _unreach_removed(self, ids: list[str]) -> None:
+        """Windows: removing a service also undoes its Make reachable (the firewall rules, the loopback exemption
+        and permit), with one administrator prompt, only when there is something to undo. If the prompt is
+        cancelled, the System check finds the rules and offers it again."""
+        import threading
+
+        from ..isolation import windows
+        from .service_dialog import _Bridge
+
+        bridge = _Bridge(self)
+
+        def step(text: str) -> None:
+            level, _sep, message = text.partition(":")
+            if message:
+                self._notice(level, message)
+            if level != "info":
+                bridge.deleteLater()
+
+        bridge.text.connect(step)
+
+        def work() -> None:
+            left = windows.reach_left([windows.container_name(i) for i in ids])
+            if not left:
+                bridge.text.emit("done:")
+                return
+            bridge.text.emit("info:Undoing Make reachable for the removed service: Windows asks for administrator "
+                             "rights once")
+            ok, message = windows.unreach(left)
+            if ok:
+                bridge.text.emit(f"ok:{message}")
+            else:
+                level = "warn" if message.startswith("Cancelled") else "error"
+                bridge.text.emit(f"{level}:{message} Its firewall rules stay until you clean them up in the "
+                                 "System check.")
+
+        threading.Thread(target=work, name="unreach-removed", daemon=True).start()
 
     def _remove(self, sid: str, files: bool) -> None:
         def done(ok: bool, _data: Any, error: str) -> None:
@@ -902,7 +941,8 @@ class MainWindow(QMainWindow):
     def system_check(self) -> None:
         def show(ok: bool, data: Any, error: str) -> None:
             if ok and isinstance(data, dict):
-                SystemCheckDialog(data, self, self.dirs.root).exec()
+                SystemCheckDialog(data, self, self.dirs.root,
+                                  {sid: s.name for sid, s in self.services.items()}).exec()
             else:
                 self._notice("error", error)
 

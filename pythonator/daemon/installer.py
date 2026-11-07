@@ -73,4 +73,5 @@ def main(flag: str) -> int:
 
         end_strays()
         windows.forget_all(dirs)
+        windows.unreach_all()  # Make reachable's firewall rules: one administrator prompt, only if any are left
     return code
