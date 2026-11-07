@@ -1,44 +1,49 @@
 # Pythonator documentation
 
-Pythonator keeps long-running programs running: Discord and Telegram bots, web APIs, workers, scrapers and
-scheduled jobs. Each one is a **service**. Pythonator starts it, restarts it when it fails, shows its output, keeps
-it to the files and ports it needs, and keeps it running after the window is closed. It has a code editor built in,
-and **plugins** add alerts, security rules, health checks and whatever else you write.
+Pythonator supervises long-running programs: Discord and Telegram bots, web APIs, workers, scrapers and scheduled
+jobs. Each program is a **service**. Pythonator starts it, restarts it when it fails, shows and logs its output,
+restricts it to the files and ports it needs, and keeps it running after the window is closed. It includes a code
+editor, and **plugins** add alerts, security rules, health checks and other features.
 
-It runs on Windows, macOS and Linux, and runs Python, Node.js, Bun, Deno, Go, Java, .NET, Ruby, PHP, Rust, shell
-scripts, PowerShell, and any other command.
+![The main window with four services, the editor, the console and the plugin panels](../screenshots/docs/window-no-dock.png)
+
+Pythonator runs on Windows, macOS and Linux, and supports Python, Node.js, Bun, Deno, Go, Java, .NET, Ruby, PHP,
+Rust, shell scripts, PowerShell and arbitrary commands.
 
 ## Using Pythonator
 
-| Page | What it covers |
+| Page | Contents |
 | --- | --- |
-| [Getting started](getting-started.md) | Install, your first service, where your data is kept, keyboard shortcuts |
+| [Getting started](getting-started.md) | Installation, a first service, the data folder, keyboard shortcuts |
 | [Services](services.md) | Restarts, schedules, memory and CPU limits, environment variables, the console and logs |
-| [Isolation modes](isolation.md) | Sandbox, Container and Full access: what each one allows, and why Sandbox is the default |
-| [Ports and APIs](networking.md) | Making a server reachable from this computer or your network, and connecting to containers |
-| [Languages](languages.md) | How each language is found, started and given its packages |
-| [Git](git.md) | Cloning a repository as a service and pulling new code |
-| [Plugins](plugins.md) | Official and third-party plugins, permissions and test mode |
-| [FAQ](faq.md) | Answers to common questions and problems |
+| [Isolation modes](isolation.md) | Sandbox, Container and Full access: what each allows and how it is enforced |
+| [Ports and APIs](networking.md) | Making a server reachable from the same computer or the local network; connecting to containers |
+| [Languages](languages.md) | How each runtime is found, started and given its packages |
+| [Git](git.md) | Cloning a repository as a service and pulling updates |
+| [Plugins](plugins.md) | Official and third-party plugins, permissions, test mode, and the bundled plugins |
+| [FAQ](faq.md) | Common questions and problems |
 
-## Building on it
+## Extending Pythonator
 
-| Page | What it covers |
+| Page | Contents |
 | --- | --- |
-| [Writing a plugin](plugin-development.md) | A plugin in 20 lines, then a policy plugin, a watchdog and a panel |
-| [Plugin API](plugin-api.md) | `plugin.toml`, the Python SDK, permissions, panels and the message protocol |
-| [Background service API](service-api.md) | The local socket the window uses, for your own scripts and tools |
-| [Adding a language](adding-a-language.md) | For forks: one table entry adds a runtime, its installer and its container image |
-| [Architecture](architecture.md) | The processes, threads and files, and why each part is where it is |
+| [Writing a plugin](plugin-development.md) | A tutorial: a minimal plugin, settings, a panel, and a policy plugin |
+| [Plugin API](plugin-api.md) | Reference for `plugin.toml`, the Python SDK, permissions, panels and the message protocol |
+| [Background service API](service-api.md) | The local socket protocol used by the window, for scripts and other tools |
+| [Adding a language](adding-a-language.md) | For forks and pull requests: adding a runtime, and where other changes belong |
+| [Architecture](architecture.md) | Processes, threads, files, and the reasoning behind the design |
 
-## Trust and the project
+## Security and the project
 
-| Page | What it covers |
+| Page | Contents |
 | --- | --- |
-| [Security](security.md) | What Pythonator protects against, how each system enforces it, and what it doesn't do |
-| [Glossary](glossary.md) | The technical words used in these pages |
-| [Development and CI](development.md) | Tests, checks, the official plugin catalog, releases and this website |
-| [Changelog](../CHANGELOG.md) | What changed in each version |
+| [Security](security.md) | The threat model, enforcement on each operating system, and known limitations |
+| [Glossary](glossary.md) | Technical terms used in this documentation |
+| [Development and CI](development.md) | Tests, checks, the official plugin catalogue, releases and this website |
+| [Changelog](../CHANGELOG.md) | Changes in each version |
 
-In the app, **Help ▾ → About Pythonator** shows the credits and versions, **Help ▾ → Support** opens these pages, questions, bug reports and private security reports, and **Help ▾ → Licensing**
-shows the licence and the components Pythonator is built on.
+In the app, the **Help ▾** menu opens this documentation (**Documentation**), links for questions, bug reports and
+private security reports (**Support**), the licences of Pythonator and its dependencies (**Licensing**), and the
+credits and version details (**About Pythonator**).
+
+![Help → About Pythonator](../screenshots/docs/about.png)

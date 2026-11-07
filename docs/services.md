@@ -1,169 +1,193 @@
 # Services
 
-A service is one program Pythonator looks after. It is either a **file to run** in a language Pythonator knows
-(`bot.py`, `server.js`, `main.go`, `app.jar`...) or a **custom command** (`uvicorn app:app --port 8000`,
-`./my-binary --serve`), and it lives in a **folder**, its project.
+A service is one program supervised by Pythonator. It is either a **file to run** in a supported language
+(`bot.py`, `server.js`, `main.go`, `app.jar`, …) or a **custom command** (`uvicorn app:app --port 8000`,
+`./my-binary --serve`), and it belongs to a project **folder**.
 
-Press **New service**, or select a service and press **Configure**. The tabs are below.
+Services are created with **+ New service** and edited with **Configure** (<kbd>Ctrl</kbd>+<kbd>E</kbd>). The
+settings are split across the tabs described below; [Isolation](isolation.md) and [Network](networking.md) have
+pages of their own.
 
 ## General
 
-| Field | What it does |
+| Field | Meaning |
 | --- | --- |
 | Name | Shown in the list. Letters, digits, spaces and `. _ - ( )`, up to 64 characters |
 | Folder | The project folder. The program starts in it, and in Sandbox mode it is the folder the program may use |
-| Language | Python, Node.js, Bun, Deno, Go, Java, .NET, Ruby, PHP, Rust, Shell, PowerShell, or **Custom command** |
-| File to run | Relative to the folder. Empty is allowed where the language has a default (`npm start`, `go run .`, `cargo run`) |
-| Command | Custom command only: the whole command line, split like a shell would but never run by one |
+| Language | Python, Node.js, Bun, Deno, Go, Java, .NET, Ruby, PHP, Rust, Shell, PowerShell, Docker Compose, or **Custom command** |
+| File to run | Relative to the folder. May be empty where the language has a default (`npm start`, `go run .`, `cargo run`) |
+| Command | Custom command only: the full command line, split as a shell would split it but never run through a shell |
 | Arguments | Passed after the file |
+| Own environment | A private `.venv`, `node_modules` or package cache for this service (on by default); see [Languages](languages.md) |
 
-**Detect from folder** looks for a known entry file (`main.py`, `app.py`, `bot.py`, `index.js`, `main.go`...) and
-then for project files (`package.json`, `go.mod`, `Cargo.toml`, `Gemfile`...).
+![The General tab](../screenshots/docs/service-general.png)
 
-Pythonator never runs a shell. Arguments go to the program exactly as written, so quotes, `;`, `|` and `$( )` are
-just characters. The checks refuse invisible characters (NUL, right-to-left overrides, zero-width spaces) that
-could make a command look different from what runs.
+**Detect from folder** looks for a known entry file (`main.py`, `app.py`, `bot.py`, `index.js`, `main.go`, …),
+then for project files (`package.json`, `go.mod`, `Cargo.toml`, `Gemfile`, …).
+
+No shell is involved at any point. Arguments reach the program exactly as written, so quotes, `;`, `|` and `$( )` are
+ordinary characters. Validation rejects invisible characters (NUL, right-to-left overrides, zero-width spaces) that
+could make a command look different from what actually runs.
 
 ## Schedule & restarts
 
-The tab starts with how the service runs:
+The tab begins with the kind of service:
 
-* **Keep it running**: a server, a bot, a worker. When it exits, the restart rule below decides what happens.
-* **Run on a schedule**: a job, such as a backup, a report or a scraper. It runs, exits, and waits for its next
-  time (see [Schedules](#schedules)).
+* **Keep it running**: a server, bot or worker. When it exits, the restart rule decides what happens next.
+* **Run on a schedule**: a job such as a backup, report or scraper. It runs, exits and waits for its next time; see
+  [Schedules](#schedules).
 
-**Start when Pythonator starts** starts it whenever the background service starts. For a scheduled job it reads
-**Also run it once when Pythonator starts**: one run at once, then on its schedule.
+**Start when Pythonator starts** starts the service whenever the background service starts. For a scheduled job the
+option reads **Also run it once when Pythonator starts**: one immediate run, then the schedule.
+
+![Schedule & restarts for a service that is kept running](../screenshots/docs/service-schedule.png)
 
 ### Restarts
 
 | Setting | Meaning |
 | --- | --- |
-| Restart: When it crashes | Started again when it exits with an error (the default) |
-| Restart: Always | Started again whenever it exits, also with exit code 0 |
-| Restart: Never | It runs once |
-| Give up after | How many restarts within 10 minutes before Pythonator stops trying. 0 is no limit |
-| Time to stop | How long a stop waits for the program to exit politely before it is killed |
+| Restart: When it crashes | Restarted after a non-zero exit code (the default). A clean exit leaves it stopped |
+| Restart: Always | Restarted after every exit, including exit code 0 |
+| Restart: Never | Left stopped when it exits |
+| Give up after | Restarts allowed within 10 minutes before Pythonator stops trying; 0 means no limit |
+| Time to stop | How long a stop waits for the program to exit before the process tree is killed |
 
-The wait before each restart doubles: 1 s, 2 s, 4 s, up to 60 s. A service that ran for more than a minute
-starts counting again from zero. When it gives up, the service shows **failed** and plugins such as
-[Notify](plugins.md#notify) sends one *gave up* message instead of one per crash.
+The delay before each restart doubles, from 1 s to a maximum of 60 s. A service that ran for over a minute starts
+again from the shortest delay. When the limit is reached the service shows **failed**, and
+[Notify](plugins.md#notify) sends a single *gave up* alert rather than one per crash. The restart rules do not apply
+to a scheduled job, which runs again at its next time instead.
 
-**Stopping** sends Ctrl+C on Windows and SIGTERM to the whole process group on macOS and Linux, waits for
-*Time to stop*, then kills the whole process tree. Press **Stop** (or **Stop all**) again to kill it at once
-instead of waiting. On Windows every service is in a job object, so nothing it
-started survives. Containers get `docker stop` / `podman stop`.
+**Stopping** sends Ctrl+C on Windows, or `SIGTERM` to the process group on macOS and Linux, waits for **Time to
+stop**, then kills the whole process tree. Pressing **Stop** (or **Stop all**) a second time kills it immediately.
+On Windows each service is in a [job object](glossary.md#job-object), so none of its child processes survive a stop.
+Containers are stopped with `docker stop` or `podman stop`.
 
-If Pythonator itself is killed or the computer loses power, the next start finds what was left running (by process
-id *and* start time, so a reused id is never touched) and stops it.
+If Pythonator itself is killed, or the computer loses power, the next start finds the processes left running
+(matched by process ID *and* start time, so a reused ID is never touched) and stops them.
 
 ## Schedules
 
-A scheduled service runs, exits, and waits for its next time. Between runs it shows **waiting** and the time of the
+A scheduled service runs, exits and waits for its next run. Between runs it shows **waiting** with the time of the
 next run.
 
-On **Schedule & restarts**, choose **Run on a schedule**, then either
+On **Schedule & restarts**, choose **Run on a schedule**, then one of:
 
-* press a preset: *Every 5 min*, *Every 15 min*, *Hourly*, *Every 6 hours*, *Nightly 03:00*, *Weekdays 09:00*,
+* a preset: *Every 5 min*, *Every 15 min*, *Hourly*, *Every 6 hours*, *Nightly 03:00*, *Weekdays 09:00*,
   *Mondays 09:00* or *Monthly, the 1st*;
-* or fill in **Repeat**: every so many seconds, minutes, hours or days; every hour at a minute; every day,
-  Monday to Friday, every week on a day or every month on a day, at a time;
-* or write it in **As text**, which is what is saved. Anything the form can't show is **Custom (cron)**.
+* the **Repeat** form: every *n* seconds, minutes, hours or days; every hour at a given minute; or every day, Monday
+  to Friday, weekly on a given day or monthly on a given date, at a given time;
+* **As text**, which is the form that is saved. A schedule the form cannot represent is shown as **Custom (cron)**.
 
-The form, the presets and the text follow each other. Above them the schedule is said in words (*Monday to Friday
-at 09:00*) and under them are its next three runs, or, in red, why it can't be read. An interval counts from when
-the last run ended, and a run still going when its time comes is left to finish.
+![A nightly job: preset, form, cron text and the next three runs](../screenshots/docs/service-schedule-job.png)
 
-| Write | Runs |
+The presets, the form and the text stay in sync. Above them the schedule is described in words (*Monday to Friday at
+09:00*), and below them the next three runs are listed, or the reason the schedule cannot be parsed. An interval is
+measured from the end of the previous run, and a run that is still going when the next is due is allowed to finish.
+
+| Text | Runs |
 | --- | --- |
-| `every 30s`, `every 15m`, `every 6h`, `every 1d` | At that interval (10 seconds at least) |
-| `@hourly`, `@daily`, `@weekly`, `@monthly` | At the start of each hour, day, week, month |
-| `0 3 * * *` | A cron line: here 03:00 every day. Five fields: minute, hour, day, month, weekday |
-| `*/5 9-17 * * 1-5` | Every 5 minutes from 9 to 17, Monday to Friday |
+| `every 30s`, `every 15m`, `every 6h`, `every 1d` | At that interval (10 seconds minimum) |
+| `@hourly`, `@daily`, `@weekly`, `@monthly` | At the start of each hour, day, week or month |
+| `0 3 * * *` | A [cron](https://man7.org/linux/man-pages/man5/crontab.5.html) expression, here 03:00 daily. Fields: minute, hour, day of month, month, day of week |
+| `*/5 9-17 * * 1-5` | Every 5 minutes from 09:00 to 17:55, Monday to Friday |
 
-Times are your computer's local time. A schedule takes the place of the restart policy.
+Times are in the computer's local time zone. Cron expressions are evaluated with
+[cronsim](https://github.com/cuu508/cronsim).
 
 ## Memory and CPU limits
 
-Both are on the **Limits** tab, both are optional, and both apply to the whole process tree: every
-thread and every child process together. The console says at each start which limits a service has and how they
-are kept.
+Both limits are on the **Limits** tab. Both are optional and apply to the whole process tree, meaning every thread
+and child process together. The console states at each start which limits apply and how they are enforced.
 
-The top of the tab shows this computer's cores and memory, and profiles that set both limits at once: **Small bot**
-(256 MB, a quarter of a core), **Web app** (1 GB, 1 core), **Worker** (2 GB, 2 cores) and **No limits**. Each limit
-has its own card with the value in large type and its share of this computer. Drag the slider (all the way right is
-no limit), press one of the sizes under it, or type a limit in the box. Leave the box empty (or press **No limit**)
-for none.
+The top of the tab shows the computer's cores and memory, and profiles that set both limits: **Small bot** (256 MB,
+a quarter of a core), **Web app** (1 GB, 1 core), **Worker** (2 GB, 2 cores) and **No limits**. Each limit has its own
+card showing the value and its share of the computer. It can be set with the slider (fully right means no limit), one
+of the preset sizes, or the text box. An empty box, or **No limit**, removes it.
 
-* Memory: `512M`, `2G`, `1.5 GB`, `800` (megabytes). At least 16 MB. More than this computer has is lowered to
-  all of it.
-* CPU: cores, like `0.5`, `1.5` or `2 cores`, or a percent of one core, like `150%`. At least 5%. All the cores
-  or more means no limit.
+![The Limits tab: memory and CPU cards with profiles, sliders and preset sizes](../screenshots/docs/service-limits.png)
 
-What you type is checked as you type: the card shows what it means (for example *2 GB, 13% of this computer's
-memory*), or, in red, what to write instead. A service can't be saved with a limit that doesn't read.
+* Memory: `512M`, `2G`, `1.5 GB`, or `800` (megabytes). The minimum is 16 MB; a value above the installed memory is
+  reduced to the installed memory.
+* CPU: cores (`0.5`, `1.5`, `2 cores`) or a percentage of one core (`150%`). The minimum is 5%; a value equal to or
+  above the number of cores means no limit.
 
-**Memory limit**
+Input is validated as it is typed. The card shows how the value was read (for example *2 GB, 13% of this computer's
+memory*) or, in red, what is wrong with it. A service cannot be saved with an unreadable limit.
 
-* **Windows**: the job object's limit; Windows refuses the allocation that crosses it.
-* **Containers**: `--memory`, enforced by the engine.
-* **macOS and Linux**: a watchdog checks every 2 seconds and stops the service when the tree is over the limit.
+### Memory limit
 
-**CPU limit**, in percent of one core, like the CPU figure on the service card: 50 is half a core, 150 one and a
-half cores. A computer with 8 logical cores has 800 in all, and a limit of all of them is no limit. A program with
-one thread can never use more than 100.
+| Where | Enforcement |
+| --- | --- |
+| Windows | The job object's memory limit; Windows refuses the allocation that would exceed it |
+| Containers | `--memory`, enforced by the engine |
+| macOS and Linux | A watchdog checks the tree every 2 seconds and stops the service when it is over the limit |
 
-* **Windows**: a hard CPU cap on the job object, kept by the Windows scheduler.
-* **Containers**: `--cpus`, kept by the engine.
-* **macOS and Linux** (Sandbox and Full access): Pythonator measures the tree twice a second and, while it is over,
-  lets it run for only part of every tenth of a second (it pauses it with `SIGSTOP` and resumes it with `SIGCONT`,
-  like `cpulimit`). A service under its limit is never paused, and a stop resumes it first, so it can still shut
-  down cleanly.
+### CPU limit
 
-The CPU limit keeps one service from slowing the others and the computer down. To protect the computer as a whole,
-turn on [Guard](plugins.md#guard): it watches the whole computer's CPU and memory and acts on the service behind
-an overload.
+The CPU limit is expressed in percent of one core, as on the service card: 50 is half a core, 150 is one and a half
+cores. A computer with 8 logical cores has 800 in total, and a limit at or above that is no limit. A single-threaded
+program cannot exceed 100.
+
+| Where | Enforcement |
+| --- | --- |
+| Windows | A hard CPU rate cap on the job object, applied by the Windows scheduler |
+| Containers | `--cpus`, enforced by the engine |
+| macOS and Linux (Sandbox and Full access) | The tree is measured twice a second; while it is over the limit it runs for only part of every 100 ms, paused with `SIGSTOP` and resumed with `SIGCONT` (the approach of [cpulimit](https://github.com/opsengine/cpulimit)). A service under its limit is never paused, and a stop resumes it first so that it can shut down cleanly |
+
+The CPU limit stops one service from slowing the others. To protect the computer as a whole, enable
+[Guard](plugins.md#guard), which watches total CPU and memory and acts on the service responsible for an overload.
 
 ## Environment
 
-Variables come from, in order (later wins):
+Variables are merged in this order, with later sources taking precedence:
 
-1. Your own environment, minus Pythonator's own variables and, in a sandbox, your desktop session's (the display,
-   D-Bus and SSH agent sockets).
-2. The service's **env file**, for example `.env` in the project: `KEY=value` lines, `#` comments, optional quotes
-   and `export`.
-3. The variables in the **Environment** table.
+1. Pythonator's own environment, without its internal variables. In a sandbox, desktop session variables (display,
+   D-Bus and SSH agent sockets) and inherited variables named like secrets (`GITHUB_TOKEN`, `*_API_KEY`, …) are also
+   removed.
+2. The service's **env file**, for example `.env` in the project: `KEY=value` lines, `#` comments, optional quotes and
+   `export`. The file must resolve to a path inside the project folder.
+3. The **Environment** table.
 
-In the service window, **＋ Add variable** adds a row and **− Delete** (or the Delete key) removes the selected rows;
-**Import from env file** copies the env file's names into the table, keeping the values you already have.
+![The Environment tab, with an env file and a variable](../screenshots/docs/service-environment.png)
 
-Pythonator adds `PYTHONUNBUFFERED=1` and `FORCE_COLOR=1`, so output shows as it is printed and in colour. With a
-port listed it also sets `PORT` to the first port and, when only this computer may connect, `HOST=127.0.0.1`.
+In the service window, **＋ Add variable** adds a row, **− Delete** (or the Delete key) removes the selected rows, and
+**Import from env file** copies the env file's variable names into the table, keeping existing values.
 
-`LD_PRELOAD`, `LD_AUDIT` and the `DYLD_` variables that load code into every program are refused.
+Pythonator sets `PYTHONUNBUFFERED=1` and `FORCE_COLOR=1`, so output appears immediately and in colour. When a port is
+listed it also sets `PORT` to the first port and, if only this computer may connect, `HOST=127.0.0.1`.
+
+`LD_PRELOAD`, `LD_AUDIT` and the `DYLD_` variables, which inject code into every program, are refused. An env file
+also cannot set variables that would affect the launcher or the container engine (`PATH`, `HOME`, `LD_*`,
+`DOCKER_*`, `XDG_*` and others); see [Security](security.md).
 
 ## Console and logs
 
-The console shows output as it arrives, with colours, and a line at the bottom sends text to the program's input.
-**Wrap** wraps long lines. Right-click a service for **Clear console**, **Open folder** and **Remove**.
+The console shows output as it arrives, with ANSI colours. The input line at the bottom sends text to the program's
+standard input; the **stdin / shell** switch (<kbd>Ctrl</kbd>+<kbd>\`</kbd>) runs a command instead, in the
+service's folder, isolation and environment, while the service keeps running. **Wrap** wraps long lines.
 
-Values of variables whose name looks secret (`TOKEN`, `SECRET`, `PASSWORD`, `API_KEY`, `..._KEY`, `PRIVATE`,
-`CREDENTIAL`), and at least 6 characters long, are replaced with `••••••` before output is shown, written to a log
-or given to a plugin.
+![A bot's console: coloured output, and its token masked as ••••••](../screenshots/docs/console.png)
 
-Each service has a log in `logs/` in your [data folder](getting-started.md#where-your-data-is-kept). It rotates at
-10 MB and keeps 3 old files (both are settings). When a program prints faster than the window can draw, the
-window shows the newest output and says so; the log still gets every line.
+Right-clicking a service offers **Configure…**, **Open folder**, **Copy address** (for a server), **Open log**,
+**Clear console**, **Move up**, **Move down** and **Remove…**.
+
+The values of variables whose names look secret (`TOKEN`, `SECRET`, `PASSWORD`, `API_KEY`, `…_KEY`, `PRIVATE`,
+`CREDENTIAL`) and that are at least 6 characters long are replaced with `••••••` before output is displayed, logged or
+passed to a plugin.
+
+Each service has a log in `logs/` in the [data folder](getting-started.md#the-data-folder). It rotates at 10 MB and
+keeps 3 old files (both configurable under **Settings**). When a program writes faster than the window can draw,
+the console shows only the newest output and says so; the log still receives every line.
 
 ## Install packages
 
-**Install packages** prepares the project for its language, inside the service's own isolation (a sandboxed
-service installs in its sandbox, with the network on for the install):
+**Packages ▾ → Install packages** prepares the project for its language, inside the service's own isolation. A
+sandboxed service installs in its sandbox, with the network enabled for the install.
 
-| Language | Does |
+| Language | Steps |
 | --- | --- |
-| Python | Makes `.venv` in the project (or repairs a broken one), then `pip install -r requirements.txt` or `pip install -e .` |
-| Node.js | `npm ci` with a `package-lock.json`, else `npm install`; `pnpm` or `yarn` when their lock file is there |
+| Python | Creates `.venv` (or repairs a broken one), then `pip install -r requirements.txt` or `pip install -e .` |
+| Node.js | `npm ci` if there is a `package-lock.json`, otherwise `npm install`; `pnpm` or `yarn` if their lock file is present |
 | Bun | `bun install` |
 | Go | `go mod download` |
 | .NET | `dotnet restore` |
@@ -175,23 +199,28 @@ Python services then run with the project's `.venv` automatically. See [Language
 
 ## Environment check
 
-Before each start the console lists anything that will make the start fail or surprise you: the language isn't
-installed, the file to run is missing, `package.json` without `node_modules`, a Python project without a venv, a
-broken venv whose Python was removed. **System check** in the toolbar shows the same for Pythonator itself: which
-Python runs it, whether it runs from a virtual environment, whether it runs as administrator (it shouldn't), and
-what the sandbox enforces on this computer.
+Before each start the console lists anything likely to make the start fail: the runtime is not installed, the file to
+run is missing, a `package.json` without `node_modules`, a Python project without a virtual environment, or a venv
+whose base Python has been removed. It also compares the runtime version with the version the project declares.
 
-Its **Left behind by services** section finds what can keep a port open after a service is gone, and **Clean up…**
-removes it:
+**System check** in the toolbar covers Pythonator itself: which Python runs it, whether it runs from a virtual
+environment, whether it runs with administrator rights (it should not), and which sandbox protections the computer
+enforces.
 
-- a process still listening on a port that was started for a service that was removed, or for a stopped one
-  (Pythonator marks each service's processes with the `PYTHONATOR_SERVICE` variable; a program that slipped out of
-  its service's process tree, or one a crash of Pythonator's background service left running);
-- a Docker or Podman container of Pythonator's still running for a removed or stopped service (a crashed background
-  service leaves them running, with their published ports taken);
-- on Windows, the firewall rules, loopback exemption and permit of [Make reachable](networking.md#windows-make-reachable)
-  for a service that no longer exists. Removing a service undoes these itself, so this only finds them when that
-  administrator prompt was cancelled. Cleaning them up asks for administrator rights once.
+![System check on Linux: the computer, current load, Pythonator itself and the sandbox protections](../screenshots/docs/system-check.png)
 
-Finding needs no administrator rights. Removing a service already stops its whole process tree and its containers,
-so normally the section says there is nothing.
+Its **Left behind by services** section finds anything that can keep a port open after a service has gone, and
+**Clean up…** removes it:
+
+* a process still listening on a port that was started for a removed or stopped service. Each service's processes
+  carry the `PYTHONATOR_SERVICE` variable, which identifies a program that left its process tree or was left running
+  by a crash of the background service;
+* a Docker or Podman container of Pythonator's still running for a removed or stopped service, holding its
+  published ports;
+* on Windows, the firewall rules, loopback exemption and loopback permit added by
+  [Make reachable](networking.md#windows-make-reachable) for a service that no longer exists. Removing a service
+  undoes these itself, so they are only found if that administrator prompt was cancelled. Removing them needs one
+  administrator prompt.
+
+Finding them needs no administrator rights. Since removing a service already stops its process tree and containers,
+the section is normally empty.

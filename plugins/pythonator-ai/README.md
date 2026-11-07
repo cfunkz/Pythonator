@@ -1,82 +1,92 @@
 # AI assistant for Pythonator
 
-Ask an AI about one service at a time: why it crashed, what its logs say, what to fix, whether it will survive
-running for weeks. It reads the service's recent output and (if you allow it) its files, and can suggest changes,
-which you review in Pythonator's own window before anything is written.
+An official plugin that answers questions about one service at a time: why it crashed, what its logs show, what to
+change, and whether it is likely to hold up when left running for weeks. It reads the service's recent output and,
+if permitted, its files, and can suggest changes, which are reviewed in Pythonator's own window before anything is
+written.
 
-It comes with Pythonator 0.0.1 and later as an official plugin, off until you turn it on. Being official, it is
-checked against Pythonator's catalog of reviewed plugins (one changed byte and it is treated as third-party) and
-gets the permissions it declares once you enable it, without a test mode. Pythonator still refuses its reads of
-secrets and dangerous changes, and nothing is written until you press Apply.
+It ships with Pythonator 0.0.1 and later, disabled by default. As an official plugin it is verified against
+Pythonator's catalogue of reviewed plugins (a single changed byte makes it third-party) and receives the permissions it
+declares once enabled, without test mode. Pythonator still refuses its attempts to read secrets or make dangerous
+changes, and nothing is written until the user chooses **Apply change**.
 
-## AI services
+![The AI assistant panel: an answer about a bot's logs, with a suggested change ready for review](../../screenshots/docs/panel-ai.png)
 
-| Service | Address | Default model | Key |
+## Supported AI services
+
+| Service | Address | Default model | API key |
 | --- | --- | --- | --- |
 | **Claude (Anthropic)**, the default | `https://api.anthropic.com/v1` (fixed) | `claude-opus-5-5` | [platform.claude.com](https://platform.claude.com/settings/keys) |
 | OpenAI | `https://api.openai.com/v1` (fixed) | `gpt-6.1-sol` | [platform.openai.com](https://platform.openai.com/api-keys) |
-| Google Gemini | Google's OpenAI-compatible endpoint (fixed) | `gemini-flash-latest` | [aistudio.google.com](https://aistudio.google.com/apikey) |
+| Google Gemini | Google's [OpenAI-compatible endpoint](https://ai.google.dev/gemini-api/docs/openai) (fixed) | `gemini-flash-latest` | [aistudio.google.com](https://aistudio.google.com/apikey) |
 | DeepSeek | `https://api.deepseek.com` (fixed) | `deepseek-v4-flash` | [platform.deepseek.com](https://platform.deepseek.com/api_keys) |
-| Ollama (self-hosted) | `http://localhost:11434/v1` or yours | `qwen2.5-coder` | none |
-| Other OpenAI-compatible server (LM Studio, vLLM, llama.cpp, LocalAI…) | yours | set one | optional |
+| [Ollama](https://ollama.com) (self-hosted) | `http://localhost:11434/v1` or a custom address | `qwen2.5-coder` | Not needed |
+| Other OpenAI-compatible server (LM Studio, vLLM, llama.cpp, LocalAI, …) | Custom | Must be set | Optional |
 
-Pick the model in the panel's **Model** list. The list comes from the service itself (chat models only), is kept for
-a day and is fetched again with **↻ Refresh**, which also tests the connection. A model typed in the settings is used
-until you pick another, and a name the service doesn't know is pointed out.
+The model is chosen in the panel's **Model** list, which is fetched from the service itself (chat models only),
+cached for a day, and refreshed with the refresh button beside it. A refresh also tests the connection and reports
+*Connected to … models to choose from*. A model typed in the settings is used until another is picked, and a name the
+service does not recognise is flagged.
 
 ## Safety
 
-These rules are code, not settings, so they can't be loosened by accident.
+These rules are implemented in code, not settings, so they cannot be relaxed by accident.
 
-**It can't change anything by itself.**
-- It answers in text. It has no tools: it can't run commands, open files, browse, or call anything.
-- A fix comes as an edit block. **Review change** sends it to Pythonator, which opens a review window with the diff
-  and warnings. Nothing is written unless you press **Apply**. Pythonator refuses if the file changed since, and
-  keeps a copy of the old file.
-- Pythonator refuses some changes outright: scripts and programs (`.sh`, `.bat`, `.ps1`, `.exe`, `Makefile`…),
-  secret files, emptying a file or removing most of it, and added code that runs programs or shell commands, deletes
-  files, evaluates strings or calls the operating system directly. Adding web addresses, network use or
-  dependencies is allowed with a warning.
+**It cannot change anything by itself.**
 
-**Your secrets stay on your computer.**
-- Your API key is kept in your system keychain (Windows Credential Manager, macOS Keychain, Secret Service on Linux),
-  not in Pythonator's settings, and only this plugin gets it.
-- Pythonator never gives the plugin `.env` files, private keys, certificates, token or password files, and hides the
-  service's environment variable values in the files it does give.
-- Before anything is sent, API keys, tokens, private keys, passwords in config lines, credentials in URLs and webhook
-  URLs are replaced by `[secret removed]`. The panel shows how many were removed. A question you type that holds a
-  secret isn't sent at all.
+- It answers in text only. It has no tools: it cannot run commands, open files, browse or call other services.
+- A suggested fix arrives as an edit block. **Review change to …** sends it to Pythonator, which opens a review window
+  with the diff and any warnings. Nothing is written unless **Apply change** is chosen there. Pythonator refuses if
+  the file has changed since, and keeps a copy of the previous version.
+- Pythonator refuses some changes outright: scripts and executables (`.sh`, `.bat`, `.ps1`, `.exe`, `Makefile`, …),
+  CI configuration, secret files, emptying a file or removing most of it, and added code that runs programs or shell
+  commands, deletes files, evaluates strings or calls the operating system directly. Adding web addresses, network use
+  or dependencies is allowed with a warning. See [Proposed changes](../../docs/plugin-api.md#proposed-changes-api-2).
 
-**It talks only to the AI service you chose.**
-- Claude, OpenAI, Gemini and DeepSeek have fixed addresses. A self-hosted server may be on this computer; on your
-  network only if you turn on *Allow plain http:// on my network* (or it uses https).
-- Never cloud metadata or link-local addresses, never credentials in the address, no redirects. The address actually
-  reached is checked again after connecting.
-- Everything from the service is marked for the AI as data, not instructions.
+**Secrets stay on the computer.**
 
-**Failsafes.**
-- At most 60 questions an hour by default (300 at most), and 2 seconds between two.
-- At most 120 KB sent per question by default (600 at most), answers of up to 16,000 tokens (64,000 at most), 180
-  seconds per answer (600 at most). Answers over 400,000 characters are cut.
-- One question at a time. **■ Stop** ends an answer at once.
-- **⛔ Kill switch** stops the current answer and locks the assistant, even across restarts, until you press
-  **Unlock**. Turning the plugin off in Plugins stops its process altogether.
-- It runs in its own sandbox, like every plugin. Where this computer has no sandbox (an old Linux kernel without
-  Landlock or bubblewrap), official plugins run without one, and its Activity says so; third-party ones don't run.
+- The API key is stored in the system keychain (Windows Credential Manager, macOS Keychain, Secret Service on Linux),
+  not in Pythonator's settings, and only this plugin receives it.
+- Pythonator never gives the plugin `.env` files, private keys, certificates, or token and password files, and hides
+  the service's environment variable values in the files it does provide.
+- Before anything is sent, API keys, tokens, private keys, passwords in configuration lines, credentials in URLs and
+  webhook URLs are replaced with `[secret removed]`, and the panel shows how many were removed. A typed question that
+  contains a secret is not sent at all.
 
-## Turn it on and try it
+**It only talks to the chosen AI service.**
+
+- Claude, OpenAI, Gemini and DeepSeek have fixed addresses. A self-hosted server may be on the same computer; on the
+  local network only over HTTPS, or with *Allow plain http:// on my network* ticked.
+- Cloud metadata and link-local addresses, credentials in the address and redirects are all refused. The address
+  actually connected to is checked again after connecting.
+- Everything taken from the service is marked for the model as data, not instructions.
+
+**Limits.**
+
+- At most 60 questions per hour by default (300 maximum), with at least 2 seconds between questions.
+- At most 120 KB sent per question by default (600 KB maximum); answers of up to 16,000 tokens (64,000 maximum) and
+  180 seconds (600 maximum). Answers over 400,000 characters are truncated.
+- One question at a time. **Stop the answer** ends the current answer immediately.
+- The **Kill switch** (lock icon) stops the current answer and locks the assistant, across restarts, until **Unlock**
+  is chosen. Disabling the plugin in the Plugins window stops its process entirely.
+- Like every plugin, it runs in its own sandbox. Where the computer has no sandbox support (an old Linux kernel
+  without Landlock or bubblewrap), official plugins run unsandboxed and the Activity log says so; third-party plugins
+  do not run at all.
+
+## Setting it up
 
 1. **Plugins ▾ → Manage plugins…**, select **AI assistant** (*official · off*) and tick **Enabled**.
-2. Under **Settings**, choose the **AI service**, paste your **API key** (not needed for Ollama) and press **Save
-   settings**. The note under the key says *Saved in your system keychain*. On Windows, Credential Manager →
-   Windows Credentials then has an entry `Pythonator:plugin.pythonator-ai.api_key`.
-3. **Plugins ▾ → Show plugin panels** and open the **AI assistant** tab. Pick a service, press **Test connection**
-   (it should say *Connected … models available*), then **Explain the crash**, **Check the logs** or type a question
-   and press Enter.
-4. If an answer suggests a change, press **Review change to …**, read the diff, then **Apply change** or **Reject**.
+2. Under **Settings**, choose the **AI service**, paste the **API key** (not needed for Ollama) and choose **Save
+   settings**. The note under the key reads *Saved in your system keychain*. On Windows, **Credential Manager →
+   Windows Credentials** then lists `Pythonator:plugin.pythonator-ai.api_key`.
+3. Open **Plugins ▾ → Show plugin panels** and the **AI assistant** tab. Pick a service and refresh the model list to
+   check the connection. Then pick a question from **Quick question…** (*Explain the crash*, *Check the logs*,
+   *Suggest a fix*, *Long-run check*, *Explain it*) or type one and press Enter.
+4. If an answer suggests a change, choose **Review change to …**, read the diff, then **Apply change** or **Reject**.
 
-**Ollama on the same Windows PC.** Windows keeps sandboxes off this computer's own servers. Allow it once, in
-PowerShell as administrator:
+**Ollama on the same Windows PC.** Windows blocks sandboxes from connecting to servers on the same computer. To allow
+it once, run in PowerShell as administrator
+([CheckNetIsolation](https://learn.microsoft.com/en-us/previous-versions/windows/apps/hh780593(v=win.10))):
 
 ```powershell
 CheckNetIsolation LoopbackExempt -a -n=Pythonator.plugin-pythonator-ai
@@ -85,29 +95,30 @@ CheckNetIsolation LoopbackExempt -a -n=Pythonator.plugin-pythonator-ai
 
 Then set **AI service** to *Ollama (self-hosted)*; the address can stay empty (`http://localhost:11434/v1`).
 
-### Things to try
+### Checks worth trying
 
-- A bot that crashes at start (`KeyError` on a missing setting): **Explain the crash**, then review the fix.
-- Print a fake key in your program's output (`print("token=sk-ant-test-0123456789abcdef0123")`) and ask anything:
-  the panel says *1 secret removed*, and the Activity (Plugins → AI assistant) logs what was sent, without the
+- A bot that crashes on start (a `KeyError` on a missing setting): **Explain the crash**, then review the fix.
+- Print a fake key in the program's output (`print("token=sk-ant-test-0123456789abcdef0123")`) and ask anything: the
+  panel reports *1 secret removed*, and the Activity log (Plugins → AI assistant) records what was sent, without the
   contents.
-- Type a question that contains a key: it isn't sent.
-- Ask it to "delete the logs folder with shutil.rmtree": the review window never opens; the panel shows why it was
-  refused.
-- Press **⛔ Kill switch**, then ask something: nothing is sent until **Unlock**.
+- Type a question containing a key: it is not sent.
+- Ask it to "delete the logs folder with shutil.rmtree": the review window never opens, and the panel explains why the
+  change was refused.
+- Use the Kill switch, then ask something: nothing is sent until **Unlock**.
 
-## Remove it
+## Removing it
 
-Plugins → AI assistant → **Remove plugin**. This deletes the plugin, its data and its API key from the keychain.
+Plugins → AI assistant → **Remove plugin** deletes the plugin, its data and its API key from the keychain.
 
 ## Files
 
-| File | What's in it |
+| File | Contents |
 | --- | --- |
 | `plugin.toml` | Name, permissions and settings |
 | `plugin.py` | The panel and the flow of a question |
 | `pythonator_ai/providers.py` | The AI services, over HTTPS with the standard library |
 | `pythonator_ai/safety.py` | Secret removal, allowed addresses, limits |
-| `pythonator_ai/context.py` | What is sent, and reading edit blocks back |
+| `pythonator_ai/context.py` | What is sent, and parsing edit blocks in the answer |
 
-Tests: `tests/test_ai_plugin.py` in the Pythonator repository, against a fake AI server.
+Tests: [`tests/test_ai_plugin.py`](../../tests/test_ai_plugin.py) (against a fake AI server) and
+[`tests/test_ai_edits.py`](../../tests/test_ai_edits.py) in the Pythonator repository.

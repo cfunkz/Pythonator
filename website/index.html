@@ -10,21 +10,21 @@ description: Run bots, web servers and workers in any language, each in its own 
   <section class="intro">
     <div class="wrap intro-grid">
       <div>
-        <p class="kicker"><img src="{{ '/website/assets/favicon-32.png' | relative_url }}" alt="" width="22" height="22"> Version 0.0.16 · GPL-3.0</p>
-        <h1>Keep your bots and servers running, <em>each in its own sandbox</em>.</h1>
-        <p class="lead">Pythonator starts the programs that should not stop, restarts them when they fail, and keeps
-          each one to its own folder and the ports you list. It has a fast code editor built in, and plugins add
-          the rest. One small desktop app, the same on Windows, macOS and Linux.</p>
+        <p class="kicker"><img src="{{ '/website/assets/favicon-32.png' | relative_url }}" alt="" width="22" height="22"> Latest release 0.0.15 · GPL-3.0</p>
+        <h1>A supervisor for long-running programs, <em>each in its own sandbox</em>.</h1>
+        <p class="lead">Pythonator runs bots, web servers, workers and scheduled jobs, restarts them when they fail,
+          and confines each one to its own folder and the ports it declares. It includes a code editor, and
+          plugins add alerts, policy rules and project templates. It runs on Windows, macOS and Linux.</p>
         <div class="cta">
           <a class="button big" href="https://github.com/{{ site.repository }}/releases/latest">Download</a>
           <a class="button big ghost" href="{{ docs }}getting-started.html">Getting started</a>
         </div>
-        <p class="facts">From source with Python 3.12 or later: <code>pip install -e .</code> and run
-          <code>pythonator</code>. No Docker, WSL or administrator rights needed.</p>
+        <p class="facts">From source with Python 3.12 or later: <code>pip install -e .</code>, then
+          <code>pythonator</code>. Needs no Docker, WSL or administrator rights.</p>
       </div>
       <figure class="frame">
         <img src="{{ shots }}main.png" alt="Pythonator: a sandboxed web API running, with its files, code, console and the Guard plugin panel" width="1360" height="820">
-        <figcaption>A sandboxed web API, its live console, and two official plugin panels.</figcaption>
+        <figcaption>A sandboxed web API, its console, and the official plugin panels.</figcaption>
       </figure>
     </div>
   </section>
@@ -42,46 +42,46 @@ description: Run bots, web servers and workers in any language, each in its own 
       <div class="section-head">
         <div class="num">01 · Supervision</div>
         <div>
-          <h2>Start it once. It keeps running.</h2>
-          <p>A service is a file to run or a command. Pythonator runs it in a background service that keeps going
-            after you close the window, and decides after every exit whether to start it again.</p>
+          <h2>Supervised, and kept running.</h2>
+          <p>A service is a file to run or a command. A background process runs it, independently of the window,
+            and applies the service's restart rule after every exit.</p>
         </div>
       </div>
       <div class="spec">
         <div>
           <h3>Restarts that back off</h3>
-          <p>On failure or always, waiting 1 s, 2 s, 4 s and up to a minute. Too many restarts in ten minutes and it
-            stops trying and tells you, instead of looping forever.</p>
+          <p>On failure or always, with the delay doubling from 1 s to 60 s. After too many restarts in ten minutes it
+            stops and reports the failure rather than looping indefinitely.</p>
           <a href="{{ docs }}services.html#restarts">Restarts</a>
         </div>
         <div>
           <h3>Schedules and limits</h3>
-          <p><code>every 15m</code>, <code>@daily</code> or any cron line. A memory limit for the whole process tree:
-            a kernel limit on Windows and in containers, a watchdog elsewhere.</p>
-          <a href="{{ docs }}services.html#schedules">Schedules</a>
+          <p>Presets, a form, <code>every 15m</code> or any cron expression. Memory and CPU limits for the whole
+            process tree, enforced by a job object on Windows, the engine in containers, and a watchdog elsewhere.</p>
+          <a href="{{ docs }}services.html#schedules">Schedules</a> · <a href="{{ docs }}services.html#memory-and-cpu-limits">Limits</a>
         </div>
         <div>
           <h3>A console that keeps up</h3>
-          <p>Colours, input, and hundreds of thousands of lines without freezing the window. Tokens and passwords
-            from the environment are masked before anything is shown or written to the log.</p>
+          <p>ANSI colours, standard input or a shell, and floods of output without freezing the window. Secret
+            values from the environment are masked before anything is displayed or logged.</p>
           <a href="{{ docs }}services.html#console-and-logs">Console and logs</a>
         </div>
         <div>
           <h3>Code from Git</h3>
-          <p>Clone a repository as a service and pull before a start. Fast-forward only, hooks off, and only
-            <code>https</code> and <code>ssh</code> addresses.</p>
+          <p>Clone a repository as a service and optionally pull before each start: fast-forward only, hooks and
+            submodules disabled, <code>https</code> and <code>ssh</code> only.</p>
           <a href="{{ docs }}git.html">Git</a>
         </div>
         <div>
           <h3>An editor beside it</h3>
-          <p>QScintilla, the engine behind Notepad++: highlighting for every language here, folding, multiple
-            carets, find and replace, and big files that open instantly.</p>
+          <p>Built on QScintilla (the Scintilla engine used by Notepad++): highlighting for every supported language,
+            folding, multiple carets, find and replace, and large files without lag.</p>
           <a href="{{ docs }}getting-started.html#keyboard-shortcuts">Shortcuts</a>
         </div>
         <div>
           <h3>Packages stay with the project</h3>
-          <p>Install packages makes a <code>.venv</code> for Python, <code>node_modules</code> for Node and Bun,
-            <code>vendor</code> for PHP and Ruby, inside the service's own isolation. Nothing goes into your account.</p>
+          <p>Each service gets its own <code>.venv</code>, <code>node_modules</code>, <code>vendor</code> or package
+            cache, installed inside the service's isolation. Nothing is installed globally.</p>
           <a href="{{ docs }}languages.html">Languages</a>
         </div>
       </div>
@@ -93,17 +93,17 @@ description: Run bots, web servers and workers in any language, each in its own 
       <div class="section-head">
         <div class="num">02 · Isolation</div>
         <div>
-          <h2>Three modes. Sandbox is the default.</h2>
-          <p>Every operating system has containment built in. Pythonator puts a simple switch on it. If a
-            protection can't be applied, the service doesn't start: it never quietly runs with less.</p>
+          <h2>Three modes, with Sandbox as the default.</h2>
+          <p>The sandbox uses the containment each operating system already provides. If a protection cannot be
+            applied, the service does not start; it never falls back to running with less.</p>
         </div>
       </div>
       <table class="os-table">
         <thead><tr><th>Mode</th><th>What it can reach</th><th>Built on</th></tr></thead>
         <tbody>
-          <tr><td>Sandbox</td><td>Its own folder, its language, and the ports you list. Not your home folder, keys, other projects or Pythonator's data.</td><td><a href="{{ docs }}glossary.html#landlock">Landlock</a>, <a href="{{ docs }}glossary.html#seccomp">seccomp</a> and <a href="{{ docs }}glossary.html#bubblewrap">bubblewrap</a> on Linux, <a href="{{ docs }}glossary.html#seatbelt">Seatbelt</a> on macOS, <a href="{{ docs }}glossary.html#appcontainer">AppContainer</a> on Windows</td></tr>
+          <tr><td>Sandbox</td><td>Its own folder, its runtime, and the listed ports. Not the home folder, keys, other projects or Pythonator's data.</td><td><a href="{{ docs }}glossary.html#landlock">Landlock</a>, <a href="{{ docs }}glossary.html#seccomp">seccomp</a> and <a href="{{ docs }}glossary.html#bubblewrap">bubblewrap</a> on Linux, <a href="{{ docs }}glossary.html#seatbelt">Seatbelt</a> on macOS, <a href="{{ docs }}glossary.html#appcontainer">AppContainer</a> on Windows</td></tr>
           <tr><td>Container</td><td>Only the project folder, mounted at <code>/app</code>. Can join a container network to reach a database.</td><td>Docker or Podman with every capability dropped, a read-only image and no new privileges</td></tr>
-          <tr><td>Full access</td><td>Everything your account can. Asks you once, and shows in red.</td><td>A normal process, still in a <a href="{{ docs }}glossary.html#job-object">job</a> or process group so stopping ends all of it</td></tr>
+          <tr><td>Full access</td><td>Everything the user's account can. Confirmed once per service, and shown in red.</td><td>A normal process, still in a <a href="{{ docs }}glossary.html#job-object">job</a> or process group so stopping ends all of it</td></tr>
         </tbody>
       </table>
       <p class="facts"><a href="{{ docs }}isolation.html">Isolation modes</a> · <a href="{{ docs }}networking.html">Ports and APIs</a> · <a href="{{ docs }}security.html">The security model</a></p>
@@ -114,16 +114,16 @@ description: Run bots, web servers and workers in any language, each in its own 
     <div class="wrap pair wide-right">
       <div>
         <p class="num label">03 · Ports and APIs</p>
-        <h3>Reachable when you say so, and only there</h3>
-        <p>List the ports a service serves. In Sandbox mode it may listen on those and no others. Choose
-          <em>This computer</em> for an API only your own programs call, or <em>Other computers too</em> for a
-          server on your network. Windows needs one administrator prompt for it, which <strong>Make reachable</strong>
-          does for you, and <strong>Undo</strong> takes back.</p>
+        <h3>Only the declared ports, for the chosen audience</h3>
+        <p>Each service lists the ports it serves, and in Sandbox mode may listen on those alone. <em>This
+          computer only</em> suits a local API; <em>Other computers too</em> opens it to the local network. On
+          Windows, <strong>Make reachable</strong> adds the loopback exemption and firewall rules for that one
+          service in a single administrator prompt, and <strong>Undo</strong> removes them.</p>
         <p><a href="{{ docs }}networking.html">Ports and APIs</a></p>
       </div>
       <figure class="frame">
         <img src="{{ shots }}isolation.png" alt="The Isolation tab of a service: Sandbox, Container and Full access, and what the sandbox enforces on this computer" loading="lazy" width="720" height="620">
-        <figcaption>Each mode says what it allows, and the computer says what it enforces.</figcaption>
+        <figcaption>Each mode states what it allows, and System check states what the computer enforces.</figcaption>
       </figure>
     </div>
   </section>
@@ -132,19 +132,21 @@ description: Run bots, web servers and workers in any language, each in its own 
     <div class="wrap pair">
       <div>
         <p class="num label">04 · Plugins</p>
-        <h3>Official plugins are verified. Others are contained.</h3>
-        <p>Plugins run in processes of their own, in the same sandbox as services, and talk to Pythonator only through
-          a small message protocol. An official plugin is one whose files match a SHA-256 catalog reviewed with every
-          change. Any other plugin starts in <strong>test mode</strong> with nothing granted: what it tries is only
-          recorded until you grant permissions.</p>
+        <h3>Official plugins are verified; others are contained.</h3>
+        <p>Plugins run as separate processes in the same sandbox as services, and talk to Pythonator only through a
+          small, validated message protocol. A plugin is official only if its files match a reviewed SHA-256
+          catalogue. Any other plugin starts in <strong>test mode</strong> with no permissions, and its actions are
+          only recorded until permissions are granted.</p>
         <ul>
           <li><strong>Notify</strong>: one timeline of crashes, blocked starts, recoveries, failing health checks and
             anomalies, sent to Discord, Slack, Telegram, Teams, ntfy or any URL</li>
           <li><strong>Guard</strong>: rules for modes and ports before a start, and a watchdog for memory and CPU</li>
-          <li><strong>Project builder</strong>: React, Vue, Nuxt, FastAPI, Flask or Django in one click, by each
-            framework's own tool, in a sandbox</li>
+          <li><strong>Project builder</strong>: 38 templates (React, Next.js, FastAPI, Django, Go, Rust, bots and
+            more), each created by the framework's own tool, in a sandbox</li>
+          <li><strong>AI assistant</strong>: questions about a service's logs and code, with suggested changes that
+            are reviewed before anything is written</li>
         </ul>
-        <p><a href="{{ docs }}plugins.html">Plugins</a> · <a href="{{ docs }}plugin-development.html">Write one in 20 lines</a> · <a href="{{ docs }}plugin-api.html">Plugin API</a></p>
+        <p><a href="{{ docs }}plugins.html">Plugins</a> · <a href="{{ docs }}plugin-development.html">Writing a plugin</a> · <a href="{{ docs }}plugin-api.html">Plugin API</a></p>
       </div>
       <figure class="frame">
         <img src="{{ shots }}plugins.png" alt="The Plugins window: Guard is official and verified, with its permissions and settings form" loading="lazy" width="940" height="640">
@@ -158,8 +160,9 @@ description: Run bots, web servers and workers in any language, each in its own 
       <div>
         <p class="num label">05 · Install</p>
         <h3>From a release or from source</h3>
-        <p>Source installs need Python 3.12 or later. Dependencies are few, pinned with hashes in
-          <code>requirements.lock</code>, and audited for known vulnerabilities on every change.</p>
+        <p>Installers for Windows, macOS and Linux are on the releases page. Installing from source needs Python 3.12
+          or later; the six dependencies are pinned with hashes in <code>requirements.lock</code> and audited for
+          known vulnerabilities on every change.</p>
         <div class="cta">
           <a class="button" href="https://github.com/{{ site.repository }}/releases/latest">Latest release</a>
           <a class="button ghost" href="{{ docs }}">Documentation</a>

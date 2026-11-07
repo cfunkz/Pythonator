@@ -1,100 +1,117 @@
 # Security
 
-This page says what Pythonator protects, against what, how, and where the limits are. To report a security problem,
-use [a private advisory](https://github.com/cfunkz/Pythonator/security/advisories/new), not a public issue.
+This page describes what Pythonator protects, against which threats, how each protection is enforced, and where the
+limits are. Security problems should be reported through
+[a private advisory](https://github.com/cfunkz/Pythonator/security/advisories/new), not a public issue; see
+[SECURITY.md](../SECURITY.md).
 
-## What it protects against
+## Threat model
 
 | Threat | Protection |
 | --- | --- |
-| A service you run is malicious, or gets taken over (a bad dependency, a remote-code bug) | Sandbox or Container mode: it can't read your files and keys, write outside its folder, listen on other ports, reach your desktop session, or touch other programs |
-| A service tries to read Pythonator's data (the token, other services' logs) | The data folder is never granted, in any mode but Full access, and is private to your account |
-| A plugin is malicious | Plugins run in their own sandbox, receive only what their permissions allow, start in test mode when third-party, and are disabled when they flood, send garbage or crash repeatedly |
-| An official plugin is swapped or edited | Official means *its files match the reviewed SHA-256 catalog*; one changed byte makes it third-party, with the warning, test mode and no permissions |
-| Another user on the computer, or a program, talks to the background service | The socket is your account's only (0600 / a per-user pipe) and needs a random token from a file only you can read; the token is compared in constant time |
-| A crafted message to the background service | Every request is a strict typed model with limits; unknown fields are refused; one line is at most 1 MB; a slow reader is cut off, never waited for |
-| A cloned repository runs code on clone or pull | Hooks off, submodules off, fsmonitor off, only `https` and `ssh` transports, addresses checked, fast-forward only; a pull refuses a checkout whose own `.git/config` holds anything but plain settings (`core.sshCommand`, a filter, `credential.helper`, `include.path` would run a program as you) |
-| A sandboxed service changes its own folder to get out | Nothing in the project folder runs outside the sandbox: its venv's Python version is read from `pyvenv.cfg`, not by running it; `pyvenv.cfg` and links can only point the sandbox at a real Python installation; an env file is read only inside the folder (never through a link) and can't set `PATH`, `LD_*`, `DOCKER_*`, `HOME` or `XDG_*`; a sandboxed service must be stopped for a pull |
-| Arguments that look different from what runs | Programs start from argument lists, never a shell; NUL, bidi and zero-width characters are refused |
-| `LD_PRELOAD` and friends | Refused as service variables |
-| Your shell's secrets | Inherited variables named like a secret (`GITHUB_TOKEN`, `AWS_SECRET_ACCESS_KEY`, `*_API_KEY`) don't reach a sandboxed service or plugin; set them on the service when it needs them |
+| A service is malicious, or is compromised (a malicious dependency, a remote code execution bug) | Sandbox or Container mode: it cannot read the user's files and keys, write outside its folder, listen on other ports, reach the desktop session, or interact with other programs |
+| A service tries to read Pythonator's data (the token, other services' logs) | The data folder is never granted in any mode except Full access, and is private to the user's account |
+| A plugin is malicious | Plugins run in their own sandbox, receive only what their permissions allow, start in test mode when third-party, and are disabled when they flood, send malformed messages or crash repeatedly |
+| An official plugin is replaced or modified | *Official* means the files match the reviewed SHA-256 catalogue; a single changed byte makes the plugin third-party, with the warning, test mode and no permissions. Files that change after verification are treated as new code |
+| Another local account, or another program, talks to the background service | The socket is restricted to the user's account (mode 0600, or a per-user named pipe) and requires a random token from a file only the user can read; the token is compared in constant time |
+| A crafted message to the background service | Every request is a strict typed model with limits; unknown fields are refused; a line is at most 1 MB; a slow client is cut off, never waited for |
+| A cloned repository runs code on clone or pull | Hooks, submodules and fsmonitor disabled; only `https` and `ssh` transports; addresses validated; fast-forward only; a pull refuses a checkout whose `.git/config` holds settings that would run a program (`core.sshCommand`, filter drivers, `credential.helper`, `include.path`). See [Git](git.md) |
+| A sandboxed service modifies its own folder to escape | Nothing in the project folder runs outside the sandbox: the venv's Python version is read from `pyvenv.cfg` rather than by running it; `pyvenv.cfg` and symbolic links can only point the sandbox at a real Python installation; an env file is read only if it resolves inside the folder, and cannot set `PATH`, `HOME`, `LD_*`, `DYLD_*`, `DOCKER_*`, `XDG_*`, `PYTHONPATH` and similar variables; a sandboxed service must be stopped before a pull |
+| Arguments that look different from what runs | Programs start from argument lists, never a shell; NUL, bidirectional-override and zero-width characters are refused |
+| `LD_PRELOAD` and similar variables | Refused as service variables |
+| Secrets in the user's own environment | Inherited variables named like secrets (`GITHUB_TOKEN`, `AWS_SECRET_ACCESS_KEY`, `*_API_KEY`) are not passed to sandboxed services or plugins; they can be set on the service explicitly when needed |
 | Secrets in output | Values of secret-looking variables are masked in the console, logs and plugin messages |
-| Pythonator itself crashes | Sandboxed services on Windows and under bubblewrap end with it; others keep running, and the next start ends them, found by process id and start time |
+| Pythonator itself crashes | Sandboxed services on Windows and under bubblewrap end with it; others keep running, and the next start ends them, identified by process ID and start time |
 
-## How each system enforces the sandbox
+## Sandbox enforcement
 
 ### Linux
 
-* **Landlock** (kernel 5.13+; network rules 6.7+, scoping 6.12+): the service may read the system folders, its
-  language's installation and its project, write its project and its private home and temp folders, and nothing
-  else. With network on, it may bind and connect only on the listed TCP ports; signals and abstract Unix sockets
-  outside its own sandbox are refused.
-* **seccomp** (through `libseccomp`): with the network off, no sockets but Unix ones. Always: no `ptrace`, `bpf`,
-  `io_uring`, kernel module loading, `kexec`, `perf_event_open`, `userfaultfd`, mounts, joining other namespaces,
-  or typing into your terminal (`TIOCSTI`). No new Unix sockets without bubblewrap, nor with it when the network
-  is on and Landlock can't scope them (before Linux 6.12): they would reach your desktop session (X11, D-Bus).
-* **Devices**: only `/dev/null`, `zero`, `random`, `urandom`, `tty`, `ptmx` and `shm`, not cameras or microphones;
-  `/dev/pts` (your terminals) only inside bubblewrap, where it is the sandbox's own.
-* **Stop**: a program that leaves the service's process group (`setsid`, a daemonising server) stays in its process
-  tree (the launcher is a child subreaper), so Stop ends it too.
-* **bubblewrap**, when installed and allowed to make user namespaces: a private `/tmp`, PID, IPC and UTS
-  namespaces, only the needed folders mounted, every capability dropped, and the service dies with its parent.
+* **[Landlock](https://docs.kernel.org/userspace-api/landlock.html)** (kernel 5.13+; network rules 6.7+, scoping
+  6.12+): the service may read the system folders, its runtime's installation and its project, and write its project
+  and its private home and temporary folders, and nothing else. With the network on, it may bind and connect only on
+  the listed TCP ports. Signals and abstract Unix sockets outside its own sandbox are refused.
+* **[seccomp](https://man7.org/linux/man-pages/man2/seccomp.2.html)** (through `libseccomp`): with the network off,
+  no sockets except Unix sockets. Always blocked: `ptrace`, `bpf`, `io_uring`, kernel module loading, `kexec`,
+  `perf_event_open`, `userfaultfd`, mounts, joining other namespaces, and injecting terminal input
+  ([`TIOCSTI`](https://man7.org/linux/man-pages/man2/ioctl_tty.2.html)). New Unix sockets are also blocked without
+  bubblewrap, and with it when the network is on but Landlock cannot scope them (before Linux 6.12), since they
+  would reach the desktop session (X11, D-Bus).
+* **Devices:** only `/dev/null`, `zero`, `random`, `urandom`, `tty`, `ptmx` and `shm`; no cameras or microphones.
+  `/dev/pts` is available only inside bubblewrap, where it is the sandbox's own.
+* **Stopping:** the launcher is a child subreaper, so a program that leaves the service's process group (`setsid`, a
+  daemonising server) stays in its process tree and is ended by Stop.
+* **[bubblewrap](https://github.com/containers/bubblewrap)**, when installed and permitted to create
+  [user namespaces](https://man7.org/linux/man-pages/man7/user_namespaces.7.html): a private `/tmp`; new PID, IPC and
+  UTS namespaces; only the required folders mounted; all capabilities dropped; and the service dies with its parent.
 
-Each layer works alone. **System check** shows which are active. Ubuntu 24.04 and later restrict unprivileged user
-namespaces with AppArmor; bubblewrap from the distribution's package has the profile it needs.
+Each layer works independently, and **System check** shows which are active. Ubuntu 24.04 and later restrict
+unprivileged user namespaces with AppArmor
+([details](https://ubuntu.com/blog/ubuntu-23-10-restricted-unprivileged-user-namespaces)); the distribution's
+`bubblewrap` package includes the profile it needs.
+
+![System check: the sandbox protections enforced on this computer](../screenshots/docs/system-check.png)
 
 ### macOS
 
-A Seatbelt profile, passed to `sandbox-exec`, that denies by default and allows the same folders, with every path
-passed as a parameter rather than pasted into the profile. Network: outbound connections only when on, listening only
-on the listed ports, on `127.0.0.1` unless *Other computers* is chosen. Your Terminal tabs (`/dev/ttys*`) are out
-of reach. Apple marks `sandbox-exec` as deprecated but
-uses the same mechanism for its own services; if it is ever removed, the sandbox reports *not enforced* and services
-don't start in Sandbox mode.
+A Seatbelt profile, passed to `sandbox-exec`, that denies by default and allows the same folders. Every path is
+passed as a parameter rather than inserted into the profile text. Network: outbound connections only when enabled,
+and listening only on the listed ports, on `127.0.0.1` unless *Other computers* is chosen. Terminal devices
+(`/dev/ttys*`) are not accessible. Apple marks `sandbox-exec` as deprecated but uses the same mechanism for its own
+[App Sandbox](https://developer.apple.com/documentation/security/app-sandbox); if it is ever removed, System check
+reports *not enforced* and services do not start in Sandbox mode.
 
 ### Windows
 
-* An **AppContainer** per service: a separate identity with no access to your files unless granted. Pythonator
-  grants the project and runtime folders, records each grant, and removes them when the service is removed.
-* A **job object** per service, with *kill on close*: the program starts suspended, is put in the job, and only
-  then runs, so every process it ever starts is inside.
-* Network capabilities only when the network is on. Reaching its ports needs
-  [Make reachable](networking.md#windows-make-reachable), which adds a loopback permit and firewall rules for this AppContainer only,
-  for `127.0.0.1` and, if asked, private networks. Removing the service removes them too (one administrator
-  prompt); **System check** finds any a cancelled prompt left.
-* Python services get a `sitecustomize` that makes `os.mkdir(..., 0o700)` produce a folder only the service can open
-  (the fix for CVE-2024-4030, for Pythons older than 3.12.4).
+* An **[AppContainer](https://learn.microsoft.com/en-us/windows/win32/secauthz/appcontainer-isolation)** per service:
+  a separate security identity with no access to the user's files unless granted. Pythonator grants the project and
+  runtime folders, records each grant, and revokes them when the service is removed.
+* A **[job object](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)** per service, with *kill
+  on job close*. The program starts suspended, is assigned to the job, and only then resumes, so every process it
+  starts is inside the job. A process that cannot be assigned is never resumed.
+* Network capabilities only when the network is on. Inbound connections need
+  [Make reachable](networking.md#windows-make-reachable), which adds a loopback permit and firewall rules for that
+  AppContainer only, for `127.0.0.1` and, if requested, private networks. Removing the service removes them (one
+  administrator prompt), and **System check** finds any left behind by a cancelled prompt.
+* Python services get a `sitecustomize` module that makes `os.mkdir(..., 0o700)` create a folder only the service can
+  open, the fix for [CVE-2024-4030](https://nvd.nist.gov/vuln/detail/CVE-2024-4030) on Python versions before 3.12.4.
 
-### Container
+### Containers
 
-Docker or Podman with every capability dropped, `no-new-privileges`, a read-only image, a process limit, only the
-project mounted, and `--network none` when off. A container is as strong as the engine: rootless Podman is
-stronger than a Docker daemon running as root.
+Docker or Podman with all capabilities dropped, `no-new-privileges`, a read-only image, a process limit, only the
+project mounted, and `--network none` when the network is off; see [Container](isolation.md#container). A container
+is only as strong as its engine: rootless Podman offers more protection than a Docker daemon running as root
+([Docker security](https://docs.docker.com/engine/security/)).
 
-## What it doesn't do
+## Limitations
 
-* **Full access** is no sandbox. Pythonator asks once per service and shows it in red.
-* **A sandbox is not a virtual machine.** A kernel bug can break out of any sandbox on the same kernel; Container
+* **Full access is not a sandbox.** Pythonator asks once per service and shows the mode in red.
+* **A sandbox is not a virtual machine.** A kernel vulnerability can defeat any sandbox on the same kernel. Container
   mode on a VM-based engine (Docker Desktop, Podman machine) adds that layer.
-* **Linux can't restrict the address a service listens on**, only the port. A service told `HOST=127.0.0.1` can
-  choose `0.0.0.0`. Use your firewall, or Container mode.
-* **The network is all or ports-only.** A service with network on can connect to any address on its allowed ports
-  (on macOS, any address). Use the [Guard](plugins.md#guard) plugin to watch connections.
-* **Pythonator doesn't scan code.** It contains what runs; it doesn't decide whether code is good.
-* **It runs as you.** It doesn't need, and shouldn't have, administrator rights; System check warns when it has them.
+* **Linux cannot restrict the listening address**, only the port. A service given `HOST=127.0.0.1` can still bind
+  `0.0.0.0`; use a firewall, or Container mode.
+* **Network access is all-or-ports.** A service with the network on can connect to any address on its allowed ports
+  (on macOS, to any address). The [Guard](plugins.md#guard) plugin can monitor connections.
+* **Pythonator does not scan code.** It contains what runs; it does not judge whether the code is trustworthy.
+* **It runs as the user.** It neither needs nor should have administrator rights, and System check warns when it has
+  them.
 
 ## Supply chain
 
-* Six direct dependencies, all widely used. `requirements.lock` pins every package, direct and indirect, with
-  SHA-256 hashes.
-* Every change, and a weekly run, checks the lock files with `pip-audit`. CodeQL's default setup is turned on in the
-  repository settings. Dependabot proposes updates after a 7-day cool-down, so a just-published malicious version
-  isn't picked up the same day.
-* PyQt6 is held below 6.12.0, whose type stubs are broken; Qt's JSON parsers aren't used at all.
-* GitHub Actions are pinned to commit hashes, and workflows have read-only permissions by default.
+* Six direct runtime dependencies, all widely used. `requirements.lock` pins every package, direct and indirect, with
+  SHA-256 hashes ([pip hash-checking mode](https://pip.pypa.io/en/stable/topics/secure-installs/)).
+* Every change, and a weekly scheduled run, checks the lock files with
+  [pip-audit](https://github.com/pypa/pip-audit). CodeQL's default set-up is enabled in the repository settings.
+  Dependabot proposes updates after a 7-day
+  [cooldown](https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference),
+  so a newly published malicious version is not picked up the same day.
+* PyQt6 6.12.0 is excluded because its type stubs are broken; Qt's JSON parsers are not used at all.
+* GitHub Actions are pinned to commit hashes, and workflows run with read-only permissions by default.
+* Release artefacts ship with `SHA256SUMS.txt` and signed build provenance
+  ([attest-build-provenance](https://github.com/actions/attest-build-provenance)).
 
 ## Reporting
 
 Please report problems privately through
-[GitHub's security advisories](https://github.com/cfunkz/Pythonator/security/advisories/new). See
-[SECURITY.md](../SECURITY.md) for what to include and what to expect.
+[GitHub security advisories](https://github.com/cfunkz/Pythonator/security/advisories/new). [SECURITY.md](../SECURITY.md)
+lists what to include and what to expect.

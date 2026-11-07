@@ -1,26 +1,31 @@
 # Getting started
 
-## Install
+## Installation
 
-**From a release.** Download the file for your system from the
-[latest release](https://github.com/cfunkz/Pythonator/releases/latest):
+### From a release
+
+Download the file for the system from the [latest release](https://github.com/cfunkz/Pythonator/releases/latest):
 
 | System | File |
 | --- | --- |
-| Windows 10/11 | `Pythonator-<version>-windows-x64-setup.exe`, the installer (or the portable `.zip`) |
-| macOS | `Pythonator-<version>-macos-arm64.dmg` (Apple silicon) or `-macos-x86_64.dmg` (Intel): drag it to Applications |
-| Ubuntu, Debian, Mint | `pythonator_<version>_amd64.deb`: `sudo apt install ./pythonator_<version>_amd64.deb` |
-| Raspberry Pi OS, ARM Linux | `pythonator_<version>_arm64.deb` |
-| Other Linux | `Pythonator-<version>-linux-<arch>.tar.gz`: unpack and run `Pythonator/Pythonator` |
+| Windows 10 and 11 | `Pythonator-<version>-windows-x64-setup.exe` (installer) or the portable `.zip` |
+| macOS | `Pythonator-<version>-macos-arm64.dmg` (Apple silicon) or `-macos-x86_64.dmg` (Intel); drag the app to Applications |
+| Ubuntu, Debian, Mint | `pythonator_<version>_amd64.deb`, installed with `sudo apt install ./pythonator_<version>_amd64.deb` |
+| Raspberry Pi OS, other ARM Linux | `pythonator_<version>_arm64.deb` |
+| Other Linux | `Pythonator-<version>-linux-<arch>.tar.gz`; unpack it and run `Pythonator/Pythonator` |
 
-The files aren't code signed. On Windows, SmartScreen may say "Windows protected your PC": click **More info**,
-then **Run anyway**. On macOS, open the app once, then **System Settings > Privacy & Security > Open Anyway**.
+The builds are not code-signed. On Windows, SmartScreen may show "Windows protected your PC": choose **More info**,
+then **Run anyway**. On macOS, open the app once, then allow it under **System Settings → Privacy & Security → Open
+Anyway**.
 
-Updating installs over the old version and stops the background service first. Uninstalling (Windows: *Apps* in
-Settings) also takes the sandboxes' entries off your folders' permissions; your settings and logs stay.
+An update installs over the previous version and stops the background service first. Uninstalling (on Windows,
+through **Settings → Apps**) also removes the sandbox entries from folder permissions. Settings and logs are kept.
 
-**From source.** You need Python 3.12 or later. The lock file pins every dependency with its hash, so you get
-exactly the versions that were tested and audited:
+### From source
+
+Python 3.12 or later is required. `requirements.lock` pins every dependency, direct and indirect, with its SHA-256
+hash, so the installed versions are exactly the ones that were tested and audited
+([pip secure installs](https://pip.pypa.io/en/stable/topics/secure-installs/)):
 
 ```bash
 git clone https://github.com/cfunkz/Pythonator.git
@@ -32,55 +37,63 @@ pip install --no-deps -e .
 pythonator
 ```
 
-`pip install -e .` on its own works too and picks the newest allowed versions.
+`pip install -e .` alone also works, but resolves the newest versions allowed by `pyproject.toml`.
 
-On Linux, install **bubblewrap** (`sudo apt install bubblewrap`, `sudo dnf install bubblewrap`) for the strongest
-sandbox. Without it the sandbox still works with Landlock and seccomp, which every current kernel has.
-**System check** in the toolbar shows what your computer enforces.
+On Linux, installing [bubblewrap](https://github.com/containers/bubblewrap) (`sudo apt install bubblewrap` or
+`sudo dnf install bubblewrap`) gives the strongest sandbox. Without it the sandbox still applies Landlock and seccomp,
+which current kernels provide. **System check** in the toolbar shows what the computer enforces.
 
-## Your first service
+## A first service
 
-1. Press **New service** (<kbd>Ctrl</kbd>+<kbd>N</kbd>), drop a script or a folder on the window, or press
-   **From Git** to clone a repository.
-2. Choose the **Folder** of the project. **Detect from folder** picks the language and the file to run
-   (`main.py`, `index.js`, `main.go`, a `package.json`, `go.mod`, `Cargo.toml`...).
-3. Leave the mode on **Sandbox**. If the program is a server, open the **Network** tab and list its port, for
-   example `8000`.
-4. Press **Save**, then **Packages ▾ → Install packages** if the project has dependencies (a `requirements.txt`,
-   `package.json`, `Gemfile`...), then **Start** (<kbd>F5</kbd>).
+1. Choose **+ New service** (<kbd>Ctrl</kbd>+<kbd>N</kbd>), drop a script or folder onto the window, or choose
+   **⎇ From Git** to clone a repository.
+2. Set the **Folder** of the project. **Detect from folder** selects the language and the file to run (`main.py`,
+   `index.js`, `main.go`, a `package.json`, `go.mod`, `Cargo.toml` and so on).
+3. Leave the mode on **Sandbox**. For a server, open the **Network** tab and list its port, for example `8000`.
+4. Choose **Save**. If the project has dependencies (`requirements.txt`, `package.json`, `Gemfile`, …), run
+   **Packages ▾ → Install packages**. Then choose **Start** (<kbd>F5</kbd>).
 
-The console shows the program's output as it happens. The first lines say what the sandbox allows, for example:
+![The General tab of a service, with the folder, language and file to run](../screenshots/docs/service-general.png)
+
+The console shows the program's output as it arrives. The first line states what the sandbox allows, for example:
 
 ```text
 [19:05:20] Sandbox (Landlock + seccomp + bubblewrap): folder read & write, network on, serves 8000 for this computer
 ```
 
-Close the window and the service keeps running. Open Pythonator again to see it.
+The service keeps running when the window is closed; reopening Pythonator shows it again.
 
 ## The window
 
-* **Services**, top left: each one with its state, its isolation mode and what it runs, and CPU and memory while
-  it runs. Right-click one for more.
-* **Files**, under the services: the selected service's folder. Double-click a file to open it. The buttons make a
-  new file or folder, fold the tree, and open the folder in your file manager.
-* **Editor**, in the middle: the open files, with highlighting for every language Pythonator runs.
-* **Console**, under the editor: the program's output, and a line to type into its input.
-* **Plugins**, on the right: panels of the plugins that have one, such as Guard and Notify, one tab each.
+![The main window: services on the left, the editor and console in the middle, plugin panels on the right](../screenshots/docs/window.png)
 
-Drag the lines between them to give any part more room.
+| Area | Position | Contents |
+| --- | --- | --- |
+| Services | Top left | Each service with its state, isolation mode, what it runs, and CPU and memory use while running. Right-click for more actions |
+| Files | Below the services | The selected service's folder. Double-click a file to open it |
+| Editor | Centre | Open files, with highlighting for every supported language |
+| Console | Below the editor | The program's output, and an input line for its standard input |
+| Plugins | Right | One tab for each plugin that has a panel, such as Guard and Notify |
+
+The dividers between the areas can be dragged.
 
 ## Closing and quitting
 
-When you close the window while services run, Pythonator asks:
+When the window is closed while services are running, Pythonator asks what to do:
 
-* **Keep them running**: the background service carries on. Services with **Start when Pythonator starts** checked
+* **Keep them running**: the background service carries on. Services with **Start when Pythonator starts** ticked
   start again whenever the background service starts.
-* **Stop everything and quit**: every service is stopped politely (Ctrl+C or SIGTERM, then a kill after its stop
-  timeout), and the background service exits.
+* **Stop everything and quit**: every service is stopped (Ctrl+C or `SIGTERM`, then killed after its stop timeout)
+  and the background service exits.
 
-With nothing running, closing the window quits everything.
+If nothing is running, closing the window quits Pythonator.
 
-## Where your data is kept
+To start Pythonator at sign-in, tick **Start Pythonator when I sign in** (**Start Pythonator with Windows** on
+Windows) under **Settings**. It then starts in the tray, or minimised.
+
+![Settings: start order, log rotation, the tray and starting at sign-in](../screenshots/docs/settings.png)
+
+## The data folder
 
 | System | Folder |
 | --- | --- |
@@ -88,40 +101,43 @@ With nothing running, closing the window quits everything.
 | macOS | `~/Library/Application Support/Pythonator` |
 | Linux | `~/.local/share/Pythonator` |
 
-Set `PYTHONATOR_HOME` to use another folder. Inside it:
+The `PYTHONATOR_HOME` environment variable selects a different folder. Its contents:
 
-| File or folder | What it is |
+| File or folder | Purpose |
 | --- | --- |
-| `services.json` | Your services |
-| `settings.json` | Settings, plugin settings and the permissions you granted |
+| `services.json` | The services |
+| `settings.json` | Settings, plugin settings and granted plugin permissions |
 | `logs/` | One rotating log per service, and `daemon.log` |
 | `sandbox/` | Each sandboxed service's private home and temporary folders |
-| `plugins/`, `plugin-data/` | Third-party plugins you installed, and every plugin's own data |
-| `daemon.token`, `daemon.sock` | How the window proves it is you to the background service |
+| `plugins/`, `plugin-data/` | Installed third-party plugins, and each plugin's own data |
+| `daemon.token`, `daemon.sock` | Authentication and the socket for the [background service API](service-api.md) |
 
-Everything in it is readable only by your account. No service can see this folder, in any mode but Full access.
+The folder is readable only by the user's account. No service can access it except in Full access mode.
 
-The earlier preview builds kept services in `pythonator.json`. The first start imports them once; anything that
-doesn't pass the new checks is skipped and listed.
+Services from the preview builds were stored in `pythonator.json`. The first start imports that file once; entries
+that fail the current validation are skipped and listed.
 
 ## Keyboard shortcuts
 
-| Keys | Does |
+| Keys | Action |
 | --- | --- |
 | <kbd>Ctrl</kbd>+<kbd>N</kbd> | New service |
+| <kbd>Ctrl</kbd>+<kbd>E</kbd> | Configure the selected service |
 | <kbd>F5</kbd> | Start the selected service |
 | <kbd>Shift</kbd>+<kbd>F5</kbd> | Stop it |
 | <kbd>Ctrl</kbd>+<kbd>R</kbd> | Restart it |
+| <kbd>Alt</kbd>+<kbd>↑</kbd> / <kbd>Alt</kbd>+<kbd>↓</kbd> | Move the selected services up or down the list |
 | <kbd>Ctrl</kbd>+<kbd>S</kbd> | Save the open file |
-| <kbd>Ctrl</kbd>+<kbd>F</kbd> | Find and replace in the open file |
-| <kbd>Ctrl</kbd>+<kbd>+</kbd> / <kbd>Ctrl</kbd>+<kbd>−</kbd> | Make the editor's text bigger or smaller (every open file follows) |
+| <kbd>Ctrl</kbd>+<kbd>F</kbd> / <kbd>Ctrl</kbd>+<kbd>H</kbd> | Find / find and replace in the open file |
+| <kbd>Ctrl</kbd>+<kbd>+</kbd> / <kbd>Ctrl</kbd>+<kbd>−</kbd> | Zoom the editor in or out (applies to all open files) |
 | <kbd>Ctrl</kbd>+<kbd>W</kbd> | Close the open file |
-| <kbd>Ctrl</kbd>+click | Add another caret |
+| <kbd>Ctrl</kbd>+click | Add a caret |
+| <kbd>Ctrl</kbd>+<kbd>\`</kbd> | Switch the console input between the program's stdin and a shell |
 
 On macOS, <kbd>Ctrl</kbd> is <kbd>⌘</kbd>.
 
-## Next
+## Further reading
 
 * [Services](services.md): restarts, schedules, limits and environment variables.
-* [Isolation modes](isolation.md) and [Ports and APIs](networking.md): what a service may reach.
+* [Isolation modes](isolation.md) and [Ports and APIs](networking.md): what a service can reach.
 * [Plugins](plugins.md): alerts, rules and health checks.

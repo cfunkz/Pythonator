@@ -1,43 +1,47 @@
 # Background service API
 
 The window is only a view. The work is done by Pythonator's **background service** (the daemon), which keeps
-running when the window closes. The window talks to it over a local socket, and so can your own scripts, a
-status-bar widget, a deploy script or a test harness. Anything the window can do, a script can do.
+running when the window is closed. The window talks to it over a local socket, and so can other clients: scripts, a
+status-bar widget, a deployment script or a test harness. Anything the window can do, a client can do.
 
-The socket isn't on the network: no other computer and no other user of this computer can open it.
+The socket is not on the network: no other computer, and no other account on the same computer, can open it. The
+server is [`pythonator/daemon/server.py`](https://github.com/cfunkz/Pythonator/blob/main/pythonator/daemon/server.py)
+and the message models are in
+[`daemon/protocol.py`](https://github.com/cfunkz/Pythonator/blob/main/pythonator/daemon/protocol.py).
 
 ## Connecting
 
 | System | Address |
 | --- | --- |
-| macOS, Linux | The Unix socket `daemon.sock` in the [data folder](getting-started.md#where-your-data-is-kept), mode 0600. If that path is longer than 100 bytes (a deep `PYTHONATOR_HOME`), a socket can't live there, and it is `<16 hex>.sock` in `$XDG_RUNTIME_DIR/pythonator/` or else in `<temp folder>/pythonator-<your uid>/`, a folder only you can open; the hex is the start of the SHA-256 of the data folder's full path. `socket_path()` in `pyctl.py` does this |
-| Windows | The named pipe `\\.\pipe\pythonator-<16 hex>`, where the hex is the start of the SHA-256 of the data folder's full path in lower case; only your account may open it |
+| macOS, Linux | The Unix socket `daemon.sock` in the [data folder](getting-started.md#the-data-folder), mode 0600. Socket paths are limited to about 100 bytes, so if that path is longer (a deeply nested `PYTHONATOR_HOME`), the socket is `<16 hex>.sock` in `$XDG_RUNTIME_DIR/pythonator/`, or otherwise in `<temp folder>/pythonator-<uid>/`, a folder only the user can open. The hex digits are the start of the SHA-256 of the data folder's full path. `socket_path()` in `pyctl.py` implements this |
+| Windows | The named pipe `\\.\pipe\pythonator-<16 hex>`, where the hex digits are the start of the SHA-256 of the data folder's full path in lower case; only the user's account may open it |
 
-The background service writes a fresh random token to `daemon.token` in the data folder (readable only by you)
-each time it starts. Send it first:
+Each time it starts, the background service writes a new random token to `daemon.token` in the data folder (readable
+only by the user), once it is listening. The first message must present it:
 
 ```json
 {"op": "hello", "req": 1, "token": "<the contents of daemon.token>"}
 ```
 
-A wrong token, or any other message first, and the connection is closed. After a correct `hello` you receive a
+A wrong token, or any other first message, closes the connection. After a valid `hello` the client receives a
 reply, then a `snapshot` of every service and its state, the list of plugins, and their panels.
 
-If the background service isn't running, start it with `pythonator --daemon` (the window does this for you).
+If the background service is not running, `pythonator --daemon` starts it (the window does this automatically).
 
 ## Messages
 
-Both directions send one JSON object per line, UTF-8, at most 1 MB per line.
+Both directions send one JSON object per line ([JSON Lines](https://jsonlines.org/)), UTF-8, at most 1 MB per line.
 
-**Requests** have an `op` and a `req` number of your choice. Every request gets exactly one reply with the same
-`req`:
+**Requests** have an `op` and a `req` number chosen by the client. Every request receives exactly one reply with the
+same `req`:
 
 ```json
 {"ev": "reply", "req": 7, "ok": true, "data": ...}
 {"ev": "reply", "req": 8, "ok": false, "error": "Invalid id: String should match pattern ..."}
 ```
 
-A request with a field it doesn't know, a missing field or a bad value is refused with an error, never guessed at.
+A request with an unknown field, a missing field or an invalid value is refused with an error rather than guessed
+at. Requests are validated by [pydantic](https://docs.pydantic.dev/) models with `extra="forbid"`.
 
 **Events** arrive whenever something happens, to every connected client. They have an `ev` and no `req`.
 
@@ -55,7 +59,7 @@ A request with a field it doesn't know, a missing field or a bad value is refuse
 | `start` | `id`, `confirmed` | Starts it. A Full access service replies `"error": "confirm_full"` until sent with `"confirmed": true` once |
 | `stop`, `restart` | `id` | |
 | `start_all`, `stop_all` | `ids` (optional, `start_all`) | `start_all` queues every service (or these) in list order, `start_at_once` (a setting: 1 by default, 0 for all at once) at a time |
-| `reorder` | `ids` | The services' order, which `start_all` and login follow |
+| `reorder` | `ids` | The services' order, which `start_all` and sign-in follow |
 | `input` | `id`, `text` | Sends a line to the program's input |
 | `shell` | `id`, `line` | Runs a command (cmd.exe on Windows, sh elsewhere) in the service's folder, isolation and environment, next to the running service; while it runs, more lines go to its input |
 | `install` | `id` | Install packages |
@@ -82,13 +86,13 @@ A request with a field it doesn't know, a missing field or a bad value is refuse
 | `state` | `id`, `state`, `kind`, `pid`, `exit`, `note`, `restarts`, `started`, `task`, `next_run` | A service changed state. `kind` is the event: `started`, `stopped`, `exited`, `crashed`, `gave_up`, `blocked`, `installing`, `installed`, `install_failed` |
 | `output` | `id`, `text` | New output, secrets masked, ANSI colour codes included |
 | `stats` | `items`: `{id: {cpu, memory, processes, ports, remote}}`, and `system`: `{cpu, memory, memory_total, cores}` for the whole computer | Every 2 seconds, for running services |
-| `notice` | `level`, `text` | Something to tell the user |
+| `notice` | `level`, `text` | A message for the user |
 | `plugins` | `plugins` | A plugin was enabled, changed, crashed... |
 | `plugin_activity` | `plugin`, `text` | A line in a plugin's Activity |
 | `panel` | `plugin`, `name`, `panel` | A plugin's panel changed; `panel: null` removes it |
 
-A client that reads too slowly first gets only the newest output (with a notice saying so), and is disconnected if
-it falls 64 MB behind. The services don't wait for anyone.
+A client that reads too slowly first receives only the newest output (with a notice saying so), and is disconnected
+if it falls 64 MB behind. Services never wait for a client.
 
 ## The service object
 
@@ -134,8 +138,8 @@ Every field is checked the same way as in the window: see [Services](services.md
 
 ## Example: a command-line client
 
-[`pyctl.py`](examples/pyctl.py) is a complete client in under 90 lines of standard-library Python, for Windows, macOS and
-Linux:
+[`pyctl.py`](https://github.com/cfunkz/Pythonator/blob/main/docs/examples/pyctl.py) is a complete client in about
+100 lines of standard-library Python, for Windows, macOS and Linux:
 
 ```bash
 python docs/examples/pyctl.py list
@@ -143,7 +147,7 @@ python docs/examples/pyctl.py start "web api"
 python docs/examples/pyctl.py tail "web api"
 ```
 
-The core of it:
+Its core:
 
 ```python
 sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -159,5 +163,5 @@ for line in file:
 
 ## Versioning
 
-`hello` returns the `protocol` number, 1 in this version. It changes only when a change would break existing
-clients; new requests, events and fields don't change it.
+`hello` returns the `protocol` number, currently 1. It changes only for changes that would break existing clients;
+new requests, events and fields do not change it.

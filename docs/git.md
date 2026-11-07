@@ -1,45 +1,50 @@
 # Git
 
-Pythonator can clone a repository and run it as a service, and pull new code into it later. It uses the `git`
-installed on your computer, with settings that make it safe to point at code you don't know yet.
+Pythonator can clone a repository as a new service and pull updates into it later. It uses the locally installed
+`git`, with options that make it safe to use on unreviewed code.
 
-## Clone a repository
+## Cloning a repository
 
-Press **From Git**:
+Choose **⎇ From Git**:
 
 | Field | Meaning |
 | --- | --- |
 | Repository | `https://host/owner/repo.git`, `ssh://user@host/owner/repo` or `git@host:owner/repo.git` |
-| Branch | A branch or tag; empty for the repository's default |
-| Clone into | The parent folder; the repository gets a folder of its own inside it |
+| Branch | A branch or tag; empty for the repository's default branch |
+| Clone into | The parent folder; the repository gets its own folder inside it |
 
-When the clone is done, the new-service form opens with the folder, the language and the file to run already filled
-in. Read the code before you give it more than Sandbox mode with the network off.
+![Cloning a repository with From Git](../screenshots/docs/from-git.png)
 
-Private repositories work with what your `git` already uses: an SSH key, or a credential helper for HTTPS.
-Pythonator never asks for a password and never stores one.
+When the clone finishes, the new-service form opens with the folder, language and file to run filled in. Code that
+has not been reviewed should start in Sandbox mode with the network off.
 
-## Pull new code
+Private repositories use whatever authentication the local `git` already has: an SSH key, or a
+[credential helper](https://git-scm.com/docs/gitcredentials) for HTTPS. Pythonator never asks for or stores a
+password.
 
-Select the service and press **Packages ▾ → Pull from Git**. Or tick **Pull the newest code before every start** on its **Environment** tab.
+## Pulling updates
 
-Pull fetches and then fast-forwards (`git merge --ff-only`). It never merges, rebases or throws away your changes:
-if your copy has commits or changes of its own, Pull stops and says so, and you sort it out with git. The console
-shows the range of commits it moved over, `old..new`.
+Select the service and choose **Packages ▾ → Pull from Git (fast-forward only)**, or tick **Pull the newest code
+before every start (fast-forward only)** on its **Environment** tab.
 
-## What Pythonator does to make git safe
+A pull fetches, then [fast-forwards](https://git-scm.com/docs/git-merge#Documentation/git-merge.txt---ff-only)
+(`git merge --ff-only`). It never merges, rebases or discards local work: if the checkout has commits or changes of
+its own, the pull stops and says so, and the conflict is left to be resolved with git. The console shows the range of
+commits applied, `old..new`.
 
-| Setting | Why |
+## Hardening
+
+| Measure | Reason |
 | --- | --- |
-| Only `https` and `ssh` | `file://`, `ext::` and the other transports that can run commands are off (`protocol.allow=never`) |
-| Addresses checked first | An address can't start with `-` (no smuggled options) and must look like one of the three forms above; `--` always separates options from the address |
-| Hooks off | `core.hooksPath` points to an empty folder in Pythonator's private data folder, so a repository can't run its own code on clone or pull |
-| No submodules | `--no-recurse-submodules`: a submodule could point anywhere |
-| No fsmonitor | `core.fsmonitor=false`: a repository's config can't name a program to run |
-| No prompts | `GIT_TERMINAL_PROMPT=0` and no interactive credential helper: a background pull can't hang on a password |
+| Only `https` and `ssh` | `file://`, `ext::` and other transports that can run commands are disabled ([`protocol.allow=never`](https://git-scm.com/docs/git-config#Documentation/git-config.txt-protocolallow)) |
+| Addresses validated | An address may not start with `-` (no injected options) and must match one of the three forms above; `--` always separates options from the address |
+| Hooks disabled | [`core.hooksPath`](https://git-scm.com/docs/githooks) points to an empty folder in Pythonator's private data folder, so a repository cannot run its own code on clone or pull |
+| No submodules | `--no-recurse-submodules`, since a submodule could point anywhere |
+| No fsmonitor | `core.fsmonitor=false`, so a repository's config cannot name a program to run |
+| No prompts | `GIT_TERMINAL_PROMPT=0` and no interactive credential helper, so a background pull cannot hang on a password prompt |
 | No system config | `GIT_CONFIG_NOSYSTEM=1` |
-| The checkout's own config checked | A pull runs as you, in a folder a sandboxed service can write. So its `.git/config` may hold only what git writes itself (remotes, branches, `core.*` basics, `user.name`); anything else, such as `core.sshCommand`, a filter driver or `credential.helper`, stops the pull with its name. Put such settings in your own `~/.gitconfig` |
-| Nothing runs during a pull | A sandboxed service is stopped first (**Stop it first**), so it can't change the checkout while git works in it |
+| The checkout's own config checked | A pull runs as the user, in a folder a sandboxed service can write to. Its `.git/config` may therefore hold only what git writes itself (remotes, branches, basic `core.*` keys, `user.name`). Anything else, such as `core.sshCommand`, a filter driver, `credential.helper` or `include.path`, stops the pull and is named. Such settings belong in `~/.gitconfig` |
+| Nothing runs during a pull | A sandboxed service must be stopped first, so it cannot modify the checkout while git works in it |
 
-The clone itself runs as you, as git always does. Its code doesn't run until you start the service, in the mode
-you choose.
+The clone itself runs as the user, as git always does. The cloned code does not run until the service is started, in
+the chosen mode.

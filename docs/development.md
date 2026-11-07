@@ -1,9 +1,9 @@
 # Development and CI
 
-How to work on Pythonator itself: set it up, run the checks, change the official plugins, release, and preview this
-website.
+How to work on Pythonator itself: setting up, running the checks, changing the official plugins, building, releasing,
+and previewing this website.
 
-## Set up
+## Setting up
 
 ```bash
 git clone https://github.com/cfunkz/Pythonator.git
@@ -14,10 +14,11 @@ pip install --require-hashes -r requirements-dev.lock
 pip install --no-deps -e .
 ```
 
-`requirements-dev.lock` holds the app's dependencies and the tools (ruff, mypy, pytest, pytest-qt, pip-audit), each
-pinned with its hashes. Run the app with `pythonator`, and the background service alone with
-`pythonator --daemon`. Set `PYTHONATOR_HOME=/tmp/pythonator-dev` to keep a development copy away from your real
-services.
+`requirements-dev.lock` contains the app's dependencies and the development tools
+([ruff](https://docs.astral.sh/ruff/), [mypy](https://mypy.readthedocs.io/), pytest,
+[pytest-qt](https://pytest-qt.readthedocs.io/), [pip-audit](https://github.com/pypa/pip-audit)), each pinned with its
+hashes. `pythonator` runs the app and `pythonator --daemon` runs the background service alone. Setting
+`PYTHONATOR_HOME=/tmp/pythonator-dev` keeps a development instance separate from real services.
 
 ## Checks
 
@@ -29,60 +30,66 @@ pytest -q -rs                                # -rs lists skipped tests and why
 pip-audit --require-hashes --disable-pip -r requirements.lock
 ```
 
-Everything must pass before a change is merged; CI runs the same commands.
+All of these must pass before a change is merged; CI runs the same commands.
 
-The tests in [`tests/`](../tests/) include:
+Selected test modules in [`tests/`](https://github.com/cfunkz/Pythonator/tree/main/tests):
 
 | File | Covers |
 | --- | --- |
 | `test_validate.py` | Every input check: names, variables, arguments, ports, git addresses, images |
-| `test_core.py` | Models, the store and its recovery from bad files, the 0.0.9 import, runtimes, schedules, ANSI, log masking and rotation |
-| `test_sandbox.py` | Escape attempts from inside the real sandbox: reading keys and the token, writing outside, other ports, the network, `ptrace` |
-| `test_daemon.py` | The real background service over its socket: wrong tokens, bad requests, start and stop, input, crash loops, Full-access consent |
-| `test_plugins.py` | The catalog, tampering, and hostile plugins: floods, huge and garbage messages, crash loops, forged control, reading secrets, hanging policy checks, bad panels |
-| `test_official_plugins.py` | Guard's rules, Webhooks' payloads, Health's probe |
-| `test_ui.py` | The window's parts offscreen, About, Licensing and Support included |
+| `test_core.py` | Models, the store and its recovery from invalid files, the 0.0.9 import, runtimes, schedules, ANSI, log masking and rotation |
+| `test_sandbox.py` | Escape attempts from inside the real sandbox: reading keys and the token, writing outside the project, other ports, the network, `ptrace` |
+| `test_daemon.py` | The real background service over its socket: wrong tokens, invalid requests, start and stop, input, crash loops, Full access consent |
+| `test_plugins.py` | The catalogue, tampering, and hostile plugins: floods, oversized and malformed messages, crash loops, forged control messages, reading secrets, hanging policy checks, invalid panels |
+| `test_official_plugins.py` | Guard's rules, Notify's tracking, anomalies, webhook payloads and health probes, and the Project builder |
+| `test_ai_plugin.py`, `test_ai_edits.py` | The AI assistant against a fake AI server, and parsing of edit blocks |
+| `test_leftovers.py`, `test_builder_cleanup.py` | System check's *Left behind by services* and the builder's leftover folders |
+| `test_e2e_node_sandbox.py` | A Vite app in the Windows sandbox, made reachable and loaded over HTTP (CI only, `PYTHONATOR_E2E=1`) |
+| `test_ui.py`, `test_run_settings.py` | Parts of the window, offscreen, including About, Licensing, Support and the Limits and Schedule tabs |
+| `test_release_00NN.py` | Regression tests for the fixes in each release |
 
-UI tests run offscreen (`QT_QPA_PLATFORM=offscreen`, set by `tests/conftest.py`). Sandbox tests skip, with the
-reason, the protections a computer doesn't have.
+UI tests run offscreen (`QT_QPA_PLATFORM=offscreen`, set in `tests/conftest.py`). Sandbox tests skip, with a reason,
+any protection the computer lacks.
 
-## Rules for the code
+## Coding rules
 
 * Type everything; `mypy --strict` must pass. Use pydantic models for anything read from a file, a socket or a plugin.
-* Start programs from argument lists. No `shell=True`, no `os.system`.
-* The window sends requests; the background service does the work. Neither blocks on a plugin or a pipe.
-* Qt's JSON and CBOR classes are banned by the linter (they had CVE-2026-105924); use `json`.
-* `launcher.py`, `sdk.py` and `plugins/worker.py` import only the standard library: they run inside sandboxes.
+* Start programs from argument lists: no `shell=True`, no `os.system`.
+* The window sends requests and the background service does the work. Neither blocks on a plugin or a pipe.
+* Qt's JSON and CBOR classes are banned by a lint rule in `pyproject.toml`; use `json`.
+* `launcher.py`, `sdk.py` and `plugins/worker.py` import only the standard library, as they run inside sandboxes.
 * Prefer a plugin to a new built-in feature.
 
 ## Official plugins
 
-The official plugins are in [`plugins/`](../plugins/), and their SHA-256 hashes in
-[`pythonator/plugins/official.json`](../pythonator/plugins/official.json). After changing any file of an official
-plugin, regenerate the catalog and commit it with the change:
+The official plugins are in [`plugins/`](https://github.com/cfunkz/Pythonator/tree/main/plugins), and their SHA-256
+hashes in [`pythonator/plugins/official.json`](https://github.com/cfunkz/Pythonator/blob/main/pythonator/plugins/official.json).
+After changing any file of an official plugin, regenerate the catalogue and commit it with the change:
 
 ```bash
 python -m pythonator.plugins.trust --update
 ```
 
-`test_official_catalog_is_up_to_date` fails when they don't match, and in a running app a plugin that doesn't match
-is treated as third-party. A reviewer of a pull request that changes `official.json` is approving the plugin code.
+`test_official_catalog_is_up_to_date` fails when they differ, and at run time a plugin that does not match is treated
+as third-party. Approving a pull request that changes `official.json` therefore means approving the plugin code.
 
 ## CI
 
-| Workflow | Runs | Does |
+| Workflow | Trigger | Steps |
 | --- | --- | --- |
-| [`ci.yml`](../.github/workflows/ci.yml) | Every push and pull request | Lint and type checks; tests on Windows, macOS and Linux with Python 3.12 and 3.13 (Linux first with bubblewrap blocked, then with it); builds the app on each system and runs `packaging/smoke_test.py` |
-| [`security.yml`](../.github/workflows/security.yml) | Every push and pull request, and weekly | `pip-audit` on the app, development and build lock files |
-| [`release.yml`](../.github/workflows/release.yml) | A pushed `v*` tag | Builds, smoke tests, attests and publishes a release |
-| [`dependabot.yml`](../.github/dependabot.yml) | Weekly | Update pull requests for actions and locked packages, after a 7-day cool-down |
+| [`ci.yml`](https://github.com/cfunkz/Pythonator/blob/main/.github/workflows/ci.yml) | Every push and pull request | Lint and type checks; tests on Windows, macOS and Linux with Python 3.12 and 3.13 (on Linux, first with bubblewrap blocked by AppArmor, then with it allowed); a Node.js end-to-end test in the Windows sandbox; builds on each system, installs the package and runs `packaging/smoke_test.py` |
+| [`security.yml`](https://github.com/cfunkz/Pythonator/blob/main/.github/workflows/security.yml) | Every push and pull request, and weekly | `pip-audit` on the app, development and build lock files |
+| [`release.yml`](https://github.com/cfunkz/Pythonator/blob/main/.github/workflows/release.yml) | A pushed `v*` tag | Builds, smoke-tests, attests and publishes a release |
+| [`dependabot.yml`](https://github.com/cfunkz/Pythonator/blob/main/.github/dependabot.yml) | Weekly | Update pull requests for actions and locked packages, after a 7-day cooldown |
 
-Every action is pinned to a commit hash and every workflow starts with a read-only token. Turn on CodeQL's default
-setup, Dependabot alerts and secret scanning in the repository's **Security** settings; they need no workflow.
+Every action is pinned to a commit hash, and every workflow starts with a read-only token. CodeQL's default set-up,
+Dependabot alerts and secret scanning are enabled in the repository's **Security** settings and need no workflow.
 
 ## Dependencies
 
-Direct dependencies are in [`pyproject.toml`](../pyproject.toml), with ranges. The lock files pin everything:
+Direct dependencies are declared in [`pyproject.toml`](https://github.com/cfunkz/Pythonator/blob/main/pyproject.toml)
+with version ranges. The lock files, generated with [`uv pip compile`](https://docs.astral.sh/uv/pip/compile/), pin
+everything:
 
 ```bash
 uv pip compile pyproject.toml --universal --python-version 3.12 --generate-hashes -o requirements.lock
@@ -91,7 +98,7 @@ uv pip compile packaging/requirements-build.in --universal --python-version 3.12
     -o packaging/requirements-build.lock
 ```
 
-PyQt6 is held below 6.12.0 because its type stubs break mypy; lift the cap when a fixed version is out.
+PyQt6 6.12.0 is excluded because its type stubs break mypy.
 
 ## Building the app
 
@@ -102,32 +109,36 @@ python packaging/build.py                                      # PyInstaller, th
 python packaging/smoke_test.py dist/Pythonator/Pythonator     # macOS: dist/Pythonator.app/Contents/MacOS/Pythonator
 ```
 
-`build.py` puts this system's packages in `release/`: the Windows installer (with
-[Inno Setup](https://jrsoftware.org/isdl.php) installed) and `.zip`, the macOS `.dmg`, or the Linux `.deb` (with
-`dpkg-deb`) and `.tar.gz`. The smoke test starts the built app's background service, runs a sandboxed service
-through it, and stops it with `shutdown`, the command the Windows installer runs before an update.
-`packaging/test_installer.ps1` installs the Windows installer for this user, starts the app, and uninstalls it.
+`build.py` runs [PyInstaller](https://pyinstaller.org/) and places this system's packages in `release/`: the Windows
+installer (requires [Inno Setup](https://jrsoftware.org/isdl.php)) and `.zip`, the macOS `.dmg`, or the Linux `.deb`
+(requires `dpkg-deb`) and `.tar.gz`. The smoke test starts the built app's background service, runs a sandboxed
+service through it, and stops it with `shutdown`, the same command the Windows installer runs before an update.
+`packaging/test_installer.ps1` installs the Windows build for the current user, starts it, and uninstalls it.
 
 ## Releasing
 
-1. Set `__version__` in [`pythonator/__init__.py`](../pythonator/__init__.py) and add the version to
-   [CHANGELOG.md](../CHANGELOG.md) as `## [0.0.17] - YYYY-MM-DD`, with `Security`, `Added`, `Changed`, `Fixed` and
-   `Removed` sections as needed ([Keep a Changelog](https://keepachangelog.com/en/1.1.0/)), and its compare link
-   at the bottom. The release notes are that section.
-2. Commit, then tag and push: `git tag v0.0.1 && git push origin v0.0.1`.
+1. Set `__version__` in [`pythonator/__init__.py`](https://github.com/cfunkz/Pythonator/blob/main/pythonator/__init__.py).
+   In [CHANGELOG.md](../CHANGELOG.md), rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`, add a new empty
+   `## [Unreleased]` above it, and update the compare links at the bottom
+   ([Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/)). The release notes are taken from that section.
+   Update the version shown on the website (`website/index.html`).
+2. Commit, then tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`.
 
-`release.yml` checks the tag matches the version, builds the installers and portable files on Windows, Linux
-(x64 and arm64) and macOS (Apple silicon and Intel), installs and starts each one, and publishes them with a
-`SHA256SUMS.txt` and signed build provenance. CI builds and test-installs the same packages on every push.
+`release.yml` checks that the tag matches `__version__`, builds the installers and portable archives on Windows,
+Linux (x64 and arm64) and macOS (Apple silicon and Intel), installs and starts each one, and publishes them with
+`SHA256SUMS.txt` and signed build provenance ([attest-build-provenance](https://github.com/actions/attest-build-provenance)).
+CI builds and test-installs the same packages on every push.
 
-## This website
+## The website
 
-GitHub Pages builds the site from the Markdown in [`docs/`](./), with the design in
-[`website/`](../website/) and the menu in [`_config.yml`](../_config.yml). To add a page, write `docs/<name>.md`
-starting with a `# Title`, and add it to `docs_nav` in `_config.yml`. Links between pages are written to the `.md`
-files, so they work on GitHub too.
+[GitHub Pages](https://docs.github.com/en/pages/setting-up-a-github-pages-site-with-jekyll) builds the site with
+Jekyll from the Markdown in [`docs/`](./), with the design in
+[`website/`](https://github.com/cfunkz/Pythonator/tree/main/website) and the navigation in
+[`_config.yml`](https://github.com/cfunkz/Pythonator/blob/main/_config.yml). To add a page, create `docs/<name>.md`
+starting with a `# Title`, and add it to `docs_nav` in `_config.yml`. Links between pages point at the `.md` files, so
+they work on GitHub as well. Links to source files use full GitHub URLs, since the site does not publish the code.
 
-Preview it locally with Ruby:
+To preview locally with Ruby:
 
 ```bash
 cat > Gemfile <<'GEMS'
@@ -139,4 +150,4 @@ bundle config set --local path vendor && bundle install
 bundle exec jekyll serve --baseurl /Pythonator      # http://127.0.0.1:4000/Pythonator/
 ```
 
-`Gemfile`, `Gemfile.lock` and `vendor/` are ignored by the site and by git.
+`Gemfile`, `Gemfile.lock` and `vendor/` are excluded from the site and ignored by git.

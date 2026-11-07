@@ -5,7 +5,7 @@
 <h1 align="center">Pythonator</h1>
 
 <p align="center">
-  Run your scripts, web servers and bots on your own computer: sandboxed, supervised, and kept running.<br>
+  A desktop supervisor for long-running programs: bots, web servers, workers and scheduled jobs, each in its own sandbox.<br>
   <a href="https://cfunkz.github.io/Pythonator/">Website</a> ·
   <a href="https://cfunkz.github.io/Pythonator/docs/">Documentation</a> ·
   <a href="https://cfunkz.github.io/Pythonator/docs/faq.html">FAQ</a> ·
@@ -16,24 +16,32 @@
   <img src="screenshots/main.png" alt="Pythonator: a sandboxed web API running, with its files, code, console and the Guard plugin panel" width="900">
 </p>
 
-Pythonator is a desktop app for the programs you leave running: a Discord bot, a FastAPI or Express server, a
-scraper on a schedule. Add a folder, press Start, and it keeps the program running, restarts it when it crashes,
-and keeps it in a sandbox so it can't read your files or reach ports you didn't give it.
+Pythonator runs programs that are meant to stay up, such as a Discord bot, a FastAPI or Express server, or a
+scraper on a timer. Each program is a *service*: Pythonator starts it, restarts it after a crash, records its output
+and confines it to its own folder and the ports it declares. Services are run by a background process, so they keep
+going after the window is closed. It runs on Windows, macOS and Linux.
 
-* **Supervised.** Restarts with back-off, schedules (intervals or cron), memory and CPU limits for the whole process tree,
-  live CPU, memory and ports, rotating logs with secrets masked. Services keep running when the window closes.
-* **Isolated.** Sandbox mode (default) uses the operating system's own: Landlock, seccomp and bubblewrap on Linux,
-  Seatbelt on macOS, AppContainer and a job object on Windows. Container mode runs it in hardened Docker or Podman.
-  Full access asks first and shows in red.
-* **Ports and APIs.** List the ports a server may use, and choose whether only this computer or your network too may
-  connect. On Windows, **Make reachable** sets up the loopback exemption, a loopback permit and firewall rules for that service alone, so
-  the browser on the same PC can open it.
-* **Plugin-first.** Plugins run in their own sandboxed process. Official ones are checked by hash; third-party ones
-  show a warning and start in test mode. Notify (alerts, webhooks and health checks), Guard and a one-click Project builder are included.
-* **Many languages.** Python (with its `.venv`), Node.js, Bun, Deno, Go, Rust, Java, .NET, Ruby, PHP, PowerShell and
-  shell scripts, or any command. **Install packages** runs inside the same isolation.
-* **A real editor.** QScintilla: highlighting for every language, folding, multiple carets, fast with big files.
-* **Git.** Clone with hooks and submodules off, pull fast-forward only.
+* **Supervision.** Restarts with exponential back-off, interval and [cron](https://man7.org/linux/man-pages/man5/crontab.5.html)
+  schedules, memory and CPU limits for the whole process tree, live CPU, memory and port figures, and rotating logs
+  with secrets masked. See [Services](docs/services.md).
+* **Isolation.** Sandbox mode (the default) uses the operating system's own mechanisms:
+  [Landlock](https://docs.kernel.org/userspace-api/landlock.html), [seccomp](https://man7.org/linux/man-pages/man2/seccomp.2.html)
+  and [bubblewrap](https://github.com/containers/bubblewrap) on Linux, Seatbelt on macOS, and
+  [AppContainer](https://learn.microsoft.com/en-us/windows/win32/secauthz/appcontainer-isolation) with a
+  [job object](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects) on Windows. Container mode uses
+  Docker or Podman with a hardened set of flags. Full access needs confirmation. See [Isolation modes](docs/isolation.md).
+* **Networking.** Each service lists the ports it may listen on and whether other computers may connect. On Windows,
+  **Make reachable** adds the loopback exemption and firewall rules for that one service. See
+  [Ports and APIs](docs/networking.md).
+* **Plugins.** Plugins run as separate sandboxed processes. Official plugins are verified by SHA-256; third-party
+  plugins start in test mode with no permissions. Notify (alerts, webhooks and health checks), Guard, Project builder
+  and an AI assistant are bundled. See [Plugins](docs/plugins.md).
+* **Languages.** Python (with a per-project `.venv`), Node.js, Bun, Deno, Go, Rust, Java, .NET, Ruby, PHP, shell,
+  PowerShell, or any command. Package installs run under the same isolation as the service. See
+  [Languages](docs/languages.md).
+* **Editor.** Built on [QScintilla](https://www.riverbankcomputing.com/software/qscintilla/): highlighting, folding,
+  multiple carets, and large files without lag.
+* **Git.** Clone with hooks and submodules disabled; pull is fast-forward only. See [Git](docs/git.md).
 
 <table>
   <tr>
@@ -44,14 +52,21 @@ and keeps it in a sandbox so it can't read your files or reach ports you didn't 
     <td><img src="screenshots/editor.png" alt="The built-in editor" width="420"></td>
     <td><img src="screenshots/system-check.png" alt="System check: what the sandbox enforces on this computer" width="420"></td>
   </tr>
+  <tr>
+    <td><img src="screenshots/docs/service-limits.png" alt="The Limits tab: memory and CPU limits for the whole process tree" width="420"></td>
+    <td><img src="screenshots/docs/service-schedule-job.png" alt="The Schedule &amp; restarts tab: a nightly job with its next runs" width="420"></td>
+  </tr>
 </table>
 
-## Install
+More screenshots, one for each tab and plugin, are in the [documentation](docs/README.md).
 
-Download the installer for your system from [Releases](https://github.com/cfunkz/Pythonator/releases): a
-`setup.exe` for Windows, a `.dmg` for macOS (Apple silicon and Intel), a `.deb` for Ubuntu, Debian and Raspberry Pi
-OS, and portable `.zip` / `.tar.gz` files. Each release comes with a `SHA256SUMS.txt` and signed build provenance.
-Or run it from source with Python 3.12 or later:
+## Installation
+
+Installers are on the [Releases](https://github.com/cfunkz/Pythonator/releases) page: `setup.exe` for Windows, `.dmg`
+for macOS (Apple silicon and Intel), `.deb` for Ubuntu, Debian and Raspberry Pi OS, and portable `.zip` and `.tar.gz`
+archives. Each release includes `SHA256SUMS.txt` and signed build provenance.
+
+To run from source (Python 3.12 or later):
 
 ```bash
 git clone https://github.com/cfunkz/Pythonator.git
@@ -63,38 +78,37 @@ pip install --no-deps -e .
 pythonator
 ```
 
-Then follow [Getting started](https://cfunkz.github.io/Pythonator/docs/getting-started.html).
+[Getting started](docs/getting-started.md) covers the first service.
 
 ## Documentation
 
-| For | Read |
+| Topic | Pages |
 | --- | --- |
-| Using it | [Getting started](docs/getting-started.md) · [Services](docs/services.md) · [Isolation modes](docs/isolation.md) · [Ports and APIs](docs/networking.md) · [Languages](docs/languages.md) · [Git](docs/git.md) · [Plugins](docs/plugins.md) |
-| Building on it | [Writing a plugin](docs/plugin-development.md) · [Plugin API](docs/plugin-api.md) · [Background service API](docs/service-api.md) · [Adding a language](docs/adding-a-language.md) · [Architecture](docs/architecture.md) |
-| Trust | [Security](docs/security.md) · [SECURITY.md](SECURITY.md) |
-| Working on Pythonator | [Development and CI](docs/development.md) |
+| Using Pythonator | [Getting started](docs/getting-started.md) · [Services](docs/services.md) · [Isolation modes](docs/isolation.md) · [Ports and APIs](docs/networking.md) · [Languages](docs/languages.md) · [Git](docs/git.md) · [Plugins](docs/plugins.md) · [FAQ](docs/faq.md) |
+| Extending it | [Writing a plugin](docs/plugin-development.md) · [Plugin API](docs/plugin-api.md) · [Background service API](docs/service-api.md) · [Adding a language](docs/adding-a-language.md) · [Architecture](docs/architecture.md) |
+| Security | [Security model](docs/security.md) · [Reporting a vulnerability](SECURITY.md) |
+| Contributing | [Development and CI](docs/development.md) |
 
-The same pages, with a menu and search-friendly navigation, are on the [website](https://cfunkz.github.io/Pythonator/docs/).
+The same pages are published, with navigation, on the [website](https://cfunkz.github.io/Pythonator/docs/).
 
 ## Support
 
-* Questions: [Discussions](https://github.com/cfunkz/Pythonator/discussions) ·
-  Bugs and ideas: [Issues](https://github.com/cfunkz/Pythonator/issues) ·
-  Contact: [hello@routezero.tech](mailto:hello@routezero.tech)
-* Like it? [Buy me a coffee ☕](https://ko-fi.com/cfunkz81112) or star the repository.
+* Questions: [Discussions](https://github.com/cfunkz/Pythonator/discussions)
+* Bugs and feature requests: [Issues](https://github.com/cfunkz/Pythonator/issues)
+* Contact: [hello@routezero.tech](mailto:hello@routezero.tech)
+* Donations: [Ko-fi](https://ko-fi.com/cfunkz81112)
 
-Pythonator is made by [cfunkz](https://github.com/cfunkz). **Help ▾ → About Pythonator** in the app shows the
-credits and the versions to paste into a bug report.
+**Help ▾ → About Pythonator** shows the credits and the version details to include in a bug report.
 
 ## Security
 
-Please report security problems privately through
-[GitHub's advisories](https://github.com/cfunkz/Pythonator/security/advisories/new), not in public issues. See
-[SECURITY.md](SECURITY.md).
+Security problems should be reported privately through
+[GitHub security advisories](https://github.com/cfunkz/Pythonator/security/advisories/new), not in public issues.
+See [SECURITY.md](SECURITY.md).
 
-## License
+## Licence
 
-[GPL-3.0](LICENSE). **Help ▾ → Licensing** in the app lists Pythonator's license and every library it uses.
+[GPL-3.0](LICENSE). **Help ▾ → Licensing** lists the licence of Pythonator and of every library it uses.
 
 ---
 

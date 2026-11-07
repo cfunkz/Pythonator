@@ -2,27 +2,32 @@
 
 ## Supported versions
 
-Security fixes go into the latest version only. Please update before reporting.
+Only the latest release receives security fixes. Please check that the problem still occurs on it before reporting.
 
 ## Reporting a vulnerability
 
 Report privately through GitHub's
 **[Report a vulnerability](https://github.com/cfunkz/Pythonator/security/advisories/new)** form (repository →
-Security → Advisories), never in a public issue or discussion. In the app, **Support → Report a security problem
-privately** opens it. If you can't use GitHub, email [hello@routezero.tech](mailto:hello@routezero.tech).
+Security → Advisories), not in a public issue or discussion. In the app, **Help ▾ → Support → Report a security
+problem privately** opens the same form. If GitHub is not an option, email
+[hello@routezero.tech](mailto:hello@routezero.tech).
 
-Please include the version (`pythonator --version`), the operating system, the isolation mode (Sandbox, Container
-or Full access) and the steps to reproduce. **System check** lists what the sandbox enforces on your computer.
+Please include:
 
-Of particular interest:
+* the version (`pythonator --version`) and operating system;
+* the isolation mode (Sandbox, Container or Full access);
+* steps to reproduce;
+* the output of **System check**, which lists the sandbox protections enforced on that computer.
 
-* a way out of the sandbox or a container, or to a port the service didn't list;
-* a service or plugin that reads Pythonator's data folder or the background service's token;
-* a third-party plugin that gets more than it was granted, acts outside test mode, or passes as official;
-* another local account controlling your background service;
-* input that reaches a program, git or a container engine without validation.
+Reports in these areas are particularly useful:
 
-You'll get an answer within a week. When a fix is released, the advisory is published with credit to you unless you
-prefer otherwise.
+* escaping the sandbox or a container, or listening on a port the service did not declare;
+* a service or plugin reading Pythonator's data folder or the background service's token;
+* a third-party plugin obtaining more than it was granted, acting outside test mode, or passing as official;
+* another local account controlling the background service;
+* input reaching a program, git or a container engine without validation.
 
-The security model, per operating system, is in [docs/security.md](docs/security.md).
+Reports are acknowledged within a week. When a fix is released, the advisory is published and credits the reporter
+unless they prefer otherwise.
+
+The security model for each operating system is described in [docs/security.md](docs/security.md).

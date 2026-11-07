@@ -1,8 +1,9 @@
 # Plugin API
 
-Everything a plugin can declare, receive and do, in plugin API version **5** (Pythonator 0.0.13 and later; plugins
-written for an older API run unchanged). For a walk-through, read
-[Writing a plugin](plugin-development.md) first.
+Reference for everything a plugin can declare, receive and do, in plugin API version **5** (Pythonator 0.0.13 and
+later). Plugins written for an older API version run unchanged. [Writing a plugin](plugin-development.md) is a
+step-by-step introduction. The SDK itself is a single standard-library module,
+[`pythonator/sdk.py`](https://github.com/cfunkz/Pythonator/blob/main/pythonator/sdk.py).
 
 ## How a plugin runs
 
@@ -10,17 +11,20 @@ written for an older API run unchanged). For a walk-through, read
 Pythonator's background service                 the plugin's own process (sandboxed)
 ┌──────────────────────────────┐   JSON lines   ┌───────────────────────────────────┐
 │ plugin host                  │ ─────────────▶ │ worker: loads plugin.py,          │
-│  · checks every message      │   stdin        │ calls your on_* methods           │
+│  · checks every message      │   stdin        │ calls the plugin's on_* methods   │
 │  · applies permissions       │ ◀───────────── │                                   │
 │  · rate limit, size limit    │   stdout       │ self.notify(), self.show(), ...   │
 └──────────────────────────────┘                └───────────────────────────────────┘
 ```
 
-Pythonator starts `Pythonator --plugin-worker <plugin folder> <data folder>` inside the same sandbox services use,
-with network only if the plugin was granted `network`. The worker imports your file (compiling it fresh, never using
-`.pyc` files shipped with it), sends `hello`, and then calls your methods as messages arrive, one at a time.
+Pythonator starts `Pythonator --plugin-worker <plugin folder> <data folder>` in the same kind of sandbox that
+services use, with network access only if the plugin was granted `network`. The worker
+([`plugins/worker.py`](https://github.com/cfunkz/Pythonator/blob/main/pythonator/plugins/worker.py)) imports the entry
+file (compiling it from source and ignoring any shipped `.pyc` files), sends `hello`, and then calls the plugin's
+methods as messages arrive, one at a time.
 
-Your code never sees Pythonator's objects, only copies of the data your permissions allow.
+Plugin code never sees Pythonator's own objects, only copies of the data its permissions allow. The host side is
+[`plugins/host.py`](https://github.com/cfunkz/Pythonator/blob/main/pythonator/plugins/host.py).
 
 ## plugin.toml
 
@@ -33,7 +37,7 @@ api = 5                     # the plugin API it was written for; a newer one tha
 entry = "plugin.py"         # the Python file, inside the plugin folder
 description = "..."         # up to 300 characters
 permissions = ["network"]   # see below
-author = "you"
+author = "Your Name"
 homepage = "https://..."
 
 [[plugin.settings]]         # any number, up to 40
@@ -45,8 +49,9 @@ choices = []                # for kind = "choice"
 help = "Shown under the field."
 ```
 
-The file must be under 64 KB. Unknown keys are refused, so a typo is an error, not a silent no-op. Nothing in the
-plugin is imported to read it.
+The file must be under 64 KB and is parsed as [TOML](https://toml.io/en/v1.0.0). Unknown keys are refused, so a typo
+is an error rather than being silently ignored. Reading the manifest imports nothing from the plugin. The schema is
+`Manifest` in [`plugins/manifest.py`](https://github.com/cfunkz/Pythonator/blob/main/pythonator/plugins/manifest.py).
 
 ## Permissions
 
@@ -71,7 +76,7 @@ Official plugins get what they declare. Third-party plugins get only what the us
 from pythonator.sdk import Plugin, ServiceEvent, ServiceInfo, SystemInfo, ui
 ```
 
-Define exactly one subclass of `Plugin` in your entry file.
+The entry file must define exactly one subclass of `Plugin`.
 
 ### Attributes
 
@@ -84,30 +89,30 @@ Define exactly one subclass of `Plugin` in your entry file.
 | `test_mode` | `bool` | Whether actions are only recorded |
 | `data_dir` | `Path` | A private folder for the plugin's own files; the only place it can write |
 
-### Methods you override
+### Methods to override
 
 | Method | Called |
 | --- | --- |
-| `on_start()` | Once, after `settings` and `services` are filled in. Start your threads here |
+| `on_start()` | Once, after `settings` and `services` are filled in. Start background threads here |
 | `on_stop()` | Before the plugin is stopped. Keep it short |
 | `on_event(event)` | A service started, stopped, crashed... (see the kinds below) |
 | `on_output(service, lines)` | New output of a service, up to 200 lines at a time (`read_logs`) |
 | `on_stats()` | Every 2 seconds, after `services` got new CPU, memory and ports and `system` new figures (`inspect`) |
 | `check_start(service) -> str \| None` | Before a start: return a reason to refuse it (`policy`); answer within 2 s |
 | `on_settings()` | The user saved new settings |
-| `on_action(action, value)` | A button of your panel was pressed |
+| `on_action(action, value)` | A panel button, input, drop-down or tab was used |
 | `on_tick()` | About every 5 seconds |
-| `on_proposal(id, status, note)` | The user answered a change you proposed: `applied`, `rejected`, `failed` or `expired` (API 2) |
+| `on_proposal(id, status, note)` | The user answered a proposed change: `applied`, `rejected`, `failed` or `expired` (API 2) |
 
-An exception in any of them is reported in the plugin's Activity with its traceback, and the plugin goes on.
+An exception in any of them is reported in the plugin's Activity with its traceback, and the plugin keeps running.
 
-### Methods you call
+### Methods to call
 
 | Method | Does | Needs |
 | --- | --- | --- |
 | `log(text)` | A line in the plugin's Activity | |
 | `notify(text, level="info")` | A notice in the window; `level` is `info`, `ok`, `warn` or `error` | |
-| `show(panel)` | Shows or replaces your panel | `ui` |
+| `show(panel)` | Shows or replaces the plugin's panel | `ui` |
 | `start(id)`, `stop(id)`, `restart(id)` | Acts on a service | `control` |
 | `list_files(id)` | `{"files": [{"path", "size"}], "hidden", "truncated", "entry"}` | `read_files` |
 | `read_file(id, path)` | `{"path", "text", "truncated", "size"}` | `read_files` |
@@ -119,8 +124,9 @@ An exception in any of them is reported in the plugin's Activity with its traceb
 | `leftover_projects(folder="")` | `{"folder", "leftovers": [{"folder", "name", "made"}]}`: folders in the projects folder no service uses any more. In the default projects folder every unused folder; elsewhere only ones the Project builder made. Nothing inside them is read | `create_services` |
 | `delete_leftovers(folders, folder="")` | Asks the user, in Pythonator's window, which of those folders to delete (one window for all of them); returns how many were asked about. Nothing is deleted unless they say so | `create_services` |
 
-They are safe to call from any thread. The last seven wait for Pythonator's answer (15 s at most) and raise
-`PluginError` with the reason when refused, so call them from a thread of your own.
+All of them are safe to call from any thread. The methods from `list_files` onwards block until Pythonator answers
+(15 s at most) and raise `PluginError` with the reason when refused, so they should be called from a background
+thread rather than from an `on_*` method.
 
 ### Files (API 2)
 
@@ -131,24 +137,26 @@ A plugin's sandbox never gets a service's folder. With `read_files` it asks Pyth
 * Never secrets: `.env` files and the service's env file, private keys and certificates, credential, token and
   password files (`tokens.json`, `secrets.yaml`...), databases. `list_files` leaves them out and counts them in
   `hidden`; `read_file` refuses them.
-* The values of the service's environment variables are replaced by `[NAME hidden]` in what you read.
+* The values of the service's environment variables are replaced by `[NAME hidden]` in what is returned.
 * Text only, 256 KB per file, at most 120 requests a minute.
 
 ### Proposed changes (API 2)
 
-`propose_change` takes exact `(old, new)` replacements: each `old` must be in the file exactly once (one edit with an
-empty `old` creates a new file of up to 48 KB). Pythonator applies them to the file as it is, and opens a review
-window with the diff and its warnings. **Nothing is written unless the user presses Apply there**; Apply refuses
-if the file changed in the meantime, and keeps a copy of the old file in Pythonator's `backups` folder.
+`propose_change` takes exact `(old, new)` replacements: each `old` must occur in the file exactly once (a single
+edit with an empty `old` creates a new file of up to 48 KB). Pythonator applies them to the current file and opens a
+review window with the diff and any warnings. **Nothing is written unless the user chooses Apply there.** Apply
+refuses if the file has changed in the meantime, and keeps a copy of the previous file in the data folder's
+`backups` folder.
 
-Some changes are refused, whatever the user would click: scripts and programs (`.sh`, `.bat`, `.ps1`, `.exe`,
-`Makefile`...), CI workflows (`.github/`), secret files, any path through a link, emptying a file or removing most of
-it, and added code that matches what runs programs or shell commands, deletes files, evaluates strings, calls the
-operating system directly or adds an npm install script. These are patterns, not a proof: the review window's diff
-is what to read. An edit that touches a hidden value is refused with the same words as one that isn't in the file,
-so a plugin can't guess the value. Changes that add web
-addresses, network use or dependencies are allowed with a warning. One proposal per plugin waits at a time; an
-unanswered one expires after 30 minutes. In test mode a proposal is only recorded.
+Some changes are refused regardless of what the user would choose: scripts and executables (`.sh`, `.bat`, `.ps1`,
+`.exe`, `Makefile`, …), CI configuration (`.github/`, `.gitlab-ci`), secret files, any path through a symbolic link,
+emptying a file or removing most of it, edit or placeholder markers, and added code that matches patterns for running
+programs or shell commands, deleting files, evaluating strings, calling the operating system directly (including
+renamed imports, `getattr` with a constructed name and `__builtins__`) or adding an npm install script. These checks
+are pattern-based, not a proof, so the diff in the review window is what matters. An edit that touches a hidden value
+is refused with the same message as text that is absent or ambiguous, so a plugin cannot infer the value. Changes that
+add web addresses, network use or dependencies are allowed with a warning. Each plugin may have one proposal pending
+at a time; an unanswered proposal expires after 30 minutes. In test mode a proposal is only recorded.
 
 ### ServiceInfo
 
@@ -193,8 +201,8 @@ The whole computer, with *inspect*. Read-only.
 
 ## Panels
 
-Build panels with `ui`. They are data, checked by Pythonator and drawn with native widgets: text is always shown as
-text, never as HTML.
+Panels are built with `ui`. They are plain data, validated by Pythonator and drawn with native Qt widgets; text is
+always shown as text, never interpreted as HTML.
 
 | Builder | Shows |
 | --- | --- |
@@ -224,8 +232,9 @@ made to fit the narrowest Plugins dock, 240 pixels.
 - A table scrolls sideways inside itself; a long cell ends in "…" with the whole text in its tooltip.
 - The page is exactly as wide as the dock, so nothing can reach past its edge.
 
-So a panel looks right at any width without trying. Keep a panel to one screenful: more than that is a second view
-(`ui.tabs`), not a longer page. Prefer icon buttons for common actions (refresh, delete, stop) and short labels.
+A panel therefore fits any width without extra work. Keep each view to one screenful and move further content into a
+second view (`ui.tabs`) rather than a longer page. Icon buttons suit common actions (refresh, delete, stop); other
+labels should be short.
 
 A tone is `""`, `ok`, `warn`, `error` or `muted`. A select shows the `value` the plugin sends: after a pick it shows
 that value until the next panel, so a placeholder option makes a one-shot menu. A panel holds at most 500 items in
@@ -246,8 +255,8 @@ previous panel stays.
 
 ## The protocol
 
-You don't need this to write a plugin in Python; the SDK speaks it for you. One JSON object per line, UTF-8, with
-the message type in `t`.
+The SDK implements the protocol, so plugins do not need to handle it directly. Each message is one JSON object per
+line ([JSON Lines](https://jsonlines.org/)), UTF-8, with the message type in `t`.
 
 **From Pythonator to the plugin** (on its stdin):
 
@@ -276,12 +285,12 @@ the message type in `t`.
 | `panel` | `panel` |
 | `control` | `op` (`start`, `stop`, `restart`), `id` |
 | `verdict` | `req`, `deny` (empty to allow) |
-| `request` | `req`, `op` (`list`, `read`, `propose`), `id`, and `path`, `edits`, `summary` as the op needs |
+| `request` | `req`, `op` (`list`, `read`, `propose`, `templates`, `create`, `projects`, `delete`, `leftovers`, `delete_leftovers`), and the fields that op needs (`id`, `path`, `edits`, `summary`, `template`, `name`, `folder`, `folders`) |
 
 The worker sends the protocol on the real stdout and redirects `print()` to stderr, which becomes the Activity.
 
 ## Compatibility
 
-The API version changes only when a change would break existing plugins. New optional fields and new methods don't
-change it. Pythonator refuses a plugin with a newer `api` than its own, with a message saying it needs a newer
-Pythonator.
+The API version is raised only for changes that add capabilities plugins may depend on; existing plugins keep
+working. New optional fields and methods are marked with the API version that introduced them. Pythonator refuses a
+plugin that declares a newer `api` than its own, with a message saying that a newer Pythonator is needed.
