@@ -68,7 +68,8 @@ def test_powershell_is_windows_own() -> None:
     from pythonator.isolation import windows
 
     ps = windows.powershell()
-    assert ps.parts[-4:] == ("System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+    # Windows file names ignore case, and GetSystemDirectoryW may answer "system32".
+    assert tuple(part.lower() for part in ps.parts[-4:]) == ("system32", "windowspowershell", "v1.0", "powershell.exe")
     assert ps.is_absolute() or sys.platform != "win32"
 
 

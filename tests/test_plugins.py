@@ -79,7 +79,10 @@ def test_one_changed_byte_makes_it_third_party(tmp_path: Path) -> None:
 
 def test_tree_hash_refuses_links(tmp_path: Path) -> None:
     folder = write_plugin(tmp_path, "linky", HEADER)
-    (folder / "secret").symlink_to("/etc/passwd")
+    try:
+        (folder / "secret").symlink_to("/etc/passwd")
+    except OSError:  # Windows without Developer Mode or administrator rights can't make links
+        pytest.skip("this account can't make symbolic links")
     with pytest.raises(ValueError):
         trust.tree_hash(folder)
 
