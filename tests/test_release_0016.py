@@ -324,3 +324,23 @@ def test_stop_ends_a_program_that_left_its_process_group(harness: Any, project: 
     finally:
         for p in daemonised():
             p.kill()
+
+
+def test_a_plugin_that_crashed_shows_its_panel_again(harness: Any, tmp_path: Path) -> None:
+    """After an unexpected exit the window's panel is cleared, so the same panel from the restarted plugin must be
+    shown again, not skipped as unchanged (Windows CI: the AI assistant's panel never came back)."""
+    from tests.test_plugins import install
+
+    install(harness, tmp_path, "phoenix", "from pythonator.sdk import ui\nclass P(Plugin):\n    def on_start(self):\n"
+            "        self.show(ui.panel('Same', ui.text('the same panel')))\n"
+            "        mark = self.data_dir / 'crashed'\n"
+            "        if 'ui' in self.permissions and not mark.exists():\n"
+            "            mark.write_text('x')\n"
+            "            time.sleep(0.5)\n"
+            "            os._exit(3)\n", perms=["ui"])
+    harness.ok({"op": "plugin_grant", "plugin": "phoenix", "permissions": ["ui"], "live": True})
+
+    def panels() -> list[Any]:
+        return [e.get("panel") for e in harness.events if e.get("ev") == "panel" and e.get("plugin") == "phoenix"]
+
+    harness.wait(lambda: sum(1 for x in panels() if x) >= 2 and bool(panels()[-1]), timeout=30_000)

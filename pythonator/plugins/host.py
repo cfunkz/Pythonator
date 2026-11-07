@@ -387,7 +387,7 @@ class PluginHost:
     def _on_exit(self, p: Plugin, proc: subprocess.Popen[bytes], code: int) -> None:
         if p.proc is not proc and not p.stopping:
             return
-        p.proc, p.ready = None, False
+        p.proc, p.ready, p.panel = None, False, None  # the window clears it below: a restart's panel is new again
         if p.stopping:
             p.stopping = False
             self.changed()

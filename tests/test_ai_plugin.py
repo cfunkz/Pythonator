@@ -445,7 +445,12 @@ def test_kill_switch_locks_the_assistant(harness: Any, fake: str) -> None:
         panels = [e for e in harness.events if e.get("ev") == "panel" and e.get("plugin") == "pythonator-ai"]
         return json.dumps(panels[-1]["panel"]) if panels and panels[-1]["panel"] else ""
 
-    harness.wait(lambda: "Kill switch" in panel_text(), timeout=30_000)
+    try:
+        harness.wait(lambda: "Kill switch" in panel_text(), timeout=30_000)
+    except Exception:  # say why: the plugin's own log, not only "timed out"
+        from tests.test_plugin_files import _activity
+
+        pytest.fail(f"No panel. The plugin's activity:\n{_activity(harness, 'pythonator-ai')}")
     harness.ok({"op": "plugin_action", "plugin": "pythonator-ai", "action": "kill"})
     harness.wait(lambda: "Unlock" in panel_text(), timeout=10_000)
     harness.ok({"op": "plugin_action", "plugin": "pythonator-ai", "action": "ask", "value": "hello"})
