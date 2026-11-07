@@ -135,7 +135,10 @@ def test_full_mode_is_plain(dirs: DataDirs, project: Path) -> None:
     (project / "a.py").write_text("print(1)")
     service = Service.model_validate({"name": "f", "folder": str(project), "entry": "a.py", "mode": "full"})
     cmd = isolation.prepare(service, dirs)
-    assert cmd.argv == cmd.shown
+    # Windows, Python found in a venv (pytest run from an activated .venv): the venv's own python.exe is replaced by
+    # the Python it was made from, as the redirector would (runtimes.direct_python). The rest is as typed.
+    assert cmd.argv[1:] == cmd.shown[1:]
+    assert cmd.argv == cmd.shown or cmd.env.get("__PYVENV_LAUNCHER__") == cmd.shown[0]
     assert "Full access" in cmd.describe
 
 
