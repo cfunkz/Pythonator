@@ -1,0 +1,213 @@
+name: release
+
+# Push a tag vX.Y.Z on main. Each OS builds its own downloads with packaging/build.py, installs them and checks they
+# run, then a reviewer approves the `release` environment and they are published once, with SHA256SUMS and provenance.
+#
+#   Windows  Pythonator-X.Y.Z-windows-x64-setup.exe, Pythonator-X.Y.Z-windows-x64.zip
+#   macOS    Pythonator-X.Y.Z-macos-arm64.dmg / .zip (Apple silicon), Pythonator-X.Y.Z-macos-x64.dmg / .zip (Intel)
+#   Linux    pythonator_X.Y.Z_amd64.deb, pythonator_X.Y.Z_arm64.deb, Pythonator-X.Y.Z-linux-x64.tar.gz, -linux-arm64.tar.gz
+#   Any OS   pythonator-X.Y.Z-py3-none-any.whl (for pip, with requirements.lock)
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:  # a dry run: builds and tests every download, publishes nothing
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    # A tag must sit on main and be v<__version__>, or v<__version__>-<label> for a prerelease (v0.0.1-alpha), equal
+    # the website's version, and have notes in CHANGELOG.md. CI must be green on this commit (required checks on main
+    # enforce that before the tag can exist there).
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Tag is on main and matches the version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' pythonator/__init__.py)
+          grep -q "^## \[$version\]" CHANGELOG.md
+          grep -Eq "^version: $version(-[0-9A-Za-z.]+)?( |\$)" _config.yml
+          if [ "$REF_TYPE" = tag ]; then
+            git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+            echo "${TAG#v}" | grep -Eq "^$version(-[0-9A-Za-z.]+)?\$"
+            grep -Eq "^version: ${TAG#v}( |\$)" _config.yml
+          fi
+
+  wheel:
+    needs: gate
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+          check-latest: true
+      - run: pip install --no-cache-dir --require-hashes --only-binary=":all:" -r requirements-build.lock
+      - run: pip wheel --no-deps --no-build-isolation --no-cache-dir -w dist .
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wheel
+          path: dist/*.whl
+          if-no-files-found: error
+
+  package:
+    needs: wheel
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-2025, name: windows-x64 }
+          - { os: macos-15, name: macos-arm64 }
+          - { os: macos-15-intel, name: macos-x64 }
+          - { os: ubuntu-24.04, name: linux-x64 }
+          - { os: ubuntu-24.04-arm, name: linux-arm64 }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+          check-latest: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wheel
+          path: dist
+      # uv (pinned with its hash in requirements.lock) fetches the Python each download carries.
+      - run: pip install --no-cache-dir --require-hashes --only-binary=":all:" -r requirements.lock
+      - name: Inno Setup
+        if: runner.os == 'Windows'
+        run: command -v iscc || test -f "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" || choco install innosetup --no-progress -y
+      - name: Build
+        env:
+          RELEASE_LABEL: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: python packaging/build.py
+
+      - name: Test setup.exe and the zip
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $setup = Get-Item release\*-setup.exe
+          Start-Process $setup.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait
+          $app = "$env:LOCALAPPDATA\Programs\Pythonator"
+          & "$app\bin\pythonatorctl.cmd" version
+          if ($LASTEXITCODE) { throw "pythonatorctl failed" }
+          $env:QT_QPA_PLATFORM = 'offscreen'
+          & "$app\python\python.exe" -c "import PyQt6.QtWidgets, pythonator.ui.app, ruff; print('qt ok')"
+          if ($LASTEXITCODE) { throw "the window doesn't import" }
+          if (-not (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Pythonator.lnk")) { throw "no Start menu entry" }
+          Start-Process "$app\unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES' -Wait
+          for ($i = 0; $i -lt 60 -and (Test-Path "$app\python"); $i++) { Start-Sleep -Seconds 2 }  # it finishes from a copy
+          if (Test-Path "$app\python") { throw "uninstall left the app" }
+          Expand-Archive (Get-Item release\*-windows-x64.zip) -DestinationPath $env:RUNNER_TEMP\portable
+          & "$env:RUNNER_TEMP\portable\Pythonator\bin\pythonatorctl.cmd" version
+          if ($LASTEXITCODE) { throw "the zip doesn't run" }
+
+      - name: Test the .dmg and the zip
+        if: runner.os == 'macOS'
+        run: |
+          hdiutil attach release/*.dmg -mountpoint /tmp/pythonator-dmg -nobrowse
+          app=/tmp/pythonator-dmg/Pythonator.app/Contents
+          "$app/Resources/python/bin/python3" -m pythonator.ctl.main version
+          QT_QPA_PLATFORM=offscreen "$app/Resources/python/bin/python3" -c "import PyQt6.QtWidgets, pythonator.ui.app, ruff; print('qt ok')"
+          test -x "$app/MacOS/Pythonator" && test -f "$app/Resources/icon.icns"
+          hdiutil detach /tmp/pythonator-dmg
+          mkdir "$RUNNER_TEMP/portable" && ditto -x -k release/*-macos-*.zip "$RUNNER_TEMP/portable"
+          "$RUNNER_TEMP/portable/Pythonator.app/Contents/Resources/python/bin/python3" -m pythonator.ctl.main version
+
+      - name: Test the .deb and the tar.gz
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ./release/*.deb
+          pythonatorctl version
+          QT_QPA_PLATFORM=offscreen /opt/pythonator/python/bin/python3 -c "import PyQt6.QtWidgets, pythonator.ui.app, ruff; print('qt ok')"
+          test -f /usr/lib/systemd/user/pythonatord.service && test -f /usr/share/applications/pythonator.desktop
+          sudo apt-get remove -y pythonator
+          test ! -e /opt/pythonator/python/bin/python3
+          tar xzf release/*.tar.gz -C "$RUNNER_TEMP"
+          "$RUNNER_TEMP/Pythonator/pythonatorctl" version
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: package-${{ matrix.name }}
+          path: |
+            release/*.exe
+            release/*.zip
+            release/*.dmg
+            release/*.deb
+            release/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    needs: package
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    environment: release  # a reviewer approves each publish
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: out
+          merge-multiple: true
+      - name: Checksums and notes
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          cd out
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+          v=${TAG#v}
+          dl="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$TAG"
+          {
+            version=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' ../pythonator/__init__.py)
+            awk -v v="$version" '$0 ~ "^## \\[" v "\\]" {on=1; next} /^## \[/ {on=0} on' ../CHANGELOG.md
+            echo
+            echo "## Downloads"
+            echo
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Windows 10 or 11 | [Pythonator-$v-windows-x64-setup.exe]($dl/Pythonator-$v-windows-x64-setup.exe), or the portable [zip]($dl/Pythonator-$v-windows-x64.zip) |"
+            echo "| macOS, Apple silicon | [Pythonator-$v-macos-arm64.dmg]($dl/Pythonator-$v-macos-arm64.dmg) |"
+            echo "| macOS, Intel | [Pythonator-$v-macos-x64.dmg]($dl/Pythonator-$v-macos-x64.dmg) |"
+            echo "| Debian, Ubuntu (x64 / arm64) | [pythonator_${v}_amd64.deb]($dl/pythonator_${v}_amd64.deb) / [arm64]($dl/pythonator_${v}_arm64.deb) |"
+            echo "| Other Linux (x64 / arm64) | [Pythonator-$v-linux-x64.tar.gz]($dl/Pythonator-$v-linux-x64.tar.gz) / [arm64]($dl/Pythonator-$v-linux-arm64.tar.gz) |"
+            echo
+            echo "Check a download with \`sha256sum -c SHA256SUMS --ignore-missing\` or \`gh attestation verify <file> --repo $GITHUB_REPOSITORY\`."
+          } > ../notes.md
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: "out/*"
+      - name: Publish once (never --clobber)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          pre=()
+          case "$TAG" in *-*) pre=(--prerelease) ;; esac  # v0.0.1-alpha is a prerelease
+          gh release create "$TAG" out/* --repo "$GITHUB_REPOSITORY" --title "Pythonator ${TAG#v}" --notes-file notes.md \
+            --verify-tag "${pre[@]}"

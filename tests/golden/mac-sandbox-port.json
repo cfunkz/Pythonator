@@ -1,0 +1,81 @@
+{
+ "argv": [
+  "/usr/bin/sandbox-exec",
+  "-p",
+  "(version 1)\n(deny default)\n(allow process-fork)\n(allow process-exec)\n(allow signal (target same-sandbox))\n(allow process-info* (target same-sandbox))\n(allow sysctl-read)\n(allow sysctl-write (sysctl-name \"kern.grade_cputype\"))\n(allow iokit-open (iokit-registry-entry-class \"RootDomainUserClient\"))\n(allow ipc-sysv*)\n(allow user-preference-read)\n(allow file-read-metadata)\n(allow ipc-posix-sem)\n(allow ipc-posix-shm*)\n(allow pseudo-tty)\n(allow system-socket)\n(allow mach-lookup (global-name \"com.apple.system.opendirectoryd.libinfo\") (global-name \"com.apple.system.opendirectoryd.membership\") (global-name \"com.apple.system.notification_center\") (global-name \"com.apple.system.logger\") (global-name \"com.apple.logd\") (global-name \"com.apple.FSEvents\") (global-name \"com.apple.PowerManagement.control\") (global-name \"com.apple.bsd.dirhelper\"))\n(allow file-read* (subpath \"/usr\") (subpath \"/bin\") (subpath \"/sbin\") (subpath \"/System\") (subpath \"/private/etc\") (subpath \"/private/var/db/timezone\") (subpath \"/private/var/select\") (subpath \"/private/var/db/xcode_select_link\") (subpath \"/Library/Frameworks\") (subpath \"/Library/Developer\") (subpath \"/Library/Java\") (subpath \"/Library/Apple\") (subpath \"/Library/Python\") (subpath \"/opt\") (subpath \"/Applications/Xcode.app/Contents/Developer\") (subpath \"/dev\") (subpath \"/private/preboot/Cryptexes\") (subpath \"/private/var/db/dyld\") (subpath \"/Library/Preferences/Logging\") (subpath \"/private/var/db/DetachedSignatures\"))\n(allow file-map-executable (subpath \"/usr\") (subpath \"/bin\") (subpath \"/sbin\") (subpath \"/System\") (subpath \"/private/etc\") (subpath \"/private/var/db/timezone\") (subpath \"/private/var/select\") (subpath \"/private/var/db/xcode_select_link\") (subpath \"/Library/Frameworks\") (subpath \"/Library/Developer\") (subpath \"/Library/Java\") (subpath \"/Library/Apple\") (subpath \"/Library/Python\") (subpath \"/opt\") (subpath \"/Applications/Xcode.app/Contents/Developer\") (subpath \"/dev\") (subpath \"/private/preboot/Cryptexes\") (subpath \"/private/var/db/dyld\") (subpath \"/Library/Preferences/Logging\") (subpath \"/private/var/db/DetachedSignatures\"))\n(deny file-read* file-write* (subpath \"/System/Volumes/Data\"))\n(allow file-read* file-write* (literal \"/dev/null\") (literal \"/dev/zero\") (literal \"/dev/tty\") (literal \"/dev/dtracehelper\") (literal \"/dev/ptmx\") (regex #\"^/dev/fd/\"))\n(allow file-ioctl (literal \"/dev/dtracehelper\") (literal \"/dev/ptmx\") (literal \"/dev/tty\"))\n(allow file-read* file-write* (subpath (param \"P0\")))\n(allow file-map-executable (subpath (param \"P1\")))\n(deny file-write-unlink (literal (param \"P2\")))\n(allow file-read* file-write* (subpath (param \"P3\")))\n(allow file-map-executable (subpath (param \"P4\")))\n(deny file-write-unlink (literal (param \"P5\")))\n(allow file-read* (subpath (param \"P6\")))\n(allow file-map-executable (subpath (param \"P7\")))\n(deny file-write* (subpath (param \"P8\")))\n(allow network-outbound (remote ip \"*:*\"))\n(allow network-outbound (remote unix-socket (path-literal \"/private/var/run/mDNSResponder\")))\n(allow file-read* (literal \"/private/var/run/resolv.conf\"))\n(allow mach-lookup (global-name \"com.apple.SystemConfiguration.configd\") (global-name \"com.apple.SystemConfiguration.DNSConfiguration\") (global-name \"com.apple.dnssd.service\") (global-name \"com.apple.networkd\") (global-name \"com.apple.nehelper\") (global-name \"com.apple.SecurityServer\") (global-name \"com.apple.trustd\") (global-name \"com.apple.trustd.agent\") (global-name \"com.apple.ocspd\"))\n(deny network-outbound (remote ip \"localhost:*\"))\n(allow network-bind network-inbound (local tcp \"localhost:8000\"))\n",
+  "-D",
+  "P0=/Users/me/services/api",
+  "-D",
+  "P1=/Users/me/services/api",
+  "-D",
+  "P2=/Users/me/services/api",
+  "-D",
+  "P3=/Users/me/Library/Application Support/Pythonator/homes/api",
+  "-D",
+  "P4=/Users/me/Library/Application Support/Pythonator/homes/api",
+  "-D",
+  "P5=/Users/me/Library/Application Support/Pythonator/homes/api",
+  "-D",
+  "P6=/opt/homebrew",
+  "-D",
+  "P7=/opt/homebrew",
+  "-D",
+  "P8=/opt/homebrew",
+  "/opt/homebrew/bin/python3",
+  "-u",
+  "main.py"
+ ],
+ "env": {
+  "HOME": "/Users/me/Library/Application Support/Pythonator/homes/api",
+  "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
+  "LANG": "C.UTF-8",
+  "LC_ALL": "C.UTF-8",
+  "TERM": "dumb",
+  "PYTHONUNBUFFERED": "1",
+  "PYTHONIOENCODING": "utf-8",
+  "PYTHONATOR_SERVICE": "api",
+  "PORT": "8000",
+  "HOST": "127.0.0.1",
+  "TMPDIR": "/Users/me/Library/Application Support/Pythonator/homes/api/tmp/",
+  "PYTHONATOR_RUN": "api-g1",
+  "PYTHONATOR_SANDBOX": "1"
+ },
+ "cwd": "/Users/me/services/api",
+ "layers": [
+  [
+   "tree",
+   "reduced",
+   "process group + run marker"
+  ],
+  [
+   "limits",
+   "reduced",
+   "watchdog"
+  ],
+  [
+   "files",
+   "enforced",
+   "Seatbelt profile"
+  ],
+  [
+   "syscalls",
+   "reduced",
+   "Seatbelt operations"
+  ],
+  [
+   "network",
+   "enforced",
+   "Seatbelt profile"
+  ],
+  [
+   "loopback",
+   "enforced",
+   "Seatbelt profile"
+  ],
+  [
+   "ports",
+   "enforced",
+   "Seatbelt bind rules"
+  ]
+ ]
+}

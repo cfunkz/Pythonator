@@ -1,0 +1,10 @@
+[plugin]
+id = "builder"
+name = "Builder"
+version = "0.0.1"
+publisher = "Pythonator (official)"
+description = "Starter projects for New service: an API, a worker, a web app or a scheduled job, in Python or Node."
+entry = "main.py"
+permissions = ["projects.create"]
+
+[settings]

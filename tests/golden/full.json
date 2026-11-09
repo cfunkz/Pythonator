@@ -1,0 +1,70 @@
+{
+ "argv": [
+  "/usr/bin/systemd-run",
+  "--user",
+  "--scope",
+  "--quiet",
+  "--collect",
+  "--unit=pythonator-api-g1",
+  "-p",
+  "MemoryMax=256M",
+  "-p",
+  "MemorySwapMax=0",
+  "-p",
+  "CPUQuota=100%",
+  "-p",
+  "TasksMax=128",
+  "--",
+  "/usr/bin/python3",
+  "-u",
+  "main.py"
+ ],
+ "env": {
+  "HOME": "/home/me",
+  "PATH": "/usr/local/bin:/usr/bin:/bin",
+  "LANG": "C.UTF-8",
+  "LC_ALL": "C.UTF-8",
+  "TERM": "dumb",
+  "PYTHONUNBUFFERED": "1",
+  "PYTHONIOENCODING": "utf-8",
+  "PYTHONATOR_SERVICE": "api"
+ },
+ "cwd": "/home/me/services/api",
+ "layers": [
+  [
+   "tree",
+   "enforced",
+   "cgroup scope"
+  ],
+  [
+   "limits",
+   "enforced",
+   "cgroup v2"
+  ],
+  [
+   "files",
+   "not-enforced",
+   "runs as you"
+  ],
+  [
+   "syscalls",
+   "not-enforced",
+   "runs as you"
+  ],
+  [
+   "network",
+   "not-enforced",
+   "runs as you"
+  ],
+  [
+   "loopback",
+   "not-enforced",
+   "runs as you"
+  ],
+  [
+   "ports",
+   "not-enforced",
+   "runs as you"
+  ]
+ ]
+}

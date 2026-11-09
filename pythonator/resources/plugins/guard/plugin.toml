@@ -1,0 +1,21 @@
+[plugin]
+id = "guard"
+name = "Guard"
+version = "0.0.1"
+publisher = "Pythonator (official)"
+description = "Rules every service change must pass before it is saved. Rules are data, not code."
+entry = "main.py"
+permissions = ["policy.check", "services.read", "ui.notify"]
+
+# Your rules. Edit them in Plugins → Guard → Settings, or here before installing.
+# Each rule has an on/off switch (Security → Guard rules) and its values.
+[settings]
+full_access_rule = true
+full_access_only_inside = ["{home}/scripts"]
+port_rule = true
+port_range = [1024, 9999]
+lan_ports = false
+exposure_rule = true
+max_exposure = 6.0
+block_lan = false
+max_memory_mb = 4096

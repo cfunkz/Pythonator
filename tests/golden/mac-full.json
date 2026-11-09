@@ -1,0 +1,56 @@
+{
+ "argv": [
+  "/opt/homebrew/bin/python3",
+  "-u",
+  "main.py"
+ ],
+ "env": {
+  "HOME": "/Users/me",
+  "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
+  "LANG": "C.UTF-8",
+  "LC_ALL": "C.UTF-8",
+  "TERM": "dumb",
+  "PYTHONUNBUFFERED": "1",
+  "PYTHONIOENCODING": "utf-8",
+  "PYTHONATOR_SERVICE": "api",
+  "PYTHONATOR_RUN": "api-g1"
+ },
+ "cwd": "/Users/me/services/api",
+ "layers": [
+  [
+   "tree",
+   "reduced",
+   "process group + run marker"
+  ],
+  [
+   "limits",
+   "reduced",
+   "watchdog"
+  ],
+  [
+   "files",
+   "not-enforced",
+   "runs as you"
+  ],
+  [
+   "syscalls",
+   "not-enforced",
+   "runs as you"
+  ],
+  [
+   "network",
+   "not-enforced",
+   "runs as you"
+  ],
+  [
+   "loopback",
+   "not-enforced",
+   "runs as you"
+  ],
+  [
+   "ports",
+   "not-enforced",
+   "runs as you"
+  ]
+ ]
+}

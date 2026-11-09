@@ -1,0 +1,78 @@
+# The website (https://cfunkz.github.io/Pythonator/): .github/workflows/pages.yml builds it with Jekyll on each push to main.
+# The pages are the Markdown files in docs/; the design lives in website/. Preview: see docs/development.md.
+title: Pythonator
+description: A service manager for your own computer. Web apps, APIs, workers, databases and jobs, each in a jail, kept running and changed only with your OK.
+url: https://cfunkz.github.io
+baseurl: /Pythonator
+repository: cfunkz/Pythonator
+version: 0.0.1-alpha  # the release the download links point at (its tag without the v); the release workflow checks it
+layouts_dir: website/_layouts
+includes_dir: website/_includes
+markdown: kramdown
+kramdown:
+  input: GFM
+  hard_wrap: false
+  syntax_highlighter_opts:
+    disable: true  # site.js colours code blocks the same way on every page
+plugins:
+  - jekyll-relative-links
+  - jekyll-optional-front-matter
+  - jekyll-titles-from-headings
+  - jekyll-default-layout
+  - jekyll-readme-index
+optional_front_matter:
+  remove_originals: true
+readme_index:
+  remove_originals: true
+relative_links:
+  enabled: true
+  collections: false
+titles_from_headings:
+  strip_title: true
+defaults:
+  - scope: {path: ""}
+    values: {layout: default}
+exclude:
+  - README.md  # the landing page (website/index.html) says it better
+  - pythonator
+  - tests
+  - build
+  - dist
+  - "*.egg-info"
+  - pyproject.toml
+  - requirements.lock
+  - requirements-build.lock
+  - install.sh
+  - install.ps1
+  - packaging
+  - release
+  - LICENSE
+  - vendor
+  - Gemfile
+  - Gemfile.lock
+
+# The sidebar, in reading order.
+docs_nav:
+  - title: Start
+    pages:
+      - {title: Overview, url: /docs/}
+      - {title: Getting started, url: /docs/getting-started.html}
+  - title: Using Pythonator
+    pages:
+      - {title: Services, url: /docs/services.html}
+      - {title: Isolation, url: /docs/isolation.html}
+      - {title: Networking, url: /docs/networking.html}
+      - {title: Plugins, url: /docs/plugins.html}
+      - {title: System check, url: /docs/system-check.html}
+      - {title: Command line, url: /docs/cli.html}
+  - title: Trust
+    pages:
+      - {title: Security model, url: /docs/security.html}
+      - {title: Security cases, url: /docs/security-cases.html}
+      - {title: Earlier fixes, url: /docs/earlier-fixes.html}
+  - title: Project
+    pages:
+      - {title: Architecture, url: /docs/architecture.html}
+      - {title: Development and releases, url: /docs/development.html}
+      - {title: Design, url: /docs/design/}
+      - {title: Changelog, url: /CHANGELOG.html}

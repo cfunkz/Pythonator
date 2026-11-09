@@ -1,0 +1,95 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    # Stock Ubuntu: AppArmor blocks unprivileged user namespaces until the sysctl below, which is what users meet too.
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+          check-latest: true
+      - name: Jail tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bubblewrap passt libseccomp2 libegl1 libxkbcommon0
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: pip install --require-hashes --only-binary=":all:" -r requirements.lock -r requirements-build.lock
+      - run: pip install --no-deps --no-build-isolation -e . && pip install pytest pytest-qt ruff
+      - run: ruff check pythonator tests
+      - run: python -m pytest -q -p no:cacheprovider
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+  linux-no-bubblewrap:
+    # The same suite on a machine without bubblewrap: Sandbox mode and plugins must refuse, never fall back.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+          check-latest: true
+      - run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends libegl1 libxkbcommon0
+          sudo apt-get remove -y bubblewrap || true
+          ! command -v bwrap
+      - run: pip install --require-hashes --only-binary=":all:" -r requirements.lock -r requirements-build.lock
+      - run: pip install --no-deps --no-build-isolation -e . && pip install pytest pytest-qt
+      - run: python -m pytest -q -p no:cacheprovider tests/test_invariants.py tests/test_policy.py tests/test_hardening.py
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+          check-latest: true
+      - run: pip install --require-hashes --only-binary=":all:" -r requirements.lock -r requirements-build.lock
+      - run: pip install --no-deps --no-build-isolation -e . && pip install pytest pytest-qt
+      - run: python -m pytest -q -p no:cacheprovider
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+  windows:
+    # Runs the AppContainer probe for real (tests/test_winjail.py), plus the TCP transport of the daemon.
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+          check-latest: true
+      - run: pip install --require-hashes --only-binary=":all:" -r requirements.lock -r requirements-build.lock
+      - run: pip install --no-deps --no-build-isolation -e . && pip install pytest pytest-qt
+      - run: python -m pytest -q -p no:cacheprovider
+        env:
+          QT_QPA_PLATFORM: offscreen

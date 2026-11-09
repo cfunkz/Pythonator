@@ -1,0 +1,53 @@
+{
+ "argv": [
+  "C:\\Python313\\python.exe",
+  "-I",
+  "-S",
+  "C:\\Program Files\\Pythonator\\jail\\winjail.py",
+  "{\"job\":{\"memory_mb\":256,\"cpu\":1.0,\"processes\":128},\"box\":{\"name\":\"Pythonator.api\",\"caps\":[\"S-1-15-3-1\"],\"grants\":[[\"C:\\\\Users\\\\me\\\\services\\\\api\",true],[\"C:\\\\Python313\",false]]},\"cwd\":\"C:\\\\Users\\\\me\\\\services\\\\api\",\"cmdline\":\"C:\\\\Python313\\\\python.exe -u main.py\"}"
+ ],
+ "env": {
+  "TERM": "dumb",
+  "PYTHONUNBUFFERED": "1",
+  "PYTHONIOENCODING": "utf-8",
+  "PYTHONATOR_SERVICE": "api"
+ },
+ "cwd": "C:\\Users\\me\\services\\api",
+ "layers": [
+  [
+   "tree",
+   "enforced",
+   "job object"
+  ],
+  [
+   "limits",
+   "enforced",
+   "job object"
+  ],
+  [
+   "files",
+   "enforced",
+   "AppContainer + ACL grants"
+  ],
+  [
+   "syscalls",
+   "reduced",
+   "AppContainer token"
+  ],
+  [
+   "network",
+   "enforced",
+   "AppContainer capabilities"
+  ],
+  [
+   "loopback",
+   "enforced",
+   "AppContainer"
+  ],
+  [
+   "ports",
+   "off",
+   "closed"
+  ]
+ ]
+}

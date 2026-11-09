@@ -1,0 +1,87 @@
+{
+ "argv": [
+  "podman",
+  "run",
+  "--rm",
+  "--init",
+  "--interactive",
+  "--name",
+  "pythonator-api",
+  "--label",
+  "pythonator.owner=1",
+  "--label",
+  "pythonator.service=api",
+  "--label",
+  "pythonator.generation=1",
+  "--read-only",
+  "--cap-drop",
+  "ALL",
+  "--security-opt",
+  "no-new-privileges",
+  "--memory=256m",
+  "--memory-swap=256m",
+  "--cpus=1",
+  "--pids-limit=128",
+  "--tmpfs",
+  "/tmp:rw,nosuid,nodev,size=64m",
+  "--tmpfs",
+  "/home/service:rw,nosuid,nodev,size=64m,mode=1777",
+  "--env",
+  "HOME=/home/service",
+  "-v",
+  "/home/me/services/api:/app:rw,Z",
+  "-w",
+  "/app",
+  "--userns",
+  "keep-id",
+  "--network",
+  "none",
+  "-e",
+  "LOG",
+  "python:3.13-slim",
+  "python",
+  "-u",
+  "main.py"
+ ],
+ "env": {
+  "LOG": "1"
+ },
+ "cwd": "/home/me/services/api",
+ "layers": [
+  [
+   "tree",
+   "enforced",
+   "container"
+  ],
+  [
+   "limits",
+   "enforced",
+   "podman cgroup"
+  ],
+  [
+   "files",
+   "enforced",
+   "read-only image + this folder"
+  ],
+  [
+   "syscalls",
+   "enforced",
+   "podman default seccomp \u00b7 no capabilities"
+  ],
+  [
+   "network",
+   "enforced",
+   "none"
+  ],
+  [
+   "loopback",
+   "enforced",
+   "no network"
+  ],
+  [
+   "ports",
+   "off",
+   "closed"
+  ]
+ ]
+}

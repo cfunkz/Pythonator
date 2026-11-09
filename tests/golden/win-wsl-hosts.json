@@ -1,0 +1,61 @@
+{
+ "argv": [
+  "C:\\Windows\\System32\\wsl.exe",
+  "--distribution",
+  "Pythonator",
+  "--user",
+  "root",
+  "--cd",
+  "/",
+  "--exec",
+  "/usr/bin/python3",
+  "-I",
+  "/usr/local/lib/pythonator/wslrun.py",
+  "{\"name\":\"api\",\"folder\":\"C:\\\\Users\\\\me\\\\services\\\\api\",\"folders\":[],\"net\":false,\"gate\":{\"hosts\":[\"api.example.com\"],\"allow_lan\":false,\"port\":3128,\"key\":\"@pythonator-gate-key@\"},\"memory_mb\":256,\"cpu\":1.0,\"tasks\":128,\"argv\":[\"python3\",\"-u\",\"main.py\"],\"env_keys\":[\"PYTHONATOR_SERVICE\",\"PYTHONIOENCODING\",\"PYTHONUNBUFFERED\",\"TERM\"]}"
+ ],
+ "env": {
+  "TERM": "dumb",
+  "PYTHONUNBUFFERED": "1",
+  "PYTHONIOENCODING": "utf-8",
+  "PYTHONATOR_SERVICE": "api",
+  "WSLENV": "PYTHONATOR_SERVICE/u:PYTHONIOENCODING/u:PYTHONUNBUFFERED/u:TERM/u"
+ },
+ "cwd": "/app",
+ "layers": [
+  [
+   "tree",
+   "enforced",
+   "own Linux user id"
+  ],
+  [
+   "limits",
+   "enforced",
+   "cgroup v2 in WSL"
+  ],
+  [
+   "files",
+   "enforced",
+   "bubblewrap in Pythonator's WSL"
+  ],
+  [
+   "syscalls",
+   "enforced",
+   "seccomp \u00b7 no_new_privs \u00b7 no capabilities"
+  ],
+  [
+   "network",
+   "enforced",
+   "own namespace + egress gate in WSL"
+  ],
+  [
+   "loopback",
+   "enforced",
+   "WSL virtual machine"
+  ],
+  [
+   "ports",
+   "off",
+   "closed"
+  ]
+ ]
+}

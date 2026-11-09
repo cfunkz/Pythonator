@@ -1,0 +1,98 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pythonator"
+version = "0.0.1"
+description = "A service manager that runs each of your services (apps, workers, databases) in a jail on your own computer, with a window, a CLI and plugins."
+readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+authors = [{ name = "cfunkz" }]
+keywords = ["sandbox", "services", "bubblewrap", "landlock", "process manager", "pyqt6"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: System :: Monitoring",
+]
+dependencies = [
+    "PyQt6>=6.7,<7",
+    "PyQt6-QScintilla>=2.14,<3",
+    "pydantic>=2.9,<3",
+    "psutil>=6.0,<8",
+    "cronsim>=2.6,<3",
+    "platformdirs>=4.2,<5",
+    "keyring>=25.0,<26",
+    "uv>=0.5,<1",
+    "ruff>=0.8,<1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-qt>=4.4", "ruff>=0.8", "mypy>=1.13"]
+
+[project.scripts]
+pythonatorctl = "pythonator.ctl.main:main"
+pythonatord = "pythonator.service.daemon:main"
+
+[project.gui-scripts]
+pythonator = "pythonator.ui.app:main"
+
+[project.urls]
+Homepage = "https://github.com/cfunkz/pythonator"
+Issues = "https://github.com/cfunkz/pythonator/issues"
+
+[tool.setuptools.packages.find]
+include = ["pythonator*"]
+
+[tool.setuptools.package-data]
+pythonator = ["resources/*.png", "resources/*.ico", "resources/fonts/*", "resources/sdk/*.py", "resources/plugins/*/*", "resources/plugins/official.json"]
+
+[tool.ruff]
+line-length = 130
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "UP", "S", "I", "TID251"]
+ignore = ["E501", "S603", "S607", "S404"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+# Qt's JSON and CBOR parsers have had memory-safety advisories; everything we parse goes through Python's json.
+"PyQt6.QtCore.QJsonDocument".msg = "parse with json (Qt's JSON parser is banned)"
+"PyQt6.QtCore.QJsonValue".msg = "parse with json (Qt's JSON parser is banned)"
+"PyQt6.QtCore.QCborValue".msg = "Qt's CBOR parser is banned"
+"PyQt6.QtCore.QCborStreamReader".msg = "Qt's CBOR parser is banned"
+"pickle".msg = "never unpickle; use json"
+"marshal".msg = "never unmarshal; use json"
+"shelve".msg = "uses pickle; use json"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S108"]
+"pythonator/jail/launcher.py" = ["UP031"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.12"
+strict_optional = true
+warn_unused_ignores = true
+check_untyped_defs = true
+exclude = ["pythonator/resources/"]
+
+[[tool.mypy.overrides]]
+module = ["psutil", "keyring", "keyring.*", "cronsim", "pythonator_sdk"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["PyQt6", "PyQt6.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true

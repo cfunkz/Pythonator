@@ -1,0 +1,16 @@
+[plugin]
+id = "ai"
+name = "AI assistant"
+version = "0.0.1"
+publisher = "Pythonator (official)"
+description = "Answers questions about a service in the editor. Sees the open file and masked logs, and can only propose exact-text edits you apply."
+entry = "main.py"
+permissions = ["editor.assist", "logs.read", "net.connect"]
+hosts = ["api.anthropic.com"]
+secrets = ["api_key"]
+
+# Edit in Plugins → AI assistant → Settings. The API key is a secret: set it there, it goes to the OS keychain.
+[settings]
+model = "claude-opus-5-5"
+effort = "medium"
+max_tokens = 16000

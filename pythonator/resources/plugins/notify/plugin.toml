@@ -1,0 +1,16 @@
+[plugin]
+id = "notify"
+name = "Notify"
+version = "0.0.1"
+publisher = "Pythonator (official)"
+description = "Crash alerts in the window, and optionally to a webhook (Slack, Discord, ntfy or Pushover)."
+entry = "main.py"
+permissions = ["services.read", "ui.notify", "ui.statusbar", "net.connect"]
+hosts = ["hooks.slack.com", "discord.com", "ntfy.sh", "api.pushover.net"]
+secrets = ["webhook_url"]
+
+# Which changes alert you. The webhook address is a secret: set it in Plugins → Notify → Secrets.
+[settings]
+on = ["backoff", "failed", "blocked", "unhealthy"]
+webhook = false
+webhook_kind = "slack"  # slack, discord or ntfy: how the message is shaped
