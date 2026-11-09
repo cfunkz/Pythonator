@@ -372,12 +372,14 @@ class Daemon:
             return res
         if method == "fit":
             from pythonator.policy import fit
+            from pythonator.policy.compile import _real
             from pythonator.policy.paths import check_folder
 
             folder = str(p.get("folder", ""))
-            verdict = check_folder(folder, self.host.home)
-            if not verdict.ok:
-                raise ipc.RpcError(verdict.code, verdict.reason, "Pick the project's own folder.")
+            for path, h in _real(folder, self.host):  # as written and where its links lead
+                verdict = check_folder(path, h.home)
+                if not verdict.ok:
+                    raise ipc.RpcError(verdict.code, verdict.reason, "Pick the project's own folder.")
             return (await asyncio.to_thread(fit.scan, folder)).as_dict()
         if method == "stdin":
             text = p.get("text")
@@ -546,6 +548,7 @@ class Daemon:
         """A starter project: the plugin returns file contents; we write them into a new, empty folder you picked."""
         import re
 
+        from pythonator.policy.compile import _real
         from pythonator.policy.paths import check_folder
         from pythonator.safe import safefs
 
@@ -556,9 +559,10 @@ class Daemon:
         target = Path(folder)
         if target.exists() and (not target.is_dir() or target.is_symlink() or any(target.iterdir())):
             raise Refused("TPL-002", f"{folder} isn't empty.", "Pick a new folder; templates never write over files.")
-        verdict = check_folder(folder, self.host.home, data_dir=self.host.data_dir, program_dirs=self.host.program)
-        if not verdict.ok:
-            raise Refused(verdict.code, verdict.reason, "Pick a folder inside your home.")
+        for path, h in _real(folder, self.host):  # as written and where its links lead
+            verdict = check_folder(path, h.home, data_dir=h.data_dir, program_dirs=h.program)
+            if not verdict.ok:
+                raise Refused(verdict.code, verdict.reason, "Pick a folder inside your home.")
         res = await self.plugins.render_template(str(p.get("plugin", "")), str(p.get("template", "")), name)
         files = res["files"]
         total = sum(len(str(v).encode()) for v in files.values())

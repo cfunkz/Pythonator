@@ -33,7 +33,7 @@ own network or a port open to your local network) unless you set them yourself.
 
 ## Modes
 
-**Sandbox** (recommended). A jail on this computer, built from what the OS offers:
+**Sandbox** (recommended). A sandbox on this computer, built from what the OS offers:
 
 * Linux: bubblewrap namespaces, Landlock, a seccomp filter and `no_new_privs`, and `pasta` for network.
 * macOS: a Seatbelt profile written for this service, with the egress gate for hosts.
@@ -59,7 +59,7 @@ drives and no interop. Set it up once from Engines → WSL → **Set up**.
 
 A service can be a desktop app that opens windows (PyQt, PySide, Tk, wx, Kivy, pygame, Electron). Turn on
 **GUI app** on the first step of New service or in Settings → General; the Fit check turns it on when it finds
-one of those imports. It is a widening, so the plan waits for your OK.
+one of those imports. It is a widening, so the plan awaits your approval.
 
 | | Sandbox | Container | WSL | Full access |
 |---|---|---|---|---|
@@ -67,7 +67,7 @@ one of those imports. It is a widening, so the plan waits for your OK.
 | Linux | No | No | — | Yes, on your display |
 | macOS | No | No | — | Yes |
 
-On Linux and macOS a jailed program given your display could read other windows and what you type (X11), so
+On Linux and macOS an isolated program given your display could read other windows and what you type (X11), so
 Pythonator refuses it there (GUI-001) rather than pretend it's contained. On Linux the background service passes
 on `DISPLAY`, `WAYLAND_DISPLAY`, `XAUTHORITY` and the session bus; if it was started without them, the plan says
 so (GUI-LNX-002). Stop closes the app's windows with the rest of its process tree. Pythonator's own helper programs
@@ -146,5 +146,5 @@ variable and added to the log masker. Values never appear on a command line, in 
 
 ## When the world changes under it
 
-The **Needs you** panel lists drift: a service that gave up, a spec that changed but hasn't been approved, a layer
+The **Action required** panel lists drift: a service that gave up, a spec that changed but hasn't been approved, a layer
 that got weaker since you approved (for example bubblewrap was uninstalled, or a runtime moved). Nothing is fixed behind your back.

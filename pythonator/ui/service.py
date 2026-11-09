@@ -71,7 +71,7 @@ class ListPane(QFrame):
         self.flow = Flow(6)
         chips = QWidget()
         chips.setLayout(self.flow)
-        for key, text, tone in (("all", "All", "acc"), ("running", "Running", ""), ("needs", "Needs you", "bad")):
+        for key, text, tone in (("all", "All", "acc"), ("running", "Running", ""), ("needs", "Action required", "bad")):
             c = Chip(text, tone)
             c.setCursor(Qt.CursorShape.PointingHandCursor)
             c.clicked.connect(lambda k=key: self.set_filter(k))
@@ -91,7 +91,7 @@ class ListPane(QFrame):
             self.search.clear()
 
     def set_filter(self, key: str) -> None:
-        """All / Running / Needs you pick one; group chips add up, so several groups show at once."""
+        """All / Running / Action required pick one; group chips add up, so several groups show at once."""
         if key.startswith("tag:"):
             self.tags ^= {key[4:]}
         else:
@@ -109,7 +109,7 @@ class ListPane(QFrame):
         running = sum(1 for s in services if s["observed"]["phase"] in ("running", "starting", "backoff"))
         need = sum(1 for s in services if needs_you(s))
         self.chips["running"].set(f"Running {running}")
-        self.chips["needs"].set(f"Needs you {need}")
+        self.chips["needs"].set(f"Action required {need}")
         show_if(self.chips["needs"], need > 0)
         for g in sorted({s["spec"].get("group") for s in services if s["spec"].get("group")}):
             if f"tag:{g}" not in self.chips:
@@ -336,7 +336,7 @@ class Work(QFrame):
             self.title.setText("No services yet")
             self.phase.hide()
             self.enf.clear()
-            self.message.setText("Add a folder and Pythonator runs it in a jail. Nothing runs until you approve its plan.")
+            self.message.setText("Add a folder and Pythonator runs it in an isolated environment. Nothing runs until you approve its plan.")
             return
         spec, ob = s["spec"], s["observed"]
         self.title.setText(spec["name"])
@@ -354,7 +354,7 @@ class Work(QFrame):
             r = s["refused"]
             msg = f"{r['code']}: {r['message']}" + (f"  Fix: {r['fix']}" if r.get("fix") else "")
         elif not s["approved"]:
-            msg = "Waiting for your OK. Press Start to review the plan."
+            msg = "Awaiting approval. Press Start to review the plan."
         self.message.setText(msg)
         show_if(self.message, bool(msg) and ph != "running")
         tone = th.tone("warn" if (ph in ("blocked", "failed") or not s["approved"] or s.get("refused")) else "muted")

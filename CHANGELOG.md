@@ -59,10 +59,10 @@ plans, on Windows, macOS and Linux. Every fix from the old app (0.0.1 to 0.0.19)
 - **Log store** with indexed segments (64 MB per service), range reads, and masking before write: secret-looking
   names, URL passwords, known token formats (GitHub, GitLab, Slack, AWS, Google, Stripe, `sk-` keys, JWTs) and PEM
   private keys.
-- **Editor** with ruff problems (ruff runs jailed), private git snapshots in the data folder, and Try in a copy.
+- **Editor** with ruff problems (ruff runs isolated), private git snapshots in the data folder, and Try in a copy.
 - **System check**: probes per OS, speed measured on this machine for 30 days, and fixes. The protection tables in
   [docs/isolation.md](docs/isolation.md) are generated from the same data.
-- **Plugins** in their own jails with no permissions until granted, grants tied to a hash of the code, and HTTPS
+- **Plugins** in their own isolated environments with no permissions until granted, grants tied to a hash of the code, and HTTPS
   through the daemon to granted hosts only. Bundled: **Guard** (rules before every approval), **Notify** (Slack,
   Discord, ntfy or any webhook), **AI assistant** (reviewed edits only) and **Builder** (new services from
   templates). Official plugins are pinned by hash in `official.json`.
@@ -73,6 +73,10 @@ plans, on Windows, macOS and Linux. Every fix from the old app (0.0.1 to 0.0.19)
 - **`pythonatorctl`**, kept small because Pythonator is used from its window: `version` and `uninstall`
   (`--remove-data`). Uninstall takes back every folder permission first, then removes the login service, the
   shortcuts and the install folder.
+- **Folder checks follow links.** A service folder, an extra folder or a new project folder is checked as written and
+  where its links lead, against your home folder's real location, so a link to `~/.ssh` is refused even when your
+  home is reached through a link (`/home` → `/data/home`, `/var` → `/private/var`).
+- **Line endings** are LF on every OS (`.gitattributes`), so the pinned hashes of the bundled plugins match on Windows.
 - **CI** on Linux (with and without bubblewrap), macOS and Windows; pip-audit weekly; image checks; a gated,
   attested release with SHA256SUMS.
 

@@ -40,7 +40,7 @@ Source: "{#Source}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs cre
 
 [Icons]
 ; The same name and place the uninstaller in pythonatorctl looks for.
-Name: "{userprograms}\Pythonator"; Filename: "{app}\python\pythonw.exe"; Parameters: "-m pythonator"; WorkingDir: "{app}"; IconFilename: "{app}\pythonator.ico"; Comment: "Run your services, each in a jail"
+Name: "{userprograms}\Pythonator"; Filename: "{app}\python\pythonw.exe"; Parameters: "-m pythonator"; WorkingDir: "{app}"; IconFilename: "{app}\pythonator.ico"; Comment: "Run and supervise services in isolated environments"
 
 [Registry]
 Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}\bin"; Check: NotOnPath(ExpandConstant('{app}\bin'))

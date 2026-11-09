@@ -88,7 +88,7 @@ def mode_cards(host: dict[str, Any], lim: dict[str, Any]) -> list[dict[str, Any]
     wsl_ok = os_ == "windows" and bool(host.get("wsl"))
     wsl = dict(tags="bubblewrap in Pythonator's own distro", ok=wsl_ok and bool(host.get("wsl_ready")), rows=[
         ("ok" if os_ == "windows" else "x", "Windows only"),
-        ("ok", "Same Linux jail as Sandbox, inside WSL 2"),
+        ("ok", "The same Linux isolation as Sandbox, inside WSL 2"),
         ("ok", "Interop off, your drives not mounted"),
     ], why_not="not on this machine" if os_ != "windows" else "set up in Engines" if wsl_ok else "install WSL first")
     full = dict(tags="Guard can forbid it", ok=True, rows=[
@@ -97,10 +97,10 @@ def mode_cards(host: dict[str, Any], lim: dict[str, Any]) -> list[dict[str, Any]
         ("lock", "Typed confirmation; Guard can forbid it"),
     ], why_not="")
     return [
-        dict(key="sandbox", title="Kernel jail on this computer", chip=("Sandbox", "m_sandbox", "shield"), **sandbox),
+        dict(key="sandbox", title="Kernel-enforced isolation on this computer", chip=("Sandbox", "m_sandbox", "shield"), **sandbox),
         dict(key="container", title="Podman (rootless) or Docker", chip=("Container", "m_container", "box"), **container),
-        dict(key="wsl", title="Linux jail inside Pythonator's own distro", chip=("WSL", "m_wsl", "console"), **wsl),
-        dict(key="full", title="Runs as you, still in a kernel tree", chip=("Full access", "m_full", "unlock"), **full),
+        dict(key="wsl", title="Linux isolation inside Pythonator's own distribution", chip=("WSL", "m_wsl", "console"), **wsl),
+        dict(key="full", title="Runs with your permissions, in its own process tree", chip=("Full access", "m_full", "unlock"), **full),
     ]
 
 class ModeCard(QFrame):

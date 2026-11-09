@@ -73,8 +73,8 @@ ADDS = {
 GRANTS_RESET = ("Why grants reset", "Grants are stored against a hash of every file in the plugin. New code starts "
                 "with nothing, so an update can't quietly inherit trust you gave an older version.",
                 "Same rule for official plugins")
-WALLS = ("Permissions are walls", "Each permission is compiled into the plugin's own jail by the same compiler as "
-         "services. A plugin that tries more than it was granted hits a wall, not a check it could skip.",
+WALLS = ("Permissions are enforced", "Each permission is compiled into the plugin's own isolated environment by the "
+         "same compiler as services. A plugin that attempts more than it was granted is stopped by the operating system.",
          "Same compiler as services")
 
 def tile(ico: str, size: int = 40, accent: bool = False) -> QFrame:
@@ -173,7 +173,7 @@ class PermRow(QFrame):
         return on != (was is not None) or (on and self.perm["scoped"] and scope != (was if was is not None else scope))
 
 class JailBoxes(QWidget):
-    """The jail as nested walls: limits, network gate, files, syscalls, and the plugin in the middle."""
+    """The isolation layers as nested boxes: limits, network gate, files, syscalls, and the plugin in the middle."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -227,11 +227,11 @@ def jail_rows(info: dict[str, Any], on: dict[str, tuple[bool, Any]]) -> list[tup
         ("network", gate),
         ("files", "own code read-only · no home" if files.get("status") != "not-enforced" else files.get("detail", "")),
         ("syscalls", {"linux": "seccomp · Landlock", "darwin": "Seatbelt", "windows": "AppContainer"}.get(
-            info.get("_os", "linux"), "jailed")),
+            info.get("_os", "linux"), "isolated")),
     ]
 
 class InstallDialog(QDialog):
-    """Screen 7: install a plugin, granting permissions one by one, and see the jail they compile into."""
+    """Screen 7: install a plugin, granting permissions one by one, and see the isolation they compile into."""
 
     def __init__(self, page: PluginsPage, info: dict[str, Any]) -> None:
         super().__init__(page)
@@ -276,7 +276,7 @@ class InstallDialog(QDialog):
             left.addWidget(Note("Third-party: nothing is on until you switch it on.", "warn", "user"))
         left.addStretch(1)
         self.boxes = JailBoxes()
-        right = vbox(hbox(label("Becomes this jail", "H3"), 1, InfoBtn(*WALLS[:2], foot=WALLS[2], ico="layers"),
+        right = vbox(hbox(label("Resulting isolation", "H3"), 1, InfoBtn(*WALLS[:2], foot=WALLS[2], ico="layers"),
                           spacing=8), self.boxes, 8, frame("Card", vbox(
                               hbox(Icon("layers", "accent_text", 15), label(WALLS[0], "H3"), 1, spacing=8),
                               label(WALLS[1], "Small", wrap=True), spacing=6, margins=(14, 12, 14, 12))), 1, spacing=10)
@@ -524,7 +524,7 @@ class PluginsPage(QWidget):
         # head
         chips = hbox(label(esc(p["name"]), "H1", rich=True), Chip(p["version"], "line", mono=True),
                      Chip("official", "ok", "shield-ok") if p["official"] else Chip("third-party", "warn", "user"),
-                     Chip("jailed · no files · no network", "line", "shield"), 1, spacing=8)
+                     Chip("isolated · no files · no network", "line", "shield"), 1, spacing=8)
         src = "bundled with Pythonator" if p["official"] else "installed from a folder"
         desc = label(f"{esc(p['description'])} By {esc(p['publisher'] or 'unknown')} · {src}", "Muted", wrap=True, rich=True)
         onoff = Btn("Disable" if p["enabled"] else "Enable", "power", "" if p["enabled"] else "primary",
@@ -585,7 +585,7 @@ class PluginsPage(QWidget):
         grid.setHorizontalSpacing(18)
         grid.setVerticalSpacing(10)
         net = p["permissions"] and next((x for x in p["permissions"] if x["key"] == "net.connect"), None)
-        host_txt = "own jail, no files, " + ("network only via Pythonator" if net and net["granted"] else "no network")
+        host_txt = "isolated, no files, " + ("network only via Pythonator" if net and net["granted"] else "no network")
         rows = [
             ("Host", host_txt),
             ("Memory", f"{p.get('memory_mb', 0)} MB own · cap 256 MB" if p["state"] == "running" else "not running"),

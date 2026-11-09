@@ -66,24 +66,32 @@ def _runtime_exes(spec: ServiceSpec, host: HostFacts) -> list[str]:
             out.append(exe)
     return out
 
-def _real(path: str, host: HostFacts) -> tuple[str, ...]:
+def _real(path: str, host: HostFacts) -> list[tuple[str, HostFacts]]:
     """The path as written and, on this machine, where its links lead: both must pass (a link named ~/proj that
-    points at ~/.ssh is ~/.ssh). A spec compiled for another OS (System check's matrix) is checked as text."""
+    points at ~/.ssh is ~/.ssh). The resolved path is checked against the resolved home, data and program folders,
+    so a home reached through a link (/home -> /data/home, /var -> /private/var) can't hide ~/.ssh. A spec compiled
+    for another OS (System check's matrix) is checked as text."""
+    import dataclasses
     import os
     import sys
 
     here = {"linux": "linux", "darwin": "darwin", "win32": "windows"}.get(sys.platform, "")
-    return (path, os.path.realpath(path)) if host.os == here else (path,)
+    if host.os != here:
+        return [(path, host)]
+    r = os.path.realpath
+    real = dataclasses.replace(host, home=r(host.home), data_dir=r(host.data_dir) if host.data_dir else "",
+                               program=tuple(r(d) for d in host.program if d),
+                               path_dirs=tuple(r(d) for d in host.path_dirs if d))
+    return [(path, host), (r(path), real)]
 
 def _check_folders(spec: ServiceSpec, host: HostFacts) -> None:
-    for p in _real(spec.folder, host):
-        v = check_folder(p, host.home, data_dir=host.data_dir, write=True, program_dirs=host.program, path_dirs=host.path_dirs)
+    for p, h in _real(spec.folder, host):
+        v = check_folder(p, h.home, data_dir=h.data_dir, write=True, program_dirs=h.program, path_dirs=h.path_dirs)
         if not v.ok:
             raise Refused(v.code, v.reason, "Choose the project's own folder.")
     for g in spec.folders:
-        for p in _real(g.path, host):
-            v = check_folder(p, host.home, data_dir=host.data_dir, write=g.write, program_dirs=host.program,
-                             path_dirs=host.path_dirs)
+        for p, h in _real(g.path, host):
+            v = check_folder(p, h.home, data_dir=h.data_dir, write=g.write, program_dirs=h.program, path_dirs=h.path_dirs)
             if not v.ok:
                 raise Refused(v.code, f"{g.path}: {v.reason}", "Remove this folder from the service.")
 
@@ -137,7 +145,7 @@ def _limits_prefix(spec: ServiceSpec, host: HostFacts) -> tuple[list[str], Layer
             "limits", "Limits", Status.ENFORCED, "cgroup v2", f"{lim.memory_mb} MB · {lim.cpu:g} CPU · {lim.tasks} tasks"
         )
         return prefix, tree, limits, unit, 0
-    tree = Layer("tree", "Process tree", Status.ENFORCED, "PID namespace", "Stop ends every child (the jail's PID 1 exits).")
+    tree = Layer("tree", "Process tree", Status.ENFORCED, "PID namespace", "Stop ends every child (the isolated PID 1 exits).")
     limits = Layer(
         "limits", "Limits", Status.REDUCED, "watchdog",
         f"Memory {lim.memory_mb} MB checked every second; CPU and task caps need a systemd user session.",
@@ -837,7 +845,7 @@ def _display(spec: ServiceSpec, host: HostFacts) -> Jail:
     else:
         raise Refused(
             "GUI-001",
-            "GUI apps can't run in this mode here: with your screen, a jailed program could read other windows "
+            "GUI apps can't run in this mode here: with your screen, an isolated program could read other windows "
             "and what you type, and Container and WSL have no screen of yours.",
             "Use Full access for a GUI app" + (", or Sandbox on Windows." if host.os == "windows" else "."),
         )

@@ -13,21 +13,21 @@ page says what is defended, how, and what isn't. Report problems as described in
 
 ## How
 
-### Services can't leave their jail
+### Services are confined to their isolated environment
 
-On Linux, Sandbox mode builds every service a fresh bubblewrap jail and applies Landlock and a libseccomp filter
+On Linux, Sandbox mode builds every service a fresh bubblewrap sandbox and applies Landlock and a libseccomp filter
 inside it, so access to files is limited twice: by what is mounted, and by what the kernel allows. `no_new_privs`
 and the dropped capabilities stop setuid escalation; a new session stops terminal injection. The network is a
 separate namespace with nothing in it unless you asked for traffic, and even then the host's `127.0.0.1` isn't
 reachable. macOS uses a deny-by-default Seatbelt profile with every path passed as a parameter; Windows uses an
 AppContainer in a job object, with folder grants recorded in a ledger and taken back when no longer needed. WSL
-mode runs the Linux jail inside Pythonator's own distribution, with no drives and no interop. Details:
+mode runs the Linux sandbox inside Pythonator's own distribution, with no drives and no interop. Details:
 [Isolation](isolation.md).
 
 ### Refuse, never "cooperate"
 
 If a layer the mode needs can't be built on this machine, the service doesn't start, and you get a code and a fix.
-If the in-jail launcher can't apply Landlock, it exits with 126 before your program runs. A layer that is weaker on
+If the in-sandbox launcher can't apply Landlock, it exits with 126 before your program runs. A layer that is weaker on
 this machine is labelled *reduced* in the plan, the security stack and the first console line.
 
 ### Approvals bound to a hash
@@ -60,12 +60,12 @@ carry `pythonator.owner` labels. It never stops a process or container it didn't
 Secrets stay in your system keyring. Specs hold names only. Values reach the service through its environment, never
 a command line. Every line is masked before it is written: secret values, secret-looking names, URL passwords,
 known token formats and PEM private keys. Anything that leaves through a plugin, the AI assistant or a webhook gets
-a second mask over every configured value. Jails, plugins and host tools never inherit your environment: each gets
+a second mask over every configured value. Isolated environments, plugins and host tools never inherit your environment: each gets
 one built by Pythonator.
 
 ### Plugins can't do more than you granted
 
-Each plugin runs in its own jail with no network, no home and its code read-only. It can only *ask* Pythonator for
+Each plugin runs in its own isolated environment with no network, no home and its code read-only. It can only *ask* Pythonator for
 things, and each request is checked against your grants on every call. Grants are tied to the hash of the plugin's
 code, so an update can't inherit trust. A plugin trusted to review changes fails closed. Safe mode stops them all.
 Details: [Plugins](plugins.md).
@@ -74,8 +74,8 @@ Details: [Plugins](plugins.md).
 
 Few runtime dependencies, all widely used, with major versions capped: PyQt6 (and QScintilla), pydantic, psutil,
 cronsim, platformdirs, keyring, plus uv and ruff as tools. Every one is installed from `requirements.lock` with
-`--require-hashes`. The jail launcher and the plugin SDK use only the standard library, so nothing from PyPI runs
-inside a jail unless your own project brings it. Qt's JSON and CBOR parsers are banned in the code.
+`--require-hashes`. The sandbox launcher and the plugin SDK use only the standard library, so nothing from PyPI runs
+inside an isolated environment unless your own project brings it. Qt's JSON and CBOR parsers are banned in the code.
 
 ## What isn't defended
 

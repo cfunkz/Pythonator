@@ -52,9 +52,9 @@ STATUS = {  # tone, icon, words
 }
 MODES = [("sandbox", "Sandbox", "shield"), ("container", "Container", "box"), ("wsl", "WSL", "console"),
          ("full", "Full access", "unlock")]
-NEVER = ("<b>Never “cooperative”:</b> if a layer can't be enforced, the start is refused with the fix "
-         "(for example, on Windows an allow-list needs WSL mode). The same table drives the (i) cards, the first "
-         "console line and the docs.")
+NEVER = ("<b>Strict enforcement:</b> if a protection cannot be enforced, the service is not started, and the "
+         "remedy is shown (for example, on Windows a host allow-list requires WSL mode). The same table drives the "
+         "(i) cards, the first console line and the documentation.")
 
 class Spark(QWidget):
     def __init__(self, values: list[float], warn: bool) -> None:
@@ -196,7 +196,7 @@ class SystemCheck(QWidget):
         self.side_box.setContentsMargins(*((12, 8, 12, 16) if narrow else (20, 20, 20, 20)))
         d = self.data
         host = d.get("host") or {}
-        info = InfoBtn("System check", "What protects a service on this machine, measured here. The table is the jail "
+        info = InfoBtn("System check", "What protects a service on this machine, measured here. The table is the isolation "
                        "compiler's own answer; macOS and Windows are the same compiler run for a typical machine.")
         sub = label(f"{host.get('describe', '…')} · this machine", "Muted")
         sub.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
@@ -343,7 +343,7 @@ class SystemCheck(QWidget):
         probes = d.get("probes", [])
         bad = [x for x in probes if x["status"] != "ok"]
         pr = Panel("Probes", "check" if not bad else "warn",
-                   info=InfoBtn("Probes", "Read-only checks of what this machine offers: the jail tools, the kernel "
+                   info=InfoBtn("Probes", "Read-only checks of what this machine offers: the isolation tools, the kernel "
                                 "features they need, and the engines."),
                    right=[label(f"{d.get('probe_ms', 0)} ms", "Small")] if probes else [])
         for x in probes:

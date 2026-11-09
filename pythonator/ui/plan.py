@@ -1,5 +1,5 @@
 """Screen 2: the plan sheet, the Drift inbox and Try in a copy.
-Every change is a plan. Lines that widen access wait for your OK, bound to the risk hash you saw. Drift has its own
+Every change is a plan. Lines that widen access await approval, bound to the risk hash you saw. Drift has its own
 inbox (Heal, Adopt, Ignore) with what Pythonator put right by itself underneath. Try in a copy runs the command once
 in a throwaway copy with traffic off and shows every file it changed and every address it tried."""
 
@@ -118,7 +118,7 @@ def guard_card(res: dict[str, Any]) -> QWidget | None:
         verdict = (f"{esc(x['plugin'])}: <b>{'allowed' if ok else 'refused'}</b>"
                    + (f" ({esc(x['summary'])})" if ok and x.get("summary") else f": {esc(x['reason'])}" if not ok else ""))
     else:
-        verdict = "No Guard installed: <b>your OK is the only check</b>"
+        verdict = "No Guard installed: <b>your approval is the only check</b>"
     if len(ex) == 2:
         verdict += f". Exposure {ex[0]:.1f} → {ex[1]:.1f}." if ex[0] and ex[0] != ex[1] else f". Exposure {ex[1]:.1f}."
     info = InfoBtn("Guard", "Guard checks every change against your rules before Pythonator saves it. It can refuse, "
@@ -171,10 +171,10 @@ class PlanSheet(Panel):
         g = res.get("generation") or [0, 0]
         self.gen.set(f"gen {g[0]} → {g[1]}" if g[0] != g[1] else f"gen {g[0]}")
         waiting = sum(1 for x in lines if x.get("widens"))
-        self.need.set(f"{waiting} need your OK")
+        self.need.set(f"{waiting} need approval")
         show_if(self.need, waiting > 0)
         self.info.set_card(
-            "Every change is a plan. Lines that widen access wait for your OK; the OK is bound to the risk hash below, so "
+            "Every change is a plan. Lines that widen access await approval, which is bound to the risk hash below, so "
             "a plan that changes after you looked can't be approved with it.",
             [("Risk hash", short_hash(res.get("hash", ""))), ("Safe lines", "apply without asking"),
              ("Approval", "per change, not per service")])
@@ -475,7 +475,7 @@ class PlanPage(QWidget):
             if err:
                 self.main.after_err(None, err)
                 return
-            self.main.toast("info", self.name, f"applied the safe lines; {len(r['waiting'])} still wait for your OK")
+            self.main.toast("info", self.name, f"applied the safe lines; {len(r['waiting'])} still await approval")
             self.main.snapshot()
             self.load()
 

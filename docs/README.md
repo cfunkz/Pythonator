@@ -1,7 +1,7 @@
 # Pythonator documentation
 
 Pythonator is a service manager for your own computer. It runs your web apps, APIs, workers, databases and
-scheduled jobs on Windows, macOS and Linux, each one in a jail, kept running by a background service, and changed
+scheduled jobs on Windows, macOS and Linux, each one in isolation, kept running by a background service, and changed
 only with your approval.
 
 | Read this | When you want to |
@@ -24,7 +24,7 @@ only with your approval.
 
 * **Service**: one program Pythonator runs for you: a folder, a command and how it should run. It can be a web app,
   an API, a worker, a database or a job that runs on a schedule.
-* **Mode**: *Sandbox* (a kernel jail, the default), *Container* (Podman or Docker), *WSL* (Windows: the Linux jail
+* **Mode**: *Sandbox* (kernel-enforced isolation, the default), *Container* (Podman or Docker), *WSL* (Windows: the Linux sandbox
   in Pythonator's own distribution) or *Full access* (runs as you).
 * **Plan**: what the service will be allowed to do on this machine, layer by layer, worked out before it runs.
 * **Layer**: one protection, such as *Files* or *Network*. Each one is *enforced*, *reduced* (weaker on this machine,

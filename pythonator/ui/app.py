@@ -115,7 +115,7 @@ class Main(QMainWindow):
         from pythonator.service import osservice
         from pythonator.ui.kit import Popover, Toggle
 
-        pop = Popover("Pythonator on this computer", "Your services run in the background service either way.",
+        pop = Popover("Pythonator on this computer", "Your services keep running in the background service whether or not this window is open.",
                       ico="wrench")
         lay = pop.layout()
 
@@ -143,8 +143,8 @@ class Main(QMainWindow):
         if self.tray is not None and not self.quitting and pref("tray"):
             e.ignore()
             self.hide()
-            self.tray.showMessage("Pythonator", "Still here in the tray. Your services keep running either way; Quit "
-                                  "from this icon closes the window for good.", self.windowIcon(), 4000)
+            self.tray.showMessage("Pythonator", "Pythonator is still running in the system tray, and your services "
+                                  "continue to run. Choose Quit from the tray icon to close the application.", self.windowIcon(), 4000)
             return
         super().closeEvent(e)
 
@@ -232,7 +232,7 @@ class Main(QMainWindow):
         self.bnav_btns: dict[str, QToolButton] = {}
         bgroup = QButtonGroup(self)
         for key, ico, text in (("services", "services", "Services"), ("console", "console", "Console"),
-                               ("jail", "layers", "Jail"), ("plugins", "plug", "Plugins"), ("more", "more", "More")):
+                               ("jail", "layers", "Isolation"), ("plugins", "plug", "Plugins"), ("more", "more", "More")):
             b = QToolButton()
             b.setCheckable(True)
             b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)

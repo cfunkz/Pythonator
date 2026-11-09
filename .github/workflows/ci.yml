@@ -28,7 +28,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           check-latest: true
-      - name: Jail tools
+      - name: Isolation tools
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends bubblewrap passt libseccomp2 libegl1 libxkbcommon0

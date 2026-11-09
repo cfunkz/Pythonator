@@ -168,7 +168,7 @@ class Palette(QFrame):
             out.append(Entry("Services", "services", f"Open {name}", f"{mode} · {meta(s)}", "",
                              lambda n=name: m.pick(n), more, f"{group} {mode}"))
             if needs_you(s) and not s.get("approved"):
-                out.append(Entry("Actions", "list", f"Review plan for {name}", "needs your OK", "",
+                out.append(Entry("Actions", "list", f"Review plan for {name}", "awaiting approval", "",
                                  lambda n=name: m.show_plan(n)))
             if spec.get("network", {}).get("traffic", {}).get("mode") == "hosts":
                 n_hosts = len(spec["network"]["traffic"].get("hosts", []))

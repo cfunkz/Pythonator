@@ -691,7 +691,7 @@ class Reconciler:
         cur = self.specs[name]
         base = self.store.approved_spec(name)
         if base is None:
-            raise Refused("PLAN-001", f"{name} has never been approved, so every line of its plan needs your OK.",
+            raise Refused("PLAN-001", f"{name} has never been approved, so every line of its plan needs approval.",
                           "Review the plan and approve it.")
         wanted = self.store.proposal(name) or cur
         merged = safe_part(base, wanted).evolve(desired=cur.desired.value)

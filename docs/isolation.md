@@ -82,7 +82,7 @@ check, and can be weaker (for example *reduced* limits on Linux without a system
 | Ports | `pasta` port forwarding, or the gate's listener | only the ports you opened, to this computer or your LAN |
 
 bubblewrap is required: without it Sandbox mode and plugins are refused (`RUN-LNX-001`, `PLG-LNX-001`), never run in
-a weaker jail. On Ubuntu 24.04 and later, AppArmor blocks the user namespaces bubblewrap needs until you allow them;
+weaker isolation. On Ubuntu 24.04 and later, AppArmor blocks the user namespaces bubblewrap needs until you allow them;
 System check shows the exact command.
 
 ### Files, twice
@@ -135,7 +135,7 @@ or Pythonator is uninstalled. A read-only grant adds a deny entry when anything 
 
 Pythonator installs its **own** Debian distribution (Engines → WSL → Set up): no
 Windows drives mounted, no Windows interop, bubblewrap and libseccomp from Debian's signed archive. Each run is the
-Linux Sandbox jail inside it, started by `wsl.exe` from System32 with an argument list; limits are a cgroup inside
+Linux Sandbox environment inside it, started by `wsl.exe` from System32 with an argument list; limits are a cgroup inside
 the distribution (the run refuses to start without one). Variables cross only through `WSLENV`. Stop ends the run
 inside Linux, also after a crash. Your own WSL distributions are never used.
 
@@ -155,7 +155,7 @@ line. Rootless Podman is stronger than rootful Docker; engines that run in a VM 
 Runs as you. Files and Network are **not enforced**, and the plan says so. The process tree and limits still apply
 (a systemd scope on Linux, a job object on Windows), so Stop still ends every child. An allow-list is refused
 (`NET-FULL-001`) because nothing could enforce it. A Full access service can't share a folder with an isolated
-service (`RUN-FOLDER-001`), so a jailed service can never plant code that runs as you.
+service (`RUN-FOLDER-001`), so an isolated service can never plant code that runs as you.
 
 ## Folders
 
@@ -178,8 +178,8 @@ Some folders can never be given to a service, in any mode, after links are resol
 
 ## Plugins
 
-Plugins run in a stricter jail than services: no network, no home, and their own code read-only. See
-[Plugins](plugins.md#the-plugin-jail).
+Plugins run in stricter isolation than services: no network, no home, and their own code read-only. See
+[Plugins](plugins.md#plugin-isolation).
 
 ## Known limitations
 
@@ -195,4 +195,4 @@ These are true in 0.0.1. Each one is also an open item in [Security cases](secur
   adding write for others, not read).
 * **Container**: Podman's network `isolate` option and its version aren't checked.
 * **Releases** aren't code-signed or notarized yet.
-* **Full access** is not a jail.
+* **Full access** provides no isolation.

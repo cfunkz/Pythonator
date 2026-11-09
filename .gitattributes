@@ -1,0 +1,11 @@
+# Every text file is checked out with LF line endings on every OS. The bundled plugins are pinned by a hash of their
+# exact bytes (pythonator/resources/plugins/official.json), so a CRLF checkout on Windows would no longer match.
+* text=auto eol=lf
+
+*.png binary
+*.ico binary
+*.icns binary
+*.ttf binary
+*.woff2 binary
+*.whl binary
+*.zip binary

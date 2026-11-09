@@ -57,7 +57,7 @@ def meta(s: dict[str, Any]) -> str:
     if s.get("refused"):
         return f"refused · {s['refused']['code']}"
     if not s.get("approved"):
-        return "needs your OK"
+        return "awaiting approval"
     if ph == "running" and ob.get("started_at"):
         return f"up {dur(time.time() - ob['started_at'])}"
     if ph == "backoff" and ob.get("next_retry_at"):
@@ -152,7 +152,7 @@ def chip(p: QPainter, x: int, y: int, text: str, tone: str, ico: str | None = No
     return w
 
 class ServiceList(QListWidget):
-    """Grouped by the service's group; filter chips All / Running / Needs you / a tag."""
+    """Grouped by the service's group; filter chips All / Running / Action required / a tag."""
 
     picked = pyqtSignal(str)
 

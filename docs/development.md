@@ -28,14 +28,14 @@ pythonator` is advisory (PyQt's stubs are noisy).
 | `test_store.py` | log range reads and masking on disk, the ledger surviving a torn line, spec generations and approvals |
 | `test_schedule.py` | next run times and catch-up |
 | `test_plugins.py` | manifests, content hashes, the bundled Guard |
-| `test_service.py` | end to end: authentication (Unix socket and TCP), a sandboxed run, a hostile plugin trying to escape its jail, grants reset on new code, Guard settings, WSL verbs |
+| `test_service.py` | end to end: authentication (Unix socket and TCP), a sandboxed run, a hostile plugin trying to escape its sandbox, grants reset on new code, Guard settings, WSL verbs |
 | `test_invariants.py` | the 16 invariants: one test each that fails CI (safe reads only, no environment crossing, snapshots never use the folder's git, Stop ends every child, missing layers refuse, hostile scripts per mode with a Full access control, absolute programs only, masking on every channel, docs match the compiler, a slot exception keeps the app alive, widenings change the hash, ledger recovery and reused pids) |
 | `test_hardening.py` | one class-level test per finding closed while answering the security cases |
 | `test_winjail.py` | Windows ACL grants and the AppContainer probe (runs for real on Windows) |
 
 ## Golden files
 
-`tests/golden/*.json` hold the exact argv the compiler produces for each case. Any change to a jail shows up as a
+`tests/golden/*.json` hold the exact argv the compiler produces for each case. Any change to an isolated environment shows up as a
 diff in review. To accept an intended change:
 
 ```bash

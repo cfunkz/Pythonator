@@ -304,8 +304,8 @@ class SettingsPage(QWidget):
 
     def _isolation(self, lay: QVBoxLayout) -> None:
         sp = self.spec
-        lay.addWidget(section_head("Isolation", "shield", ("Modes", "Sandbox: a kernel jail on this computer. Container: "
-                                   "its own image in rootless Podman or Docker. WSL: the Sandbox jail inside Pythonator's own "
+        lay.addWidget(section_head("Isolation", "shield", ("Modes", "Sandbox: kernel-enforced isolation on this computer. Container: "
+                                   "its own image in rootless Podman or Docker. WSL: the Sandbox isolation inside Pythonator's own "
                                    "Linux on Windows. Full access: runs as you, still in a process tree Stop can end."),
                                    sub="How it is kept apart from the rest of your computer."))
         self.mode = Seg(MODES, sp["mode"], accent=True)
@@ -524,7 +524,7 @@ class SettingsPage(QWidget):
             self.dirty = False
             self._allowed = host
             self.toast_text.setText(f"<b>Allowed {esc(host)}</b><br><span style='color:{th.current().muted}'>"
-                                    f"{'Live now, no restart needed' if res.get('approved') else 'Waiting for your OK on the plan'}"
+                                    f"{'Live now, no restart needed' if res.get('approved') else 'Awaiting approval of the plan'}"
                                     "</span>")
             self.toast.show()
             self.main.snapshot()
@@ -882,11 +882,11 @@ class SettingsPage(QWidget):
             self.guard.set(f"<b>{esc(bad['reason'])}</b>" + (f" {esc(bad.get('fix', ''))}" if bad.get("fix") else ""), "bad")
         elif g:
             self.guard.set(f"<b>Allowed</b> by {esc(g[0]['plugin'])} ({esc(g[0].get('summary', ''))})."
-                           + (f" {len(widens)} line{'s' if len(widens) != 1 else ''} will wait for your OK." if widens else ""),
+                           + (f" {len(widens)} line{'s' if len(widens) != 1 else ''} will await approval." if widens else ""),
                            "ok")
         else:
-            self.guard.set("No Guard installed: your OK is the only check."
-                           + (f" {len(widens)} line{'s' if len(widens) != 1 else ''} will wait for your OK." if widens else ""),
+            self.guard.set("No Guard installed: your approval is the only check."
+                           + (f" {len(widens)} line{'s' if len(widens) != 1 else ''} will await approval." if widens else ""),
                            "info")
 
     def save_spec(self) -> None:

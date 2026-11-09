@@ -67,12 +67,12 @@ Some folders are refused in every mode, with a code and the reason: your whole h
 
 ## 4. Approve the plan
 
-The plan shows the jail this service becomes on this computer, from the outside in, and each layer that is weaker
+The plan shows the isolated environment this service becomes on this computer, from the outside in, and each layer that is weaker
 here than it could be. **Approve and start** runs it.
 
 Your approval is bound to a hash of everything that could widen access: mode, folders, traffic, hosts, ports,
 limits, secrets and the image. Change any of them and it asks again. A new command, restart setting or schedule
-doesn't ask, because the jail around it stays the same.
+doesn't ask, because the isolated environment around it stays the same.
 
 ## 5. Watch it
 

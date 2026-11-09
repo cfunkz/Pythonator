@@ -405,7 +405,7 @@ class AiPane(QFrame):
         self.setObjectName("AiPane")
         self.page = page
         self.helper: dict[str, Any] | None = None
-        self.badge = Chip("official · jailed", "", "shield")
+        self.badge = Chip("official · isolated", "", "shield")
         info = InfoBtn(
             "AI assistant",
             "A plugin answers questions about this service. Pythonator decides what it sees: the open file (secrets "
@@ -447,7 +447,7 @@ class AiPane(QFrame):
 
     def empty(self) -> None:
         self._clear()
-        n = Note("Turn on the <b>AI assistant</b> plugin to ask questions here. It is official and runs jailed; "
+        n = Note("Turn on the <b>AI assistant</b> plugin to ask questions here. It is official and runs isolated; "
                  "you grant it the one host it may reach and set its key in Plugins.", "info", "sparkle")
         self.items.addWidget(n)
         self.items.addWidget(hbox_w(Btn("Open Plugins", "plug", on=lambda: self.page.main.go("plugins")), 1))
@@ -459,7 +459,7 @@ class AiPane(QFrame):
             self.empty()
             self.badge.hide()
         else:
-            self.badge.set("official · jailed" if self.helper.get("official") else "jailed", "", "shield")
+            self.badge.set("official · isolated" if self.helper.get("official") else "isolated", "", "shield")
             self.badge.show()
             if not self.items.count() or isinstance(self.items.itemAt(0).widget(), Note):  # type: ignore[union-attr]
                 self._clear()
@@ -560,7 +560,7 @@ class EditorPage(QWidget):
         self.tabbar.currentChanged.connect(self._tab_changed)
         self.lint_level = str(QSettings("Pythonator", "Pythonator").value("editor/lint", "errors"))
         self.lint_chip = Btn("ruff", "shield", "ghost", "sm", on=self._lint_menu,
-                             tip="Problems come from ruff, run by the background service in a jail with no folder and no "
+                             tip="Problems come from ruff, run by the background service in isolation with no folder and no "
                                  "network: it only sees the text of this file. Click to choose how much it checks.")
         self.rt_chip = Chip("", "", "")
         self.ai_btn = Btn(ico="sparkle", kind="ghost", size="sm", tip="Show the AI assistant", on=lambda: self.show_ai(True))
@@ -577,7 +577,7 @@ class EditorPage(QWidget):
         self.pop.hide()
         self.blank = frame("", vbox(1, label("Pick a file on the left.", "Muted"), 1, margins=(30, 30, 30, 30)))
         self.prob_head = label("", rich=True)
-        self.prob_src = label("from ruff (jailed, read-only)", "Small")
+        self.prob_src = label("from ruff (isolated, read-only)", "Small")
         self.prob_rows = QVBoxLayout()
         self.prob_rows.setSpacing(0)
         self.prob_open, self.prob_list = False, []  # one problem at first; all of them (scrolled) when opened
@@ -882,7 +882,7 @@ class EditorPage(QWidget):
             if err:
                 self.prob_src.setText(f"ruff: {err['message']}")
                 return
-            self.prob_src.setText("from ruff (jailed, read-only)")
+            self.prob_src.setText("from ruff (isolated, read-only)")
             d["problems"] = res
             self._problems(res)
             self.editor.mark_problems(res)

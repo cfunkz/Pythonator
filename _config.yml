@@ -1,7 +1,7 @@
 # The website (https://cfunkz.github.io/Pythonator/): .github/workflows/pages.yml builds it with Jekyll on each push to main.
 # The pages are the Markdown files in docs/; the design lives in website/. Preview: see docs/development.md.
 title: Pythonator
-description: A service manager for your own computer. Web apps, APIs, workers, databases and jobs, each in a jail, kept running and changed only with your OK.
+description: A service manager for your own computer. Web applications, APIs, workers, databases and scheduled jobs, each isolated, supervised and changed only with your approval.
 url: https://cfunkz.github.io
 baseurl: /Pythonator
 repository: cfunkz/Pythonator

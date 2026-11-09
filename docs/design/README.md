@@ -20,12 +20,12 @@ mock-ups are sample data; in the app, every number is measured on your machine.
 | # | Screen |
 | ---: | --- |
 | 1 | [Main window](screens/final-01-main.png): layer rings, chips, security stack, console |
-| 2 | [Plan and drift](screens/final-02-plan-drift.png): the plan sheet, *Needs you*, Try in a copy |
+| 2 | [Plan and drift](screens/final-02-plan-drift.png): the plan sheet, *Action required*, Try in a copy |
 | 3 | [New service](screens/final-03-new-service.png): folder, Fit check, mode, traffic |
 | 4 | [Network settings](screens/final-04-network.png): traffic out, allowed hosts, ports in |
 | 5 | [Editor and AI](screens/final-05-editor-ai.png): ruff problems, snapshots, reviewed AI edits |
 | 6 | [Plugins and permissions](screens/final-06-plugins.png): grants, hash, calls, safe mode |
-| 7 | [Installing a plugin](screens/final-07-plugin-install.png): installed off, no permissions, its jail |
+| 7 | [Installing a plugin](screens/final-07-plugin-install.png): installed off, no permissions, its isolation |
 | 8 | [Engines](screens/final-08-engines.png): Podman, Docker, WSL |
 | 9 | [Security timeline](screens/final-09-security.png): Guard rules and the event timeline |
 | 10 | [System check](screens/final-10-system-check.png): measured on this machine |

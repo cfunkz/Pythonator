@@ -151,7 +151,7 @@ def changes(old: ServiceSpec | None, new: ServiceSpec) -> list[dict[str, object]
         line("~", f"run: {' '.join(old.command)} → {' '.join(new.command)}", "safe")
     for w in widenings(old, new):
         why = ("new outbound host" if w.startswith("new outbound host") else "new port" if "port" in w
-               else "more access" if w.startswith(("mode", "folder", "new folder", "traffic")) else "needs your OK")
+               else "more access" if w.startswith(("mode", "folder", "new folder", "traffic")) else "needs approval")
         line("!", w.replace("new outbound host ", "traffic.allow + "), why)
     ot, nt = old.network.traffic, new.network.traffic
     for h in sorted(set(ot.hosts) - set(nt.hosts)):

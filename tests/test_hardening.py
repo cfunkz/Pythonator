@@ -4,6 +4,7 @@ import dataclasses
 import os
 import socket
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -63,7 +64,21 @@ def test_a_link_to_a_secret_folder_is_the_secret_folder(tmp_path):
     home = tmp_path / "home"
     (home / ".ssh").mkdir(parents=True)
     os.symlink(home / ".ssh", home / "proj")
-    host = dataclasses.replace(REFERENCE["linux"], home=str(home), data_dir=str(tmp_path / "data"))
+    here = "darwin" if sys.platform == "darwin" else "linux"  # links are followed only for this machine's OS
+    host = dataclasses.replace(REFERENCE[here], home=str(home), data_dir=str(tmp_path / "data"))
+    with pytest.raises(Refused) as e:
+        compile_service(spec(folder=str(home / "proj")), host)
+    assert e.value.code == "POL-PATH-006"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX links")
+def test_a_home_reached_through_a_link_still_hides_its_secrets(tmp_path):
+    (tmp_path / "data" / "me" / ".ssh").mkdir(parents=True)
+    os.symlink(tmp_path / "data", tmp_path / "home")  # /home -> /data/home on some machines
+    home = tmp_path / "home" / "me"
+    os.symlink(home / ".ssh", home / "proj")
+    here = "darwin" if sys.platform == "darwin" else "linux"
+    host = dataclasses.replace(REFERENCE[here], home=str(home), data_dir=str(tmp_path / "pdata"))
     with pytest.raises(Refused) as e:
         compile_service(spec(folder=str(home / "proj")), host)
     assert e.value.code == "POL-PATH-006"
@@ -222,7 +237,16 @@ def test_official_plugin_hashes_are_pinned_by_the_release():
     path = BUNDLED / "official.json"
     if os.environ.get("UPDATE_GOLDEN"):
         path.write_text(json.dumps(now, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    text = (".py", ".toml", ".json", ".md", ".txt")
+    crlf = [f.name for f in BUNDLED.rglob("*") if f.suffix in text and "__pycache__" not in f.parts and b"\r\n" in f.read_bytes()]
+    assert not crlf, f"CRLF line endings (check .gitattributes and run git add --renormalize .): {crlf[:3]}"
     assert json.loads(path.read_text(encoding="utf-8")) == now, "a bundled plugin changed: rerun with UPDATE_GOLDEN=1"
+
+
+def test_git_checks_out_lf_everywhere():
+    """official.json pins exact bytes, so Windows must not convert the bundled plugins to CRLF on checkout."""
+    attrs = (Path(__file__).resolve().parent.parent / ".gitattributes").read_text(encoding="utf-8")
+    assert "* text=auto eol=lf" in attrs and "*.png binary" in attrs
 
 
 @pytest.mark.parametrize("group", ["<b>x</b>", "a\\nb", "x" * 49, " lead"])

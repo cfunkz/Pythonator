@@ -30,7 +30,7 @@ KIND = {  # icon, tone, chip text
 SEVERITY = {"blocked": 3, "refused": 2, "permission": 1, "healed": 0}
 EXPOSURE_INFO = (
     "Exposure score",
-    "0 is sealed, 10 is runs-as-you. Computed from the compiled jail: mode is most of it, then traffic, the local "
+    "0 is fully isolated; 10 runs with your full permissions. Computed from the compiled isolation: mode is most of it, then traffic, the local "
     "network, ports, extra folders and secrets. Guard can refuse any change that pushes a service above your cap.",
     [("Full access", "starts at 6"), ("Any host", "+2"), ("Port to network", "+1 each")],
     "Recomputed on every save",

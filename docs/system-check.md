@@ -9,7 +9,7 @@ Each OS shows its own probes:
 
 | OS | Probe | ✓ when | If not |
 | --- | --- | --- | --- |
-| Linux | bubblewrap | `bwrap` is installed and builds a jail | Sandbox mode and plugins are refused: install `bubblewrap` |
+| Linux | bubblewrap | `bwrap` is installed and builds an isolated environment | Sandbox mode and plugins are refused: install `bubblewrap` |
 | Linux | bubblewrap version | at or above the CVE floor | a warning with the version to update to |
 | Linux | AppArmor user namespaces | not restricted | bubblewrap may be refused; the fix is the sysctl or the AppArmor profile |
 | Linux | libseccomp | `libseccomp.so.2` loads | Sandbox mode is refused: install `libseccomp2` |
@@ -29,7 +29,7 @@ Each OS shows its own probes:
 
 | Measure | Budget | How it's measured |
 | --- | --- | --- |
-| Sandbox start | ≤ 80 ms | build an empty jail and run `true` in it |
+| Sandbox start | ≤ 80 ms | build an empty sandbox and run `true` in it |
 | Container start | ≤ 500 ms | start and remove a tiny container, when an engine is installed |
 | Plugin start | ≤ 150 ms | from launch to a plugin's `hello` |
 | Service, idle | ≤ 45 MB | resident memory of `pythonatord` |

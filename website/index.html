@@ -2,7 +2,7 @@
 layout: landing
 permalink: /
 title: Pythonator
-description: A service manager for your own computer. Web apps, APIs, workers, databases and jobs, each in a jail, kept running and changed only with your OK.
+description: A service manager for your own computer. Web applications, APIs, workers, databases and scheduled jobs, each isolated, supervised and changed only with your approval.
 ---
 {%- assign shots = '/screenshots/' | relative_url -%}
 {%- assign docs = '/docs/' | relative_url -%}
@@ -13,20 +13,20 @@ description: A service manager for your own computer. Web apps, APIs, workers, d
     <div class="wrap intro-grid">
       <div>
         <p class="kicker"><img src="{{ '/website/assets/favicon-32.png' | relative_url }}" alt="" width="22" height="22"> Version {{ site.version }} · GPL-3.0</p>
-        <h1>A service manager for your own computer, <em>each service in a jail</em>.</h1>
-        <p class="lead">Pythonator keeps your web apps, APIs, workers, databases and scheduled jobs running on
-          Windows, macOS and Linux. A background service makes what runs match what you asked for, and nothing runs
-          until you have seen and approved what it may reach.</p>
+        <h1>A service manager for your own computer, <em>with every service isolated</em>.</h1>
+        <p class="lead">Pythonator keeps your web applications, APIs, workers, databases and scheduled jobs running
+          on Windows, macOS and Linux. A background service reconciles what is running with what you configured, and
+          no service starts until you have reviewed and approved the access it is given.</p>
         <div class="cta">
           <a class="button big" href="#download">Download {{ v }}</a>
           <a class="button big ghost" href="{{ docs }}getting-started.html">Getting started</a>
         </div>
-        <p class="facts">An installer for Windows, macOS and Linux, each with its own Python. Nothing else to install,
-          and on Windows and macOS no administrator rights.</p>
+        <p class="facts">Installers for Windows, macOS and Linux, each including its own Python runtime. No other
+          software is required, and Windows and macOS installations do not need administrator rights.</p>
       </div>
       <figure class="frame">
         <img src="{{ shots }}01-main.png" alt="The main window: services on the left, a live console, and the security stack that protects the selected service" width="1520" height="1050">
-        <figcaption>Services, a live console, and the layers that protect the selected one.</figcaption>
+        <figcaption>Services, a live console, and the isolation layers that protect the selected service.</figcaption>
       </figure>
     </div>
   </section>
@@ -44,47 +44,50 @@ description: A service manager for your own computer. Web apps, APIs, workers, d
       <div class="section-head">
         <div class="num">01 · Supervision</div>
         <div>
-          <h2>Kept running, by a background service.</h2>
-          <p><code>pythonatord</code> owns every service and keeps running when the window closes. The window is
-            only a client; closing it hides it to the tray.</p>
+          <h2>Supervised by a background service.</h2>
+          <p><code>pythonatord</code> manages every service and continues to run when the window is closed. The
+            window is a client only; closing it minimises Pythonator to the system tray.</p>
         </div>
       </div>
       <div class="spec">
         <div>
           <h3>Restarts, health checks, schedules</h3>
-          <p>Restarts with back-off and a cool-down retry after giving up. HTTP or TCP health checks. Cron
-            schedules that catch up after the computer was off. A service that can never start stays Blocked with
-            the reason, instead of looping.</p>
+          <p>Restarts with back-off and a delayed retry after repeated failures. HTTP or TCP health checks. Cron
+            schedules that run missed jobs after the computer was off. A service that cannot start is marked Blocked
+            with the reason, instead of being restarted repeatedly.</p>
           <a href="{{ docs }}services.html">Services</a>
         </div>
         <div>
-          <h3>Limits from the kernel</h3>
-          <p>Memory, CPU and tasks for the whole process tree: cgroups on Linux and in WSL, a job object on Windows,
-            the engine's limits in a container. Where a limit is weaker, the plan says <em>reduced</em>.</p>
+          <h3>Kernel-enforced resource limits</h3>
+          <p>Memory, CPU and task limits for the whole process tree: cgroups on Linux and in WSL, a job object on
+            Windows, and the engine's limits in a container. Where a limit is weaker, the plan marks it
+            <em>reduced</em>.</p>
           <a href="{{ docs }}isolation.html">Isolation</a>
         </div>
         <div>
-          <h3>Logs that can't freeze the window</h3>
-          <p>Output is stored in indexed segments and read by range, with ANSI colours. Secrets, token formats and
-            private keys are masked before anything reaches the disk, a plugin or a webhook.</p>
+          <h3>Efficient, masked logs</h3>
+          <p>Output is stored in indexed segments and read by range, with ANSI colours, so large logs do not slow the
+            interface. Secrets, token formats and private keys are masked before they reach the disk, a plugin or a
+            webhook.</p>
           <a href="{{ docs }}services.html#logs">Logs</a>
         </div>
         <div>
-          <h3>An editor beside it</h3>
-          <p>Each service's files, with highlighting, a linter you can turn down, Git status and snapshots taken
-            on every approval. <em>Try in a copy</em> runs a change in a throwaway folder first.</p>
+          <h3>Integrated editor</h3>
+          <p>Each service's files, with syntax highlighting, completion from the project's modules and packages, a
+            configurable linter, Git status and a snapshot on every approval. <em>Try in a copy</em> runs a change
+            in a temporary folder first.</p>
           <a href="{{ docs }}services.html#snapshots">Snapshots</a>
         </div>
         <div>
-          <h3>Desktop apps too</h3>
-          <p>A service can be a GUI app (PyQt, Tk, Electron) in Full access, or in Sandbox on Windows, where the
-            job keeps other windows and the clipboard out of reach.</p>
+          <h3>Desktop applications</h3>
+          <p>A service can be a GUI application (PyQt, Tk, Electron) in Full access, or in Sandbox on Windows, where
+            the job object prevents access to other windows and the clipboard.</p>
           <a href="{{ docs }}services.html#gui-apps">GUI apps</a>
         </div>
         <div>
-          <h3>Easy to install and to remove</h3>
-          <p>An installer for each OS sets up the app and its login service, as you.
-            <code>pythonatorctl uninstall</code> stops everything and takes back every folder permission.</p>
+          <h3>Straightforward installation and removal</h3>
+          <p>An installer for each operating system sets up the application and its login service for your user.
+            <code>pythonatorctl uninstall</code> stops every service and revokes every folder permission.</p>
           <a href="{{ docs }}cli.html">Command line</a>
         </div>
       </div>
@@ -96,18 +99,18 @@ description: A service manager for your own computer. Web apps, APIs, workers, d
       <div class="section-head">
         <div class="num">02 · Isolation</div>
         <div>
-          <h2>Four modes. Refused, never "cooperative".</h2>
-          <p>If a layer can't be enforced on this machine, the start is refused with a code and the fix. Pythonator
-            never runs a service with less protection than its plan shows.</p>
+          <h2>Four isolation modes, strictly enforced.</h2>
+          <p>If a protection cannot be enforced on this machine, the service is not started, and the reason and
+            remedy are shown. Pythonator never runs a service with less protection than its plan states.</p>
         </div>
       </div>
       <table class="os-table">
-        <thead><tr><th>Mode</th><th>What it can reach</th><th>Built on</th></tr></thead>
+        <thead><tr><th>Mode</th><th>Access</th><th>Built on</th></tr></thead>
         <tbody>
-          <tr><td>Sandbox</td><td>Its own folder and its runtime. Not your home, keys, browser data or other projects.</td><td>bubblewrap, Landlock and seccomp on Linux, a Seatbelt profile on macOS, an AppContainer in a job object on Windows</td></tr>
-          <tr><td>Container</td><td>Its folder at <code>/app</code> and a network of its own.</td><td>Podman (rootless) or Docker, read-only, every capability dropped, no new privileges</td></tr>
-          <tr><td>WSL</td><td>The Linux sandbox, on Windows.</td><td>Pythonator's own Debian, with no Windows drives and no interop</td></tr>
-          <tr><td>Full access</td><td>Everything you can. Every place that shows the service says so.</td><td>A normal process in its own process tree</td></tr>
+          <tr><td>Sandbox</td><td>Its own folder and its runtime only. Your home folder, keys, browser data and other projects are not visible.</td><td>bubblewrap, Landlock and seccomp on Linux, a Seatbelt profile on macOS, an AppContainer in a job object on Windows</td></tr>
+          <tr><td>Container</td><td>Its folder at <code>/app</code> and a dedicated network.</td><td>Podman (rootless) or Docker, read-only, every capability dropped, no new privileges</td></tr>
+          <tr><td>WSL</td><td>The Linux sandbox, on Windows.</td><td>Pythonator's own Debian distribution, with no Windows drives mounted and interoperability disabled</td></tr>
+          <tr><td>Full access</td><td>Everything your user account can access. The service is labelled as such wherever it is shown.</td><td>A normal process in its own process tree</td></tr>
         </tbody>
       </table>
       <p class="facts"><a href="{{ docs }}isolation.html">Isolation</a> · <a href="{{ docs }}networking.html">Networking</a> · <a href="{{ docs }}security.html">Security model</a> · <a href="{{ docs }}security-cases.html">286 security cases</a></p>
@@ -118,17 +121,17 @@ description: A service manager for your own computer. Web apps, APIs, workers, d
     <div class="wrap pair wide-right">
       <div>
         <p class="num label">03 · Plans</p>
-        <h3>You approve a plan, not a checkbox</h3>
-        <p>Each change produces a plan: which layers protect the service on <em>this</em> machine, and what would
-          widen (a folder, a host, a port, a window on your screen). Your approval is bound to a hash of those
-          fields, so nothing that widens access slips in later without asking again.</p>
-        <p>Traffic out is Off, a list of hosts through Pythonator's egress gate, or Anywhere. Each blocked
-          connection is listed, with one click to allow it.</p>
+        <h3>Explicit approval of every change</h3>
+        <p>Each change produces a plan that lists the protections in effect on this machine and any access that
+          would widen (a folder, a host, a port, a window on your screen). Approval is bound to a hash of those
+          fields, so any later change that widens access requires approval again.</p>
+        <p>Outbound traffic is Off, limited to a list of hosts through Pythonator's egress gate, or unrestricted.
+          Each blocked connection is listed and can be allowed with one click.</p>
         <p><a href="{{ docs }}services.html">Services</a> · <a href="{{ docs }}networking.html">Networking</a></p>
       </div>
       <figure class="frame">
         <img src="{{ shots }}02-plan.png" alt="A plan: the layers that protect a service on this machine, and what would widen" loading="lazy" width="1520" height="1050">
-        <figcaption>Each layer is enforced, reduced or refused, and says why.</figcaption>
+        <figcaption>Each layer is shown as enforced, reduced or refused, with the reason.</figcaption>
       </figure>
     </div>
   </section>
@@ -137,20 +140,21 @@ description: A service manager for your own computer. Web apps, APIs, workers, d
     <div class="wrap pair">
       <div>
         <p class="num label">04 · Plugins</p>
-        <h3>Plugins that can't hurt you</h3>
-        <p>Each plugin runs in its own jail with no network and no home, starts with no permissions, and its grants
-          are tied to a hash of its code. Change the code and the grants are gone.</p>
+        <h3>Isolated plugins</h3>
+        <p>Each plugin runs in its own isolated environment with no network access and no access to your home
+          folder. Plugins start with no permissions, and every grant is tied to a hash of the plugin's code, so any
+          change to the code revokes its grants.</p>
         <ul>
-          <li><strong>Guard</strong>: rules a change must pass (modes, ports, memory) before it is applied</li>
-          <li><strong>Notify</strong>: crashes, blocks and recoveries, sent to Discord, Slack, ntfy or a webhook</li>
-          <li><strong>AI assistant</strong>: questions about a service's logs and code, with changes you review first</li>
-          <li><strong>Builder</strong>: new projects from templates, made in a sandbox</li>
+          <li><strong>Guard</strong>: policy rules (modes, ports, memory) that every change must satisfy before it is applied</li>
+          <li><strong>Notify</strong>: notifications of failures, blocks and recoveries to Discord, Slack, ntfy or a webhook</li>
+          <li><strong>AI assistant</strong>: answers questions about a service's logs and code, and proposes changes for your review</li>
+          <li><strong>Builder</strong>: creates new projects from templates, inside a sandbox</li>
         </ul>
         <p><a href="{{ docs }}plugins.html">Plugins</a></p>
       </div>
       <figure class="frame">
         <img src="{{ shots }}06-plugins.png" alt="The Plugins page: each plugin's permissions, calls and settings" loading="lazy" width="1520" height="1050">
-        <figcaption>Every grant, call and refusal of each plugin.</figcaption>
+        <figcaption>The permissions, calls and refusals of each plugin.</figcaption>
       </figure>
     </div>
   </section>
@@ -160,20 +164,21 @@ description: A service manager for your own computer. Web apps, APIs, workers, d
       <div class="section-head">
         <div class="num">05 · Download</div>
         <div>
-          <h2>Version {{ v }}, for each OS.</h2>
-          <p>Each download carries its own Python with every package checked against the hashes in
-            <code>requirements.lock</code>. The background service starts at login, as you. Built and attested by
-            GitHub Actions; check a file against <code>SHA256SUMS</code> on the release page.</p>
+          <h2>Version {{ v }} for each operating system.</h2>
+          <p>Each download includes its own Python runtime, with every package verified against the hashes in
+            <code>requirements.lock</code>. The background service starts at login under your user account. Builds
+            are produced and attested by GitHub Actions; verify a file against <code>SHA256SUMS</code> on the
+            release page.</p>
         </div>
       </div>
       <table class="os-table">
         <thead><tr><th>System</th><th>Download</th><th>Then</th></tr></thead>
         <tbody>
-          <tr><td>Windows 10 or 11 (x64)</td><td><a href="{{ dl }}Pythonator-{{ v }}-windows-x64-setup.exe">Installer (.exe)</a> · <a href="{{ dl }}Pythonator-{{ v }}-windows-x64.zip">Portable (.zip)</a></td><td>Run the installer. It installs for your user only; remove it from Settings → Apps.</td></tr>
-          <tr><td>macOS 14 or newer, Apple silicon</td><td><a href="{{ dl }}Pythonator-{{ v }}-macos-arm64.dmg">Disk image (.dmg)</a> · <a href="{{ dl }}Pythonator-{{ v }}-macos-arm64.zip">.zip</a></td><td rowspan="2">Drag Pythonator to Applications. It isn't signed or notarized yet, so macOS asks before the first start: check the file against SHA256SUMS first.</td></tr>
+          <tr><td>Windows 10 or 11 (x64)</td><td><a href="{{ dl }}Pythonator-{{ v }}-windows-x64-setup.exe">Installer (.exe)</a> · <a href="{{ dl }}Pythonator-{{ v }}-windows-x64.zip">Portable (.zip)</a></td><td>Run the installer. It installs for your user only; uninstall it from Settings → Apps.</td></tr>
+          <tr><td>macOS 14 or newer, Apple silicon</td><td><a href="{{ dl }}Pythonator-{{ v }}-macos-arm64.dmg">Disk image (.dmg)</a> · <a href="{{ dl }}Pythonator-{{ v }}-macos-arm64.zip">.zip</a></td><td rowspan="2">Drag Pythonator to Applications. The application is not yet signed or notarized, so macOS asks for confirmation before the first start. Verify the file against SHA256SUMS first.</td></tr>
           <tr><td>macOS 14 or newer, Intel</td><td><a href="{{ dl }}Pythonator-{{ v }}-macos-x64.dmg">Disk image (.dmg)</a> · <a href="{{ dl }}Pythonator-{{ v }}-macos-x64.zip">.zip</a></td></tr>
-          <tr><td>Debian, Ubuntu and derivatives</td><td><a href="{{ dl }}pythonator_{{ v }}_amd64.deb">x64 (.deb)</a> · <a href="{{ dl }}pythonator_{{ v }}_arm64.deb">arm64 (.deb)</a></td><td><code>sudo apt install ./pythonator_{{ v }}_amd64.deb</code> also installs bubblewrap and passt for Sandbox mode.</td></tr>
-          <tr><td>Any other Linux</td><td><a href="{{ dl }}Pythonator-{{ v }}-linux-x64.tar.gz">x64 (.tar.gz)</a> · <a href="{{ dl }}Pythonator-{{ v }}-linux-arm64.tar.gz">arm64 (.tar.gz)</a></td><td>Unpack it anywhere and run <code>./Pythonator/pythonator</code>. Install bubblewrap and passt for Sandbox mode.</td></tr>
+          <tr><td>Debian, Ubuntu and derivatives</td><td><a href="{{ dl }}pythonator_{{ v }}_amd64.deb">x64 (.deb)</a> · <a href="{{ dl }}pythonator_{{ v }}_arm64.deb">arm64 (.deb)</a></td><td><code>sudo apt install ./pythonator_{{ v }}_amd64.deb</code> also installs bubblewrap and passt, which Sandbox mode requires.</td></tr>
+          <tr><td>Any other Linux</td><td><a href="{{ dl }}Pythonator-{{ v }}-linux-x64.tar.gz">x64 (.tar.gz)</a> · <a href="{{ dl }}Pythonator-{{ v }}-linux-arm64.tar.gz">arm64 (.tar.gz)</a></td><td>Extract it to any folder and run <code>./Pythonator/pythonator</code>. Sandbox mode requires bubblewrap and passt.</td></tr>
         </tbody>
       </table>
       <p class="facts"><a href="https://github.com/{{ site.repository }}/releases/tag/v{{ v }}">Release notes and checksums</a> · <a href="https://github.com/{{ site.repository }}/releases">All releases</a> · <a href="{{ docs }}getting-started.html">Getting started</a> · <a href="{{ docs }}development.html">Run from source</a></p>

@@ -14,11 +14,11 @@ How each mode does it:
 
 | Mode | Off | Allowed hosts | Anywhere |
 | --- | --- | --- | --- |
-| Sandbox, Linux | own network namespace with no interface, seccomp refuses sockets | own namespace; `HTTP_PROXY`/`HTTPS_PROXY` point at the gate's relay inside the jail | own namespace through `pasta --no-map-gw`; cloud metadata and (unless allowed) the LAN are blackholed |
+| Sandbox, Linux | own network namespace with no interface, seccomp refuses sockets | own namespace; `HTTP_PROXY`/`HTTPS_PROXY` point at the gate's relay inside the isolated environment | own namespace through `pasta --no-map-gw`; cloud metadata and (unless allowed) the LAN are blackholed |
 | Sandbox, macOS | Seatbelt denies the network | Seatbelt allows only the gate on 127.0.0.1 | Seatbelt allows outbound, not 127.0.0.1 |
 | Sandbox, Windows | no network capability in the AppContainer | refused (`NET-WIN-001`): use WSL mode | `internetClient` capability; loopback stays closed |
 | Container | `--network none` | refused (`NET-CTR-001`): the engine owns the network | a network of its own, `pythonator-<name>` |
-| WSL | the jail's own namespace | the gate inside Pythonator's distribution | WSL's network, jailed |
+| WSL | the isolated environment's own namespace | the gate inside Pythonator's distribution | WSL's network, isolated |
 | Full access | not enforced | refused (`NET-FULL-001`): nothing could enforce it | as you |
 
 The egress gate checks each connection's host name against the list, resolves it itself, and refuses private,
@@ -41,17 +41,17 @@ Open a port (1024 to 65535) and choose who can reach it:
 Pick it in the **Ports in** step of New service, or in Settings → Network.
 
 The service gets `PORT` (the first port) and `HOST`. In a private network namespace (Linux Sandbox, Container, WSL)
-`HOST` is `0.0.0.0`, which is only the jail's own address; on macOS and in Full access it is `127.0.0.1` unless a
+`HOST` is `0.0.0.0`, which is only the isolated environment's own address; on macOS and in Full access it is `127.0.0.1` unless a
 port is open to the local network. A variable you set yourself wins.
 
 Before a start, each port is tried: a busy one blocks the start with `NET-PORT-001` and a free port nearby.
 
-Per mode: Linux Sandbox forwards the port into the jail (`pasta -t`, or the gate's listener when traffic is Off);
+Per mode: Linux Sandbox forwards the port into the isolated environment (`pasta -t`, or the gate's listener when traffic is Off);
 macOS allows `bind` only on the listed ports; Container publishes `-p 127.0.0.1:P:P` (or all interfaces for the
 local network); WSL uses WSL's own forwarding, to this computer only (`NET-WSL-002`, `NET-WSL-003`). **Windows
 Sandbox can't open ports** (`NET-WIN-002`): an AppContainer server isn't reachable without firewall changes that
 need an administrator, so Pythonator refuses rather than promise it. Use WSL or Container mode for a server on
 Windows.
 
-Opening a port, or widening it from This computer to Local network, is a widening: the plan asks for your OK again.
+Opening a port, or widening it from This computer to Local network, is a widening: the plan requires your approval again.
 Guard can refuse LAN ports or ports outside a range (see [Plugins](plugins.md#guard)).

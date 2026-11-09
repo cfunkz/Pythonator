@@ -5,7 +5,8 @@
 <h1 align="center">Pythonator</h1>
 
 <p align="center">
-  A service manager for your own computer: web apps, APIs, workers, databases and scheduled jobs, each one in a jail it can't leave.<br>
+  A service manager for your own computer: web applications, APIs, workers, databases and scheduled jobs, each
+  running in its own isolated environment.<br>
   <a href="docs/getting-started.md">Getting started</a> ·
   <a href="docs/README.md">Documentation</a> ·
   <a href="SECURITY.md">Security</a> ·
@@ -13,34 +14,38 @@
 </p>
 
 <p align="center">
-  <img src="screenshots/main.png" alt="The main window: services on the left, a live console, and the security stack that protects the selected service" width="900">
+  <img src="screenshots/main.png" alt="The main window: services on the left, a live console, and the isolation layers that protect the selected service" width="900">
 </p>
 
-Pythonator keeps a set of services running on Windows, macOS and Linux. A background service (`pythonatord`) makes
-what runs match what you asked for, and nothing runs until you have seen and approved what it may reach.
+Pythonator keeps a set of services running on Windows, macOS and Linux. A background service (`pythonatord`)
+reconciles what is running with what you configured, and no service starts until you have reviewed and approved
+the access it is given.
 
-## What it does
+## Features
 
-* **Every service runs in a jail.** Four modes, the same on every OS where the OS allows it:
-  * **Sandbox** (the default): bubblewrap, Landlock and seccomp on Linux, a Seatbelt profile on macOS, an
-    AppContainer in a job object on Windows. The service sees its own folder and its runtime, nothing else of
-    your home: not your SSH keys, browser data or other projects.
-  * **Container**: Podman or Docker with a fixed, hardened set of flags and a network of its own.
-  * **WSL** (Windows): the Linux sandbox inside Pythonator's own Debian, with no drives and no Windows interop.
-  * **Full access**: runs as you, and every place that shows the service says so.
-* **You approve a plan, not a checkbox.** Each change produces a plan: which layers protect the service on *this*
-  machine, and what would widen (a folder, a host, a port). Your approval is bound to a hash of those fields, so
-  nothing that widens access slips in later without asking again.
-* **Refused, never "cooperative".** If a layer can't be enforced here, the start is refused with a code and the
-  fix. A layer that is weaker on this machine is shown as *reduced*, in the plan and on the first console line.
-* **It keeps them running.** Restarts with back-off, health checks, schedules, kernel limits, and a cool-down retry
-  after giving up. Closing the window never stops a service.
-* **Traffic you can read.** Traffic out is Off, a list of hosts (through Pythonator's egress gate) or Anywhere. Each
-  blocked connection is listed with one click to allow it.
-* **Logs that can't freeze the window.** Output is stored in indexed segments and read by range. Secrets, token
-  formats and private keys are masked before anything reaches the disk, a plugin or a webhook.
-* **Plugins that can't hurt you.** Each plugin runs in its own jail with no network and no home, starts with no
-  permissions, and its grants are tied to a hash of its code. Guard, Notify, AI assistant and Builder ship with it.
+* **Isolation for every service.** Four modes, consistent across operating systems where the platform allows it:
+  * **Sandbox** (default): bubblewrap, Landlock and seccomp on Linux, a Seatbelt profile on macOS, and an
+    AppContainer within a job object on Windows. The service can access its own folder and its runtime only; your
+    SSH keys, browser data and other projects are not visible to it.
+  * **Container**: Podman or Docker with a fixed, hardened set of options and a dedicated network.
+  * **WSL** (Windows): the Linux sandbox inside Pythonator's own Debian distribution, with no Windows drives
+    mounted and Windows interoperability disabled.
+  * **Full access**: runs with your user's permissions, and is labelled as such wherever the service is shown.
+* **Explicit approval.** Each change produces a plan that lists the protections in effect on this machine and any
+  access that would widen (a folder, a host, a port). Approval is bound to a hash of those fields, so any later
+  change that widens access requires approval again.
+* **Strict enforcement.** If a protection cannot be enforced on this machine, the service is not started, and the
+  reason and remedy are shown. A protection that is weaker on this machine is marked *reduced* in the plan and in
+  the first line of the console.
+* **Supervision.** Restarts with back-off, health checks, schedules, kernel-enforced resource limits, and a delayed
+  retry after repeated failures. Closing the window never stops a service.
+* **Outbound traffic control.** Outbound traffic is Off, limited to a list of hosts (through Pythonator's egress
+  gate), or unrestricted. Each blocked connection is listed and can be allowed with one click.
+* **Efficient, masked logs.** Output is stored in indexed segments and read by range, so large logs do not slow the
+  interface. Secrets, token formats and private keys are masked before they reach the disk, a plugin or a webhook.
+* **Isolated plugins.** Each plugin runs in its own isolated environment with no network access and no access to
+  your home folder. Plugins start with no permissions, and every grant is tied to a hash of the plugin's code.
+  Guard, Notify, AI assistant and Builder are included.
 
 ## Install
 

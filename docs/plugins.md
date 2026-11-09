@@ -2,7 +2,7 @@
 
 Plugins add features to Pythonator without being trusted with your computer. Each one:
 
-* runs as its **own process in its own jail**, with no network, no home folder and its own code read-only;
+* runs as its **own process in its own isolated environment**, with no network, no home folder and its own code read-only;
 * starts with **no permissions**; you grant each one by name, and can take any back at any time;
 * has its grants tied to a **hash of its code**: when the code changes, the grants are gone until you look again;
 * has **every call counted**, including the ones Pythonator refused, on the Plugins page.
@@ -55,7 +55,7 @@ means an open door.
 | `net.connect` | ask Pythonator to send an HTTPS request to a granted host | see below |
 | `editor.assist` | answer in the editor and propose exact-text edits | you apply each edit |
 
-**`net.connect`** is the only way a plugin reaches a network: the plugin's jail has none. Pythonator makes the
+**`net.connect`** is the only way a plugin reaches a network: the plugin's isolated environment has none. Pythonator makes the
 request for it, and only to a host you granted from the list the plugin declares in `plugin.toml`. It allows
 https on port 443 only, with no user or password in the URL. The name is resolved by Pythonator and every address
 must be public (no cloud metadata, this computer or your network). Redirects aren't followed, the certificate is
@@ -74,7 +74,7 @@ Every plugin call is checked against the grants **on every call**. A refused cal
 **Safe mode** (bottom of the Plugins list) stops every plugin and starts
 none. Services keep running. Use it if a plugin misbehaves and you want to look before deciding.
 
-## The plugin jail
+## Plugin isolation
 
 | Layer | Linux | macOS | Windows |
 | --- | --- | --- | --- |
@@ -88,7 +88,7 @@ on stderr, or 2 MB waiting unread stops it (and a plugin that isn't reading is d
 second in the plugin's log and counts the rest. Crashes restart it up to 3 times, then it stays stopped with the
 reason.
 
-No jail, no plugin: `PLG-LNX-001` (no bubblewrap), `PLG-LNX-002` (no Landlock), `PLG-MAC-001`, `PLG-WIN-001`.
+Without isolation, a plugin does not run: `PLG-LNX-001` (no bubblewrap), `PLG-LNX-002` (no Landlock), `PLG-MAC-001`, `PLG-WIN-001`.
 
 ## Install a plugin from a folder
 

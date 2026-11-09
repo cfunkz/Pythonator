@@ -182,7 +182,7 @@ done
 DESKTOP = """[Desktop Entry]
 Type=Application
 Name=Pythonator
-Comment=Run your services, each in a jail
+Comment=Run and supervise services in isolated environments
 Exec={exec}
 Icon={icon}
 Categories=Development;System;
@@ -228,8 +228,8 @@ Suggests: podman
 Section: devel
 Priority: optional
 Homepage: https://cfunkz.github.io/Pythonator/
-Description: service manager: web apps, APIs, workers and jobs, each in a jail
- Pythonator keeps your services running, each in a jail it can't leave, and changes them only with your
+Description: service manager for web apps, APIs, workers and scheduled jobs
+ Pythonator runs each service in an enforced isolation environment and applies changes only with your
  approval. It carries its own Python in /opt/pythonator.
 """, encoding="utf-8")
     # Every user's background service starts at login (each as that user); their own unit, if any, takes precedence.
