@@ -16,6 +16,7 @@ signed with a key that only this runner and the background service know, so the 
 import errno
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import signal
@@ -40,6 +41,7 @@ def uid_for(name):
 
 def stop(name):
     uid = uid_for(name)
+    unfirewall(uid)
     for pid in os.listdir("/proc"):
         if pid.isdigit():
             try:
@@ -48,6 +50,91 @@ def stop(name):
             except OSError:
                 continue
     return 0
+
+NFT = "/usr/sbin/nft"
+TABLE = "inet pythonator"
+REJECT = "reject with icmpx type admin-prohibited"
+METADATA = ("169.254.0.0/16", "100.100.100.200", "fd00:ec2::254", "fe80::/10")
+PRIVATE = ("0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "172.16.0.0/12", "192.168.0.0/16", "224.0.0.0/4", "240.0.0.0/4",
+           "fc00::/7", "ff00::/8")
+
+def nameservers(path="/etc/resolv.conf"):
+    """WSL's DNS (10.255.255.254 with DNS tunnelling, else the Windows host): reachable on port 53 only."""
+    out = []
+    try:
+        with open(path) as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        p = line.split()
+        if len(p) >= 2 and p[0] == "nameserver":
+            try:
+                out.append(ipaddress.ip_address(p[1].split("%")[0]))
+            except ValueError:
+                continue
+    return out
+
+def gateways(path="/proc/net/route"):
+    """The default gateway: the Windows host with NAT networking, your router with mirrored networking. Usually in
+    a private range already; closed by name too, in case your network uses public or CGNAT addresses."""
+    out = []
+    try:
+        with open(path) as f:
+            for line in f.read().splitlines()[1:]:
+                p = line.split()
+                if len(p) > 2 and p[1] == "00000000" and p[2] != "00000000":
+                    out.append(ipaddress.ip_address(int.from_bytes(bytes.fromhex(p[2]), "little")))
+    except (OSError, ValueError):
+        pass
+    return out
+
+def _daddr(nets):
+    """nft `ip daddr {...}` / `ip6 daddr {...}` matches for a list of networks."""
+    v4 = [n for n in nets if ":" not in str(n)]
+    v6 = [n for n in nets if ":" in str(n)]
+    return ([f"ip daddr {{ {', '.join(map(str, v4))} }}"] if v4 else []) + ([f"ip6 daddr {{ {', '.join(map(str, v6))} }}"] if v6 else [])
+
+def firewall_rules(uid, ports, allow_lan, dns, gw=()):
+    """One nft transaction: this service's own chain, reached through a uid -> chain map from the output hook. Its
+    traffic can't reach 127.0.0.1 (Windows' own, in mirrored networking) apart from its own ports, cloud metadata,
+    or (unless allow_lan) your network and this PC through WSL's gateway. Replies to connections it accepted pass."""
+    c = f"svc{int(uid)}"
+    r = [
+        f"add table {TABLE}",
+        f"add map {TABLE} svcs {{ type uid : verdict; }}",
+        f"add chain {TABLE} output {{ type filter hook output priority 0; policy accept; }}",
+        f"flush chain {TABLE} output",
+        f"add rule {TABLE} output meta skuid vmap @svcs",
+        f"add chain {TABLE} {c}",
+        f"flush chain {TABLE} {c}",
+        f"add rule {TABLE} {c} ct state established,related accept",
+    ]
+    for m in _daddr(dns):
+        r.append(f"add rule {TABLE} {c} {m} meta l4proto {{ tcp, udp }} th dport 53 accept")
+    own = ", ".join(str(int(p)) for p in ports if 0 < int(p) < 65536)
+    if own:
+        r.append(f"add rule {TABLE} {c} fib daddr type local tcp dport {{ {own} }} accept")
+    # Every address of this machine, not only 127.0.0.1: in mirrored networking WSL has the PC's own addresses.
+    r.append(f"add rule {TABLE} {c} fib daddr type local {REJECT}")
+    blocked = ["127.0.0.0/8", "::1", *METADATA, *(() if allow_lan else (*PRIVATE, *gw))]
+    r += [f"add rule {TABLE} {c} {m} {REJECT}" for m in _daddr(blocked)]
+    r.append(f"add element {TABLE} svcs {{ {int(uid)} : jump {c} }}")
+    return "\n".join(r) + "\n"
+
+def firewall(uid, ports, allow_lan):
+    """Traffic Anywhere shares WSL's network, so the block is per user id: each service runs as its own."""
+    if not os.path.exists(NFT):
+        die("Traffic Anywhere needs the firewall in Pythonator's WSL (nftables). Run System check → WSL → Set up again.")
+    done = subprocess.run([NFT, "-f", "-"], input=firewall_rules(uid, ports, allow_lan, nameservers(), gateways()),  # noqa: S603
+                          capture_output=True, text=True)
+    if done.returncode != 0:
+        die(f"the firewall couldn't be set: {done.stderr.strip()[:300]}")
+
+def unfirewall(uid):
+    if os.path.exists(NFT):
+        for cmd in (f"delete element {TABLE} svcs {{ {int(uid)} }}", f"delete chain {TABLE} svc{int(uid)}"):
+            subprocess.run([NFT, cmd], capture_output=True, check=False)  # noqa: S603 - absent is fine
 
 def gate_uid(name):
     return 60001 + zlib.crc32(name.encode()) % 4000
@@ -235,6 +322,8 @@ def run(cfg):
         mount(path, target, uid, write)
         binds += ["--bind" if write else "--ro-bind", target, f"/data/{i}"]
     limit(name, int(cfg["memory_mb"]), float(cfg["cpu"]), int(cfg["tasks"]))
+    if cfg.get("net"):
+        firewall(uid, [int(p) for p in cfg.get("ports", [])], bool(cfg.get("allow_lan")))
     g = cfg.get("gate")
     sock = start_gate(name, uid, g) if g else ""
     b = ["/usr/bin/bwrap", "--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-uts", "--unshare-cgroup-try"]

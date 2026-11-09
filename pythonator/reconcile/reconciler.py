@@ -778,6 +778,9 @@ class Reconciler:
             while name in self.runs:
                 await asyncio.sleep(0.05)
         await self._revoke_grants(name)
+        spec = self.specs.get(name)
+        for k in spec.secrets if spec else ():  # a new service with this name must not inherit them
+            await asyncio.to_thread(secrets.delete, name, k)
         for e in self.ledger.live("network", name):
             exe = resolve(e.extra.get("engine", "docker"))
             if exe and await _quiet(exe, "network", "rm", e.ref, timeout=60) == 0:
@@ -810,6 +813,9 @@ class Reconciler:
             lg.close()
         if (self.root / "logs" / old).is_dir():
             (self.root / "logs" / old).rename(self.root / "logs" / new)
+        for k in spec.secrets:  # secrets follow the service; remove() then deletes the old names
+            if (v := await asyncio.to_thread(secrets.get, old, k)) is not None:
+                await asyncio.to_thread(secrets.put, new, k, v)
         await self.remove(old)
         saved = self.store.save(moved)
         if approved:

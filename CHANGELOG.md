@@ -3,6 +3,40 @@
 All notable changes are recorded here, in the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 Dates are UTC.
 
+## [0.0.2] · 2026-11-09
+
+Security fixes from the audit of 0.0.1-alpha.
+
+### Security
+
+- WSL mode, Traffic Anywhere: a service shared WSL's network, so it could reach your local network, this PC (through
+  WSL's gateway, or Windows' own `127.0.0.1` with mirrored networking) and cloud metadata, while its plan said
+  Windows' `127.0.0.1` wasn't reachable. Each service now gets its own firewall in Pythonator's WSL (nftables,
+  matched to the service's own Linux user): this PC's addresses are closed apart from the service's own ports, cloud
+  metadata is always closed, and your network is closed unless *Allow my local network* is on. DNS and replies to
+  the service's own clients still pass. If the firewall can't be set, the service doesn't start. The first start
+  after the update installs nftables in Pythonator's WSL (or run System check → WSL → Set up again). No admin
+  prompt, and the rules are one table lookup per packet.
+- macOS Sandbox and Container mode: the plan now says that Traffic Anywhere reaches your local network. Seatbelt
+  and the container engines can't block addresses for one program without admin rights; use Allowed hosts (macOS)
+  or Sandbox mode (Linux) to keep a service off your network. Linux Sandbox and Windows Sandbox already block it
+  for each service (network namespace with blackhole routes; AppContainer without the private-network capability).
+- Linux Sandbox: a service could create a set-user-ID or set-group-ID file through `creat()`, `mknod()` or
+  `mknodat()`, which another local account could then run as you. The seccomp filter now refuses those modes, as
+  0.0.19 did (a regression in the rewrite).
+- New project from a plugin template: a template could write `.git/` (for example `core.fsmonitor` in
+  `.git/config`), which your shell, editor or git app would run as you when it opened the folder. Templates can no
+  longer write `.git`, `.hg`, `.svn`, `.bzr` or `_darcs`.
+- Removing a service now deletes its secrets from the keychain, so a new service with the same name doesn't inherit
+  them. Renaming a service moves its secrets to the new name (they used to stay behind).
+
+### Fixed
+
+- Allowed hosts: a request for a port outside 1-65535 is answered "400 Bad port" instead of failing inside the gate.
+- Plugins: a `services.logs` call with a `start` or `count` that isn't a whole number is refused with `PLG-ARG`
+  instead of stopping the plugin from answering.
+- Notify (0.0.2): "unhealthy" alerts never fired, because the health state reads "failing 2/3", not "failing".
+
 ## [0.0.1] · 2026-11-09
 
 The first release of the rewrite: a new codebase around a background service, a policy compiler and approved

@@ -673,7 +673,11 @@ class PluginHost:
         if method == "services.logs":
             if target is None:
                 return {"error": {"code": "PLG-ARG", "message": "service is required"}}
-            return {"result": self.api.logs(target, int(params.get("start", -1)), min(int(params.get("count", 100)), 500))}
+            try:
+                start, count = int(params.get("start", -1)), max(0, min(int(params.get("count", 100)), 500))
+            except (TypeError, ValueError, OverflowError):
+                return {"error": {"code": "PLG-ARG", "message": "start and count must be whole numbers"}}
+            return {"result": self.api.logs(target, start, count)}
         if method == "ui.notify":
             self.api.emit(
                 "notify",

@@ -36,6 +36,7 @@ from pythonator.store.events import SecurityLog
 from pythonator.store.files import data_dir, write_atomic
 
 STATS_EVERY_S = 1.0
+VCS_DIRS = frozenset({".git", ".hg", ".svn", ".bzr", "_darcs"})  # a template never writes these: hooks, fsmonitor
 
 class Client:
     def __init__(self, writer: asyncio.StreamWriter) -> None:
@@ -569,8 +570,9 @@ class Daemon:
         if len(files) > 200 or total > 2 * 1024 * 1024:
             raise Refused("TPL-003", "The template is too big (200 files, 2 MB at most).")
         for rel in files:
-            if not isinstance(rel, str) or rel.startswith(("/", "\\")) or ".." in rel.replace("\\", "/").split("/") \
-                    or ":" in rel:
+            parts = [x.rstrip(" .").lower() for x in rel.replace("\\", "/").split("/")] if isinstance(rel, str) else []
+            if not isinstance(rel, str) or rel.startswith(("/", "\\")) or ".." in parts or ":" in rel \
+                    or any(x in VCS_DIRS for x in parts):
                 raise Refused("TPL-004", f"The template has a bad path: {rel!r}.")
         target.mkdir(parents=True, exist_ok=True, mode=0o755)
         for rel, text in sorted(files.items()):

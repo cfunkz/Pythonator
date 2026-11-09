@@ -5,7 +5,7 @@ description: A service manager for your own computer. Web applications, APIs, wo
 url: https://cfunkz.github.io
 baseurl: /Pythonator
 repository: cfunkz/Pythonator
-version: 0.0.1-alpha  # the release the download links point at (its tag without the v); the release workflow checks it
+version: 0.0.2-alpha  # the release the download links point at (its tag without the v); the release workflow checks it
 layouts_dir: website/_layouts
 includes_dir: website/_includes
 markdown: kramdown

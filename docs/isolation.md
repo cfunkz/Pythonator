@@ -50,7 +50,7 @@ fails when this table and the code disagree.
 | Files: folder only | refused (RUN-WSL-001) | refused (RUN-WSL-001) | enforced · bubblewrap in Pythonator's WSL |
 | Syscall filter | refused (RUN-WSL-001) | refused (RUN-WSL-001) | enforced · seccomp · no_new_privs · no capabilities |
 | Traffic: allowed hosts | refused (RUN-WSL-001) | refused (RUN-WSL-001) | enforced · own namespace + egress gate in WSL |
-| Block 127.0.0.1 programs | refused (RUN-WSL-001) | refused (RUN-WSL-001) | enforced · WSL virtual machine |
+| Block 127.0.0.1 programs | refused (RUN-WSL-001) | refused (RUN-WSL-001) | enforced · nftables for this service's user |
 | Ports: this computer / LAN | refused (RUN-WSL-001) | refused (RUN-WSL-001) | reduced · WSL localhost forwarding |
 
 #### Full access

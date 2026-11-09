@@ -167,7 +167,7 @@ class Gate:
         connect = method.upper() == "CONNECT"
         if connect:
             host, _, p = target.rpartition(":")
-            port = int(p) if p.isdigit() else 443
+            port = int(p) if p.isdigit() and len(p) <= 5 else 443
         else:
             from urllib.parse import urlsplit
 
@@ -175,7 +175,14 @@ class Gate:
             if u.scheme != "http" or not u.hostname:
                 await _reply(w, 400, "Only http:// requests and CONNECT go through the gate")
                 return
-            host, port = u.hostname, u.port or 80
+            try:
+                host, port = u.hostname, u.port or 80
+            except ValueError:  # a port outside 0-65535
+                await _reply(w, 400, "Bad port")
+                return
+        if not 0 < port < 65536:
+            await _reply(w, 400, "Bad port")
+            return
         host = host.strip("[]")
         why = literal_why(host, sg.rule.allow_lan)
         if why:
@@ -188,7 +195,7 @@ class Gate:
             return
         try:
             infos = await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
-        except OSError:
+        except (OSError, UnicodeError, ValueError):
             self._note(sg, host, port, "failed", "no such host")
             await _reply(w, 502, f"Can't resolve {host}")
             return
@@ -199,7 +206,7 @@ class Gate:
             return
         try:
             ur, uw = await asyncio.wait_for(asyncio.open_connection(ip, port), CONNECT_TIMEOUT_S)
-        except (OSError, TimeoutError):
+        except (OSError, TimeoutError, OverflowError, ValueError):
             self._note(sg, host, port, "failed", "connection failed")
             await _reply(w, 502, f"Can't connect to {host}")
             return

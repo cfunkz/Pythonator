@@ -504,3 +504,53 @@ def test_window_at_login_writes_only_our_own_entry(tmp_path, monkeypatch):
     entry = (tmp_path / "autostart" / "pythonator.desktop").read_text()
     assert f'Exec="{sys.executable}" -m pythonator --tray' in entry
     assert osservice.window_at_login(False) is False and not (tmp_path / "autostart" / "pythonator.desktop").exists()
+
+
+def test_no_set_user_id_file_through_creat_or_mknod():
+    from pythonator.jail.launcher import seccomp_rules
+
+    named = {(name, cmp[0][0], cmp[0][2]) for _act, name, cmp in seccomp_rules(False) if cmp}
+    for name, arg in (("creat", 1), ("mknod", 1), ("mknodat", 2)):
+        assert {(name, arg, 0o4000), (name, arg, 0o2000)} <= named
+
+
+def test_notify_sees_failing_health_as_the_reconciler_reports_it():
+    import inspect
+
+    from pythonator.reconcile import reconciler
+
+    assert 'f"failing {' in inspect.getsource(reconciler)
+    src = (Path(__file__).parents[1] / "pythonator/resources/plugins/notify/main.py").read_text(encoding="utf-8")
+    assert '.startswith("failing")' in src
+
+
+def test_wsl_firewall_closes_this_pc_lan_and_metadata_for_one_service_user():
+    import ipaddress
+
+    from pythonator.jail import wslrun
+
+    rules = wslrun.firewall_rules(23456, [8000], False, [ipaddress.ip_address("10.255.255.254")])
+    assert "meta skuid vmap @svcs" in rules and "svcs { 23456 : jump svc23456 }" in rules
+    assert "ct state established,related accept" in rules  # replies to its own clients pass
+    lines = rules.splitlines()
+    dns = next(i for i, x in enumerate(lines) if "th dport 53 accept" in x)
+    own = next(i for i, x in enumerate(lines) if "fib daddr type local tcp dport { 8000 } accept" in x)
+    local = next(i for i, x in enumerate(lines) if x.endswith("fib daddr type local reject with icmpx type admin-prohibited"))
+    lan = next(i for i, x in enumerate(lines) if "192.168.0.0/16" in x and "reject" in x)
+    assert dns < own < local < lan
+    assert "169.254.0.0/16" in rules
+    lan_ok = wslrun.firewall_rules(23456, [], True, [])
+    assert "192.168.0.0/16" not in lan_ok and "169.254.0.0/16" in lan_ok and "fib daddr type local reject" in lan_ok
+
+
+def test_wsl_firewall_refuses_to_start_without_nftables(monkeypatch):
+    from pythonator.jail import wslrun
+
+    monkeypatch.setattr(wslrun, "NFT", "/nonexistent/nft")
+
+    def died(msg):
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(wslrun, "die", died)
+    with pytest.raises(RuntimeError, match="nftables"):
+        wslrun.firewall(23456, [], False)

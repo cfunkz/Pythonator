@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pythonator"
-version = "0.0.1"
+version = "0.0.2"
 description = "A service manager that runs each of your services (apps, workers, databases) in a jail on your own computer, with a window, a CLI and plugins."
 readme = "README.md"
 license = "GPL-3.0-or-later"

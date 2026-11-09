@@ -23,7 +23,7 @@ appendWindowsPath = false
 [user]
 default = root
 """
-PACKAGES = "bubblewrap libseccomp2 python3 python3-venv nodejs npm golang-go default-jre-headless ruby cargo ca-certificates"
+PACKAGES = "bubblewrap libseccomp2 nftables python3 python3-venv nodejs npm golang-go default-jre-headless ruby cargo ca-certificates"
 
 def _run(argv: list[str], data: bytes | None = None, timeout: float = 900) -> tuple[int, str]:
     done = subprocess.run(  # noqa: S603 - wsl.exe by its System32 path, fixed arguments
@@ -86,9 +86,9 @@ def setup(wsl: str, data_dir: Path, say: Callable[[str], None]) -> tuple[bool, s
     ok, msg = _install_files(wsl)
     if not ok:
         return False, msg
-    code, out = _run([*root, "/bin/sh", "-c", "! grep -q ' /mnt/c ' /proc/mounts && test -x /usr/bin/bwrap"], timeout=60)
+    code, out = _run([*root, "/bin/sh", "-c", "! grep -q ' /mnt/c ' /proc/mounts && test -x /usr/bin/bwrap && test -x /usr/sbin/nft"], timeout=60)
     if code != 0:
-        return False, "The distribution still sees your C: drive or has no bubblewrap; setup didn't take. Run it again."
+        return False, "The distribution still sees your C: drive or has no bubblewrap or nftables; setup didn't take. Run it again."
     (home / "ready").write_text(digest(), encoding="ascii")
     return True, "WSL mode is ready: Pythonator's own Debian, no drives mounted, no Windows interop."
 
@@ -125,6 +125,10 @@ def refresh(wsl: str, data_dir: Path) -> bool:
     except OSError:
         return False
     ok, _msg = _install_files(wsl)
+    # 0.0.2: Traffic Anywhere needs nftables (each service's firewall). Until it's there, such a service refuses to start.
+    _run([wsl, "--distribution", DISTRO, "--user", "root", "--exec", "/bin/sh", "-c",
+          "test -x /usr/sbin/nft || (apt-get update -q && apt-get install -y -q --no-install-recommends nftables)"],
+         timeout=300)
     if ok:
         marker.write_text(digest(), encoding="ascii")
     return ok

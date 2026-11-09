@@ -470,7 +470,8 @@ def compile_container(spec: ServiceSpec, host: HostFacts, engine: str = "podman"
             Layer("syscalls", "Syscalls", Status.ENFORCED, f"{engine} default seccomp · no capabilities"),
             Layer(
                 "network", "Network", Status.ENFORCED, "none" if t.mode == "off" else f"{engine} network",
-                "No network." if t.mode == "off" else "Anywhere.",
+                "No network." if t.mode == "off" else "Anywhere, and your local network: the engine owns the network, so "
+                "Pythonator can't block it for one container. Use Sandbox mode or Traffic Off to keep it off your network.",
             ),
             Layer(
                 "loopback",
@@ -696,7 +697,8 @@ def compile_darwin(spec: ServiceSpec, host: HostFacts) -> Jail:
                 "Seatbelt profile",
                 {
                     "off": "No network at all.",
-                    "any": "Anywhere on the internet.",
+                    "any": "Anywhere on the internet, and your local network: Seatbelt can't block addresses for one "
+                    "program. Use Allowed hosts to keep it off your network.",
                     "hosts": f"Only {', '.join(t.hosts)}, through the gate.",
                 }[t.mode],
             ),
@@ -754,6 +756,8 @@ def compile_wsl(spec: ServiceSpec, host: HostFacts) -> Jail:
         "folder": spec.folder,
         "folders": [[g.path, g.write] for g in spec.folders],
         "net": t.mode == "any",
+        "ports": [p.port for p in ports],  # its own ports stay reachable on 127.0.0.1 through the firewall
+        "allow_lan": t.allow_lan,
         "gate": {"hosts": list(t.hosts), "allow_lan": t.allow_lan, "port": GATE_PORT, "key": GATE_KEY_SLOT}
         if t.mode == "hosts"
         else None,
@@ -785,12 +789,17 @@ def compile_wsl(spec: ServiceSpec, host: HostFacts) -> Jail:
                 "network",
                 "Network",
                 Status.ENFORCED,
-                {"off": "own network namespace", "hosts": "own namespace + egress gate in WSL"}.get(t.mode, "WSL network"),
+                {"off": "own network namespace", "hosts": "own namespace + egress gate in WSL"}.get(
+                    t.mode, "WSL network + nftables for this service's user"),
                 {"off": "No network at all.", "hosts": f"Only {', '.join(t.hosts) or 'no hosts yet'}; every attempt is logged."}.get(
-                    t.mode, "Anywhere on the internet."),
+                    t.mode, "Anywhere on the internet" + (" and your local network" if t.allow_lan else
+                                                           "; not your network or this PC") + "; never cloud metadata."),
             ),
             Layer(
-                "loopback", "Programs on 127.0.0.1", Status.ENFORCED, "WSL virtual machine", "Windows' 127.0.0.1 isn't reachable."
+                "loopback", "Programs on this computer", Status.ENFORCED,
+                "own network namespace" if t.mode != "any" else "nftables for this service's user",
+                "Unreachable." if t.mode != "any" else
+                "127.0.0.1 and this PC's own addresses are closed, apart from this service's own ports.",
             ),
             Layer(
                 "ports", "Ports", Status.ENFORCED if ports else Status.OFF,

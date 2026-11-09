@@ -97,6 +97,8 @@ def seccomp_rules(block_net):
             for k in (0o100, 0o20000000)
             for b in (0o4000, 0o2000)
         ]
+    for name, mode in (("creat", 1), ("mknod", 1), ("mknodat", 2)):  # creat() is open(O_CREAT) without the flag
+        r += [(errno_(1), name, [(mode, MASKED_EQ, b, b)]) for b in (0o4000, 0o2000)]
     if block_net:  # every family but Unix (1) and netlink (16)
         r += [(errno_(13), "socket", [(0, MASKED_EQ, LOW32, f)]) for f in range(2, 16)]
         r.append((errno_(13), "socket", [(0, GT, 16, 0)]))

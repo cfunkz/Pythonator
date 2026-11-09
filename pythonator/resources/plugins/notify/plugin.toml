@@ -1,7 +1,7 @@
 [plugin]
 id = "notify"
 name = "Notify"
-version = "0.0.1"
+version = "0.0.2"
 publisher = "Pythonator (official)"
 description = "Crash alerts in the window, and optionally to a webhook (Slack, Discord, ntfy or Pushover)."
 entry = "main.py"

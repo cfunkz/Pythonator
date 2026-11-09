@@ -11,7 +11,7 @@
   "/usr/bin/python3",
   "-I",
   "/usr/local/lib/pythonator/wslrun.py",
-  "{\"name\":\"api\",\"folder\":\"C:\\\\Users\\\\me\\\\services\\\\api\",\"folders\":[],\"net\":false,\"gate\":{\"hosts\":[\"api.example.com\"],\"allow_lan\":false,\"port\":3128,\"key\":\"@pythonator-gate-key@\"},\"memory_mb\":256,\"cpu\":1.0,\"tasks\":128,\"argv\":[\"python3\",\"-u\",\"main.py\"],\"env_keys\":[\"PYTHONATOR_SERVICE\",\"PYTHONIOENCODING\",\"PYTHONUNBUFFERED\",\"TERM\"]}"
+  "{\"name\":\"api\",\"folder\":\"C:\\\\Users\\\\me\\\\services\\\\api\",\"folders\":[],\"net\":false,\"ports\":[],\"allow_lan\":false,\"gate\":{\"hosts\":[\"api.example.com\"],\"allow_lan\":false,\"port\":3128,\"key\":\"@pythonator-gate-key@\"},\"memory_mb\":256,\"cpu\":1.0,\"tasks\":128,\"argv\":[\"python3\",\"-u\",\"main.py\"],\"env_keys\":[\"PYTHONATOR_SERVICE\",\"PYTHONIOENCODING\",\"PYTHONUNBUFFERED\",\"TERM\"]}"
  ],
  "env": {
   "TERM": "dumb",
@@ -50,7 +50,7 @@
   [
    "loopback",
    "enforced",
-   "WSL virtual machine"
+   "own network namespace"
   ],
   [
    "ports",

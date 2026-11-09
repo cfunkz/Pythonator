@@ -56,7 +56,7 @@ def changed(ev):
     name = ev.get("name", "?")
     on = set(plugin.settings.get("on", WORDS))
     state = ev.get("phase", "")
-    if ev.get("health") == "failing":
+    if str(ev.get("health") or "").startswith("failing"):
         state = "unhealthy"
     if LAST.get(name) == state:
         return
