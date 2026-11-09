@@ -35,6 +35,15 @@ Security fixes from the audit of 0.0.1-alpha.
 - Allowed hosts: a request for a port outside 1-65535 is answered "400 Bad port" instead of failing inside the gate.
 - Plugins: a `services.logs` call with a `start` or `count` that isn't a whole number is refused with `PLG-ARG`
   instead of stopping the plugin from answering.
+- Updating over 0.0.1, or running from source next to an installed copy: the window connected to the older background
+  service it found. It now asks that one to stop and starts its own, and your services restart with it. A window
+  run from source starts the background service from the same source.
+- Ctrl+C in a terminal now closes the window, and the close button quits instead of hiding to the tray while the
+  background service isn't connected. The background service now stops even while a window is still connected.
+- The window retries the background service at a slowing pace instead of every 300 ms, and Qt's
+  "QObject::disconnect: wildcard call disconnects from destroyed signal of QNativeSocketEngine" lines are no longer
+  printed on Windows.
+- WSL: installing nftables in a distribution set up by 0.0.1 no longer holds up the background service's start.
 - Notify (0.0.2): "unhealthy" alerts never fired, because the health state reads "failing 2/3", not "failing".
 
 ## [0.0.1] · 2026-11-09

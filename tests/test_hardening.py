@@ -554,3 +554,30 @@ def test_wsl_firewall_refuses_to_start_without_nftables(monkeypatch):
     monkeypatch.setattr(wslrun, "die", died)
     with pytest.raises(RuntimeError, match="nftables"):
         wslrun.firewall(23456, [], False)
+
+
+def test_the_window_backs_off_while_the_background_service_is_starting(qtbot, tmp_path, monkeypatch):
+    from pythonator.service import ipc
+    from pythonator.ui import link
+
+    monkeypatch.setattr(ipc, "spawn_daemon", lambda: None)
+    lk = link.Link(tmp_path)
+    for _ in range(6):
+        lk._error(None)
+    assert lk._retry.interval() == link.RETRY_MS[1]
+
+
+def test_qt_socket_noise_is_dropped_and_other_messages_kept(capsys):
+    from pythonator.ui import app
+
+    app._qt_message(None, None, "QObject::disconnect: wildcard call disconnects from destroyed signal of QNativeSocketEngine::unnamed")
+    app._qt_message(None, None, "something real")
+    err = capsys.readouterr().err
+    assert "QNativeSocketEngine" not in err and "something real" in err
+
+
+def test_an_older_background_service_is_replaced_never_a_newer_one():
+    from pythonator.ui.app import _older
+
+    assert _older("0.0.1", "0.0.2") and _older("0.0.9", "0.1.0") and _older("0.0.1", "0.0.2-alpha")
+    assert not _older("0.0.2", "0.0.2") and not _older("0.1.0", "0.0.9") and not _older("dev", "0.0.2")

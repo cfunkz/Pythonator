@@ -95,6 +95,11 @@ def spawn_daemon() -> None:
         kw["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW
     else:
         kw["start_new_session"] = True
+    # The window moved into the data folder (process.harden), so `-m` won't find a source checkout: a window run from
+    # source (`python -m pythonator` in the repo) passes its own code on, never an installed copy's.
+    src = Path(__file__).resolve().parents[2]
+    if (src / "pyproject.toml").is_file() and (src / "pythonator" / "__init__.py").is_file():
+        kw["env"] = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, (str(src), os.environ.get("PYTHONPATH"))))}
     subprocess.Popen([sys.executable, "-m", "pythonator.service.daemon"], **kw)  # noqa: S603 - our own interpreter
 
 class RpcError(Exception):

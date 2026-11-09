@@ -125,13 +125,17 @@ def refresh(wsl: str, data_dir: Path) -> bool:
     except OSError:
         return False
     ok, _msg = _install_files(wsl)
-    # 0.0.2: Traffic Anywhere needs nftables (each service's firewall). Until it's there, such a service refuses to start.
-    _run([wsl, "--distribution", DISTRO, "--user", "root", "--exec", "/bin/sh", "-c",
-          "test -x /usr/sbin/nft || (apt-get update -q && apt-get install -y -q --no-install-recommends nftables)"],
-         timeout=300)
     if ok:
         marker.write_text(digest(), encoding="ascii")
     return ok
+
+def ensure_firewall(wsl: str) -> bool:
+    """0.0.2: Traffic Anywhere needs nftables (each service's firewall) in a distribution set up by 0.0.1. Runs in
+    the background after the start; until it's there, such a service refuses to start and says why."""
+    code, _out = _run([wsl, "--distribution", DISTRO, "--user", "root", "--exec", "/bin/sh", "-c",
+                       "test -x /usr/sbin/nft || (apt-get update -q && apt-get install -y -q --no-install-recommends nftables)"],
+                      timeout=300)
+    return code == 0
 
 def remove(wsl: str, data_dir: Path) -> tuple[bool, str]:
     code, out = _run([wsl, "--unregister", DISTRO], timeout=120)

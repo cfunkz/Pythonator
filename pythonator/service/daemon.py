@@ -67,6 +67,7 @@ class Daemon:
         self._stop = asyncio.Event()
         self._last_stats: dict[str, float] = {}
         self.engines: dict[str, str] = {}
+        self._firewall_job: asyncio.Future[bool] | None = None  # WSL: nftables for 0.0.1 distributions
         self._engines_probed = 0.0
 
     # events -----------------------------------------------------------------------------------------------------
@@ -894,6 +895,8 @@ class Daemon:
                 self.rec.host = self.plugins.host = self.host
             else:
                 await asyncio.to_thread(wslsetup.refresh, self.host.wsl, self.root)
+                if self._firewall_job is None:  # once per start, without holding it up
+                    self._firewall_job = asyncio.ensure_future(asyncio.to_thread(wslsetup.ensure_firewall, self.host.wsl))
         for name, path in (("podman", self.host.podman), ("docker", self.host.docker)):
             if path:
                 self.engines[name] = await check.engine_version(path)
@@ -935,6 +938,8 @@ class Daemon:
                 loop.add_signal_handler(sig, self._stop.set)
         async with server:
             await self._stop.wait()
+            for c in list(self.clients):  # a connected window would otherwise hold the close (wait_closed) open
+                c.writer.close()
         await self.plugins.close()
         await self.rec.close()
         marker.unlink(missing_ok=True)

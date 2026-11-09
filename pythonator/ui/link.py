@@ -5,6 +5,7 @@ it; closing the window never stops it."""
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,7 @@ from PyQt6.QtNetwork import QAbstractSocket, QLocalSocket, QTcpSocket
 from pythonator.service import ipc
 
 Callback = Callable[[Any, dict[str, Any] | None], None]  # (result, error)
+RETRY_MS = (300, 2000)  # first retry, then doubling up to this while the background service isn't answering
 
 class Link(QObject):
     connected = pyqtSignal()
@@ -35,9 +37,10 @@ class Link(QObject):
         self._next = 1
         self._pending: dict[int, Callback] = {}
         self._queue: list[bytes] = []
-        self._spawned = False
+        self._spawned = self._restarted = False
+        self._gone_by = 0.0
         self.daemon_version = ""
-        self._retry = QTimer(self, singleShot=True, interval=300)
+        self._retry = QTimer(self, singleShot=True, interval=RETRY_MS[0])
         self._retry.timeout.connect(self.open)
 
     @property
@@ -52,6 +55,12 @@ class Link(QObject):
         )
         if not idle:
             return
+        if self._gone_by:
+            marker = ipc.port_path(self.root) if self.tcp else ipc.socket_path(self.root)
+            if marker.exists() and time.monotonic() < self._gone_by:  # the old background service is still closing
+                self._retry.start()
+                return
+            self._gone_by = 0.0  # it's gone: from here on the marker is the new one's
         self._stage = "hello"
         self._buf = b""
         if isinstance(self.sock, QTcpSocket):
@@ -70,6 +79,7 @@ class Link(QObject):
             ipc.spawn_daemon()
         self._stage = "closed"
         self._retry.start()
+        self._retry.setInterval(min(self._retry.interval() * 2, RETRY_MS[1]))  # the next one waits longer
 
     def _lost(self) -> None:
         was = self._stage == "ready"
@@ -111,6 +121,7 @@ class Link(QObject):
                 self.sock.abort()  # not our daemon
                 return
             self._stage = "ready"
+            self._retry.setInterval(RETRY_MS[0])
             for q in self._queue:
                 self.sock.write(q)
             self._queue.clear()
@@ -122,6 +133,17 @@ class Link(QObject):
         cb = self._pending.pop(msg.get("id", -1), None)
         if cb:
             cb(msg.get("result"), msg.get("error"))
+
+    def restart_daemon(self) -> bool:
+        """Ask the running background service to stop; the reconnect then starts this version's own."""
+        if self._restarted:  # once per window: never a loop if the new one reports an old version too
+            return False
+        self._restarted, self._spawned = True, False
+        # Hang up after the answer: 0.0.1 waits for its connections to close before it exits. Then wait for it to
+        # remove its port file (its last step) before starting the new one, so it can't remove the new one's.
+        self._gone_by = time.monotonic() + 15
+        self.call("shutdown", lambda _r, _e: self.sock.abort())
+        return True
 
     def call(self, method: str, cb: Callback | None = None, **params: Any) -> None:
         rid = self._next

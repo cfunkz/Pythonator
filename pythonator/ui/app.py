@@ -140,7 +140,8 @@ class Main(QMainWindow):
         pop.show_near(self.app_btn)
 
     def closeEvent(self, e: Any) -> None:
-        if self.tray is not None and not self.quitting and pref("tray"):
+        # To the tray only while connected: with no background service there is nothing to keep watching.
+        if self.tray is not None and not self.quitting and pref("tray") and self.link.ready:
             e.ignore()
             self.hide()
             self.tray.showMessage("Pythonator", "Pythonator is still running in the system tray, and your services "
@@ -391,6 +392,12 @@ class Main(QMainWindow):
         QTimer.singleShot(30_000, self._not_started)
 
     def _connected(self) -> None:
+        if self.link.daemon_version and _older(self.link.daemon_version, __version__) and self.link.restart_daemon():
+            # An update (or a run from source next to an installed copy): the old background service gives way, the
+            # new one starts and picks your services up from its ledger, as the installer does.
+            self.toast("info", "Background service", f"Updating it from {self.link.daemon_version} to {__version__}; "
+                       "your services restart with it.")
+            return
         if self.link.daemon_version and self.link.daemon_version != __version__:
             self.toast("warn", "Background service", f"is version {self.link.daemon_version}, this window is "
                        f"{__version__}. Run the installer again to restart it.")
@@ -787,6 +794,20 @@ class _Bridge(QObject):
 
     said = pyqtSignal(str)
 
+# Qt on Windows prints this for every failed connect while the background service is starting; it means nothing.
+_QT_NOISE = ("wildcard call disconnects from destroyed signal of QNativeSocketEngine",)
+
+def _qt_message(_kind: object, _ctx: object, text: str | None) -> None:
+    if text and not any(n in text for n in _QT_NOISE):
+        sys.stderr.write(text + "\n")
+
+def _older(a: str, b: str) -> bool:
+    """Whether version a is older than b (0.0.1 < 0.0.2 < 0.1.0); anything unreadable counts as not older."""
+    try:
+        return tuple(int(x) for x in a.split("-")[0].split(".")) < tuple(int(x) for x in b.split("-")[0].split("."))
+    except ValueError:
+        return False
+
 def pref(key: str) -> bool:
     """The app settings' switches, all on unless turned off."""
     return QSettings("Pythonator", "Pythonator").value(f"app/{key}", "on") == "on"
@@ -822,6 +843,15 @@ def main() -> int:
     process.install_hook(root / "window.log", bridge.said.emit)
     if hasattr(signal, "SIGHUP"):
         signal.signal(signal.SIGHUP, signal.SIG_IGN)  # the window is only a client: a closed terminal detaches it
+    # Ctrl+C in a terminal closes the window (the background service and your services keep running). Qt's loop
+    # doesn't run Python code by itself, so a quiet timer lets the handler in.
+    signal.signal(signal.SIGINT, lambda *_: app.quit())
+    from PyQt6.QtCore import QTimer, qInstallMessageHandler
+
+    tick = QTimer(app, interval=250)
+    tick.timeout.connect(lambda: None)
+    tick.start()
+    qInstallMessageHandler(_qt_message)
     if "--tray" not in sys.argv or w.tray is None:  # opened at login: only the tray icon
         w.show()
     return app.exec()
