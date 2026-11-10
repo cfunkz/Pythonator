@@ -136,7 +136,7 @@ class Console(QAbstractScrollArea):
         return next((r for r in page if r[0] == n), None)
 
     def paintEvent(self, _e: Any) -> None:
-        t = th.current()
+        t = th.DARK  # the console is navy in both themes, so its text uses the dark theme's colours
         p = QPainter(self.viewport())
         p.setFont(self.font_)
         w = self.viewport().width()
@@ -195,7 +195,7 @@ class Console(QAbstractScrollArea):
                 continue
             p.setFont(bold if strong else self.font_)
             fm = QFontMetrics(p.font())
-            p.setPen(QColor(base if col is None else th.tone(col[5:]) if col.startswith("tone:") else col))
+            p.setPen(QColor(base if col is None else th.tone(col[5:], t) if col.startswith("tone:") else col))
             pw = fm.horizontalAdvance(part)
             p.drawText(QRect(x, y, w - x, self.lh), Qt.AlignmentFlag.AlignVCenter,
                        part if x + pw <= w else fm.elidedText(part, Qt.TextElideMode.ElideRight, w - x))

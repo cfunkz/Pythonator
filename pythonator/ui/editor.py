@@ -340,7 +340,7 @@ def _bgr(c: QColor) -> int:
     return c.red() | (c.green() << 8) | (c.blue() << 16)
 
 def diff_html(path: str, line: int, old: str, new: str, width: int = 0) -> str:
-    t = th.current()
+    t = th.DARK  # shown on the console, which is navy in both themes
     rows = [f"<div style='color:{t.faint}'>@@ {esc(path)}:{line} @@</div>"]
     for d in difflib.ndiff(old.rstrip("\n").splitlines(), new.rstrip("\n").splitlines()):
         tag, body = d[:2], esc(d[2:]).replace(" ", "&nbsp;")
@@ -664,7 +664,8 @@ class EditorPage(QWidget):
             self.tabbar.setCurrentIndex(at)
         self.name = name
         self.spec = s["spec"]
-        self.svc_btn.setText(f"Files · {name}")
+        self.svc_btn.setText(name if len(name) <= 18 else name[:17] + "…")  # the rail already says Files
+        self.svc_btn.setToolTip(f"Files of {name}. Show another service's files")
         rt = RUNTIMES.get(self.spec.get("runtime", "python"))
         ver = self.spec.get("runtime_version", "")
         label_ = (rt.label if rt else self.spec.get("runtime", "")) + (f" {ver}" if ver else "")
@@ -939,10 +940,8 @@ class EditorPage(QWidget):
         if p is None:
             self.pop.hide()
             return
-        t = th.current()
         self.pop_text.setText(f"<span style='font-family:\"{th.MONO_FAMILY}\";font-size:12.5px'>ruff {esc(p['code'])} · "
                               f"<b>{esc(p['message'])}</b></span>")
-        self.pop.setStyleSheet(f"#Pop {{ background: {t.console}; border: 1px solid {t.border_strong}; border-radius: 6px; }}")
         self.pop.adjustSize()
         line, _c = p["line"] - 1, p["col"] - 1
         pos = self.editor.positionFromLineIndex(line, max(0, p["col"] - 1))

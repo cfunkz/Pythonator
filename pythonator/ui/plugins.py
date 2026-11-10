@@ -126,9 +126,8 @@ class PermRow(QFrame):
         txt = vbox(head, det, spacing=2)
         self.scope_chip = Chip(scope_text(perm, self.scope), "line", mono=False)
         if perm["scoped"]:
-            self.scope_chip.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.scope_chip.on_click(self.pick_scope)
             self.scope_chip.setToolTip("Pick which " + ("hosts" if perm["scope_kind"] == "hosts" else "services"))
-            self.scope_chip.clicked.connect(self.pick_scope)
         self.tog = Toggle(perm["granted"] is not None, "Granted" if perm["granted"] is not None else "Not granted")
         self.tog.setEnabled(perm["available"])
         self.tog.toggled.connect(lambda _on: self.on_change())
@@ -289,8 +288,7 @@ class InstallDialog(QDialog):
         foot = hbox(Icon("clock", "muted", 14), label(f"{act} · restarts up to 3 times if it crashes", "Small"), 1,
                     Btn("Cancel", on=self.reject), self.go, spacing=10, margins=(24, 14, 24, 16))
         top = frame("Row", head)
-        bottom = frame("", foot)
-        bottom.setStyleSheet(f"QFrame {{ border-top: 1px solid {t.border}; }} QLabel, QPushButton {{ border-top: 0; }}")
+        bottom = frame("TopRule", foot)
         self.setLayout(vbox(top, body, bottom, spacing=0))
         self._changed()
 
@@ -339,8 +337,7 @@ class PluginsPage(QWidget):
         self.c_upd = Chip("", "warn")
         self.c_run = Chip("", "line")
         for c, k in ((self.c_inst, ""), (self.c_upd, "update"), (self.c_run, "running")):
-            c.setCursor(Qt.CursorShape.PointingHandCursor)
-            c.clicked.connect(lambda k=k: self._only(k))
+            c.on_click(lambda k=k: self._only(k))
         self.items = QVBoxLayout()
         self.items.setSpacing(4)
         inner = QWidget()
@@ -356,8 +353,7 @@ class PluginsPage(QWidget):
                               tip="Turns plugins off half at a time and asks you whether the problem is still there")
         self.safe_btn = Btn("Safe mode", "power", "ghost", "sm", on=self.toggle_safe,
                             tip="Run no plugins at all until you turn it off")
-        foot = frame("", hbox(self.bisect_btn, 1, self.safe_btn, spacing=8, margins=(18, 12, 18, 14)))
-        foot.setStyleSheet(f"QFrame {{ border-top: 1px solid {th.current().border}; }} QPushButton {{ border-top: 0; }}")
+        foot = frame("TopRule", hbox(self.bisect_btn, 1, self.safe_btn, spacing=8, margins=(18, 12, 18, 14)))
         sl = vbox(hbox(label("Plugins", "H2"), 1, Btn("Install…", "download", size="sm", on=self.install_folder),
                        spacing=8, margins=(18, 18, 18, 0)),
                   frame("", vbox(self.search, margins=(18, 0, 18, 0))),
@@ -464,8 +460,8 @@ class PluginsPage(QWidget):
         f = QFrame()
         f.setObjectName("PRow")
         sel = pid == self.current
-        f.setStyleSheet(f"#PRow {{ border-radius: {th.RCARD}px; border: 1px solid "
-                        f"{t.border_strong if sel else 'transparent'}; background: {t.raised if sel else 'transparent'}; }}"
+        f.setStyleSheet(f"#PRow {{ border-radius: {th.RC}px; border: 0; border-left: 3px solid "
+                        f"{t.accent if sel else 'transparent'}; background: {t.raised2 if sel else 'transparent'}; }}"
                         f"#PRow:hover {{ background: {t.raised}; }}")
         f.setCursor(Qt.CursorShape.PointingHandCursor)
         nm = hbox(label(esc(name), "H3", rich=True), spacing=6)

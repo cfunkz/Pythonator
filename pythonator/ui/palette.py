@@ -108,8 +108,7 @@ class Palette(QFrame):
         self.edit.textChanged.connect(self._filter)
         self.edit.installEventFilter(self)
         self.count = Chip("", "line")
-        head = frame("", hbox(Icon("search", "text", 18), self.edit, self.count, spacing=12, margins=(18, 12, 14, 12)))
-        head.setStyleSheet(f"QFrame {{ border-bottom: 1px solid {t.border}; }} QLineEdit, QLabel {{ border: 0; }}")
+        head = frame("Row", hbox(Icon("search", "text", 18), self.edit, self.count, spacing=12, margins=(18, 12, 14, 12)))
         self.rows_box = vbox(spacing=2, margins=(10, 6, 10, 8))
         body = QWidget()
         body.setLayout(self.rows_box)
@@ -119,10 +118,9 @@ class Palette(QFrame):
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.scroll.setWidget(body)
         self.scroll.setStyleSheet("background: transparent;")
-        foot = frame("", hbox(Kbd("↑"), Kbd("↓"), label("move", "Muted"), 6, Kbd("↵"), label("run", "Muted"), 6,
+        foot = frame("TopRule", hbox(Kbd("↑"), Kbd("↓"), label("move", "Muted"), 6, Kbd("↵"), label("run", "Muted"), 6,
                               Kbd("Tab"), label("more actions", "Muted"), 6, Kbd("Esc"), label("close", "Muted"), 1,
                               label("every button has a palette entry", "Muted"), spacing=5, margins=(18, 10, 18, 10)))
-        foot.setStyleSheet(f"QFrame {{ border-top: 1px solid {t.border}; }} QLabel {{ border: 0; }}")
         self.setLayout(vbox(head, self.scroll, foot, spacing=0))
         self.entries = self._entries()
         self.stack: list[list[Entry]] = []

@@ -1,7 +1,8 @@
-"""The look, as one set of tokens: navy and chartreuse (dark) or paper and navy (light), from the final design.
+"""The look, as one set of tokens: graphite (dark) or aluminium (light), cool neutral greys with one steel-blue accent.
 Fonts are bundled (Space Grotesk for text, IBM Plex Mono for code and numbers, both SIL OFL), so the window looks the
-same on every OS. Corners are 6 px on controls and 8 px on panels; only status dots, layer rings and step numbers are
-round. One solid colour per control, no gradients. Widgets never hard-code a colour: they read `current()`."""
+same on every OS. Corners are 4 px on controls and 6 px on panels; only status dots, layer rings and step numbers are
+round. One solid colour per control, no gradients. Widgets never hard-code a colour: they read `current()`. Text
+tokens meet WCAG AA (4.5:1) on the surfaces they sit on; the console is navy in both themes and paints with DARK."""
 
 from __future__ import annotations
 
@@ -42,20 +43,20 @@ class Tokens:
     console_text: str
     pop: str
 
-DARK = Tokens(
-    "dark", bg="#06172a", surface="#081c31", raised="#0b2540", raised2="#0f2d4b", border="#173550", border_strong="#245072",
-    text="#e3e9df", muted="#93a7b1", faint="#557287", chip="#0d2a45", accent="#c0d070", accent_ink="#06172a",
-    accent_text="#d4e28c", ok="#a9cf6a", warn="#e5b54e", bad="#e2705f", info="#8dbfd3", m_sandbox="#c0d070",
-    m_container="#6fb0cf", m_wsl="#b9a3e0", m_full="#e5b54e", console="#041120", console_text="#dfe6dc", pop="#0d2945",
+DARK = Tokens(  # graphite: cool neutral greys, one steel-blue accent, muted status colours
+    "dark", bg="#0e1013", surface="#121519", raised="#171b20", raised2="#1f242b", border="#272d35", border_strong="#3a424d",
+    text="#e4e7eb", muted="#9ba4ae", faint="#808a95", chip="#1c2127", accent="#8fb8de", accent_ink="#0e1013",
+    accent_text="#9cc4e8", ok="#6cc08b", warn="#d8a84e", bad="#e37474", info="#8fb8de", m_sandbox="#6cc08b",
+    m_container="#7fb0d0", m_wsl="#b4a9d6", m_full="#d8a84e", console="#0a0c0f", console_text="#d8dde2", pop="#1a1f25",
 )
-LIGHT = Tokens(
-    "light", bg="#f4f1e8", surface="#fbf9f3", raised="#fffdf8", raised2="#ebe6d8", border="#ddd6c4", border_strong="#c9bfa6",
-    text="#142230", muted="#46535e", faint="#8a939a", chip="#ece7d9", accent="#003050", accent_ink="#f4f1e8",
-    accent_text="#0d5876", ok="#4f7a28", warn="#946300", bad="#b03a2e", info="#0d5876", m_sandbox="#6f7d3c",
-    m_container="#106080", m_wsl="#7a5aa8", m_full="#946300", console="#0a2238", console_text="#e3e9df", pop="#fffdf8",
+LIGHT = Tokens(  # aluminium: the same hues, darker for paper-white surfaces
+    "light", bg="#eceef1", surface="#f5f6f8", raised="#fbfbfc", raised2="#e2e6ea", border="#cfd4da", border_strong="#a9b1ba",
+    text="#14181d", muted="#48515b", faint="#5e6772", chip="#e5e8ec", accent="#1f5c94", accent_ink="#ffffff",
+    accent_text="#1f5c94", ok="#2b7647", warn="#855800", bad="#b03838", info="#1f5c94", m_sandbox="#2b7647",
+    m_container="#1d6585", m_wsl="#5c4a96", m_full="#855800", console="#0a0c0f", console_text="#d8dde2", pop="#ffffff",
 )
 
-RC, RCARD = 6, 8
+RC, RCARD = 4, 6
 UI_FAMILY, MONO_FAMILY = "Space Grotesk", "IBM Plex Mono"
 _current = DARK
 _loaded = False
@@ -115,7 +116,7 @@ def qss(t: Tokens) -> str:
 QWidget {{ background: transparent; color: {t.text};
            selection-background-color: {t.accent}; selection-color: {t.accent_ink}; }}
 QMainWindow, QDialog, #Page, #Work {{ background: {t.bg}; }}
-QToolTip {{ background: {t.pop}; color: {t.text}; border: 1px solid {t.border_strong}; padding: 6px 9px; border-radius: 5px; font-size: 12px; }}
+QToolTip {{ background: {t.pop}; color: {t.text}; border: 1px solid {t.border_strong}; padding: 6px 9px; border-radius: {RC}px; font-size: 12px; }}
 
 #TopBar {{ background: {t.surface}; border-bottom: 1px solid {t.border}; }}
 #StatusBar {{ background: {t.surface}; border-top: 1px solid {t.border}; }}
@@ -142,7 +143,7 @@ QToolTip {{ background: {t.pop}; color: {t.text}; border: 1px solid {t.border_st
 #Small {{ color: {t.muted}; font-size: 12px; }}
 #Mono {{ font-family: "{MONO_FAMILY}"; font-size: 12px; }}
 #MonoMuted {{ font-family: "{MONO_FAMILY}"; font-size: 11.5px; color: {t.muted}; }}
-#Kbd {{ font-family: "{MONO_FAMILY}"; font-size: 10.5px; padding: 2px 5px; border-radius: 5px; border: 1px solid {t.border};
+#Kbd {{ font-family: "{MONO_FAMILY}"; font-size: 10.5px; padding: 2px 5px; border-radius: {RC}px; border: 1px solid {t.border};
         color: {t.muted}; background: {t.surface}; }}
 
 #Card, #Panel {{ background: {t.raised}; border: 1px solid {t.border}; border-radius: {RC}px; }}
@@ -151,6 +152,8 @@ QToolTip {{ background: {t.pop}; color: {t.text}; border: 1px solid {t.border_st
 #Sheet {{ background: {t.raised}; border: 1px solid {t.border_strong}; border-radius: {RCARD}px; }}
 #Surface {{ background: {t.surface}; border: 1px solid {t.border}; border-radius: {RC}px; }}
 #Console {{ background: {t.console}; border: 1px solid {t.border}; border-radius: {RC}px; }}
+QPlainTextEdit#Console, #Console QLabel {{ color: {DARK.console_text}; }}
+#Cell, #TopRule {{ border-top: 1px solid {t.border}; }}
 #Pop {{ background: {t.pop}; border: 1px solid {t.border_strong}; border-radius: {RC}px; }}
 #Scrim {{ background: {rgba("#000000", 0.45)}; }}
 #Row {{ border-bottom: 1px solid {t.border}; }}
@@ -168,12 +171,14 @@ QPushButton[kind="primary"]:disabled {{ background: {t.raised2}; border-color: {
 QPushButton[kind="danger"] {{ color: {t.bad}; border-color: {rgba(t.bad, 0.40)}; background: {rgba(t.bad, 0.10)}; }}
 QPushButton[kind="ghost"] {{ background: transparent; border-color: transparent; color: {t.muted}; }}
 QPushButton[kind="ghost"]:hover {{ background: {t.raised}; }}
+QPushButton[kind="ghost"]:checked {{ background: {t.raised2}; border-color: {t.border}; }}
 QPushButton[size="sm"] {{ min-height: 24px; max-height: 24px; padding: 0 9px; font-size: 12px; }}
 QPushButton[icon_only="true"] {{ padding: 0; min-width: 30px; max-width: 30px; }}
 QPushButton[icon_only="true"][size="sm"] {{ min-width: 24px; max-width: 24px; }}
+#ListHead QPushButton {{ min-width: 24px; max-width: 24px; }}
 QPushButton::menu-indicator {{ width: 0; image: none; }}
 
-#Seg {{ background: {t.surface}; border: 1px solid {t.border}; border-radius: {RC + 2}px; }}
+#Seg {{ background: {t.surface}; border: 1px solid {t.border}; border-radius: {RC}px; }}
 #Seg QPushButton {{ background: transparent; border: 0; min-height: 28px; max-height: 28px; padding: 0 12px; color: {t.muted}; }}
 #Seg QPushButton:checked {{ background: {t.raised2}; color: {t.text}; border: 1px solid {t.border}; }}
 #Seg[accent="true"] QPushButton:checked {{ background: {t.accent}; color: {t.accent_ink}; border: 0; }}
@@ -203,7 +208,7 @@ QComboBox QAbstractItemView {{ background: {t.pop}; border: 1px solid {t.border_
 QSpinBox::up-button, QSpinBox::down-button, QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{ width: 0; border: 0; }}
 
 QListView, QTreeView, QTableView, QListWidget, QTreeWidget, QTableWidget {{ background: transparent; border: 0; }}
-QTreeView::item, QListView::item {{ min-height: 26px; border-radius: 5px; padding: 0 4px; color: {t.muted}; }}
+QTreeView::item, QListView::item {{ min-height: 26px; border-radius: {RC}px; padding: 0 4px; color: {t.muted}; }}
 QTreeView::item:hover, QListView::item:hover {{ background: {t.raised}; }}
 QTreeView::item:selected, QListView::item:selected {{ background: {t.raised2}; color: {t.text}; }}
 #ServiceList::item, #ServiceList::item:selected, #ServiceList::item:hover {{ background: transparent; }}
@@ -223,10 +228,12 @@ QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 2px; }}
 QScrollBar::handle:horizontal {{ background: {t.border_strong}; border-radius: 3px; min-width: 30px; }}
 QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::sub-page {{ background: none; border: 0; width: 0; height: 0; }}
 QCheckBox {{ spacing: 8px; }}
-QCheckBox::indicator {{ width: 16px; height: 16px; border-radius: 4px; border: 1px solid {t.border_strong}; background: {t.surface}; }}
+QCheckBox::indicator {{ width: 16px; height: 16px; border-radius: 3px; border: 1px solid {t.border_strong}; background: {t.surface}; }}
 QCheckBox::indicator:checked {{ background: {t.accent}; border-color: {t.accent}; }}
+QCheckBox:focus::indicator {{ border-color: {t.accent}; }}
+#RailBtn:focus, #SideNav QToolButton:focus, #Steps QToolButton:focus, #BottomNav QToolButton:focus, #Tabs QToolButton:focus {{ background: {sel_bg}; color: {t.text}; }}
 QMenu {{ background: {t.pop}; border: 1px solid {t.border_strong}; border-radius: {RC}px; padding: 4px; }}
-QMenu::item {{ padding: 7px 14px; border-radius: 4px; }}
+QMenu::item {{ padding: 7px 14px; border-radius: {RC}px; }}
 QMenu::item:selected {{ background: {t.raised2}; color: {t.text}; }}
 QMenu::separator {{ height: 1px; background: {t.border}; margin: 4px 6px; }}
 """

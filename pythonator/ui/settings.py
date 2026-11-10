@@ -426,9 +426,8 @@ class SettingsPage(QWidget):
     def _host_chip(self, h: str) -> None:
         c = Chip(h, "plain", "x", mono=True, h=28)
         c.setToolTip("Remove")
-        c.setCursor(Qt.CursorShape.PointingHandCursor)
         c.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        c.clicked.connect(lambda c=c: (self.hosts_flow.removeWidget(c), c.deleteLater(), self.changed()))
+        c.on_click(lambda c=c: (self.hosts_flow.removeWidget(c), c.deleteLater(), self.changed()))
         self.hosts_flow.add(c)
 
     def _add_host(self, host: str = "") -> None:

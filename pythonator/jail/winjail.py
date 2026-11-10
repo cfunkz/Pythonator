@@ -482,8 +482,10 @@ def run(cfg):
         started = time.monotonic()
         code = api.wait(api.spawn(cmdline, env, cwd, sid, caps))
         if code == STATUS_ACCESS_DENIED and time.monotonic() - started < 10:
-            say("the service couldn't open its own files; setting its folders' permissions again and retrying")
-            api.grant_all(grants, sid, True)
+            # The service chooses its own exit code, so this is never a way to re-spread permissions through a
+            # folder it can write (and may have filled with junctions): only the read-only ones (its runtime) again.
+            say("the service couldn't open its runtime's files; setting their permissions again and retrying")
+            api.grant_all([(p, wr) for p, wr in grants if not wr], sid, True)
             code = api.wait(api.spawn(cmdline, env, cwd, sid, caps))
         return code
     except (OSError, JailError, KeyError) as e:

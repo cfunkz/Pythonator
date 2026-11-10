@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from pythonator.model.service import NAME_RE
+from pythonator.model.service import NAME_MAX, NAME_RE
 from pythonator.ui import theme as th
 from pythonator.ui.kit import (
     Btn,
@@ -144,10 +144,10 @@ class ModeCard(QFrame):
     def set_on(self, on: bool) -> None:
         t = th.current()
         if not self.ok:
-            self.setStyleSheet(f"#Card {{ background: transparent; border: 1px solid {t.border}; border-radius: 8px; }}")
+            self.setStyleSheet(f"#Card {{ background: transparent; border: 1px solid {t.border}; border-radius: {th.RCARD}px; }}")
             return
         border = f"2px solid {t.accent}" if on else f"1px solid {t.border}"
-        self.setStyleSheet(f"#Card {{ background: {t.raised}; border: {border}; border-radius: 8px; }}")
+        self.setStyleSheet(f"#Card {{ background: {t.raised}; border: {border}; border-radius: {th.RCARD}px; }}")
 
     def mousePressEvent(self, e: Any) -> None:
         if self.ok:
@@ -243,6 +243,7 @@ class NewService(QWidget):
                            on=self._templates)
         self.name = QLineEdit()
         self.name.setPlaceholderText("api")
+        self.name.setMaxLength(NAME_MAX)
         self.command = QLineEdit()
         self.command.setProperty("mono", True)
         self.command.setPlaceholderText("main.py --port 8000")
@@ -489,8 +490,7 @@ class NewService(QWidget):
     def _chip_host(self, host: str) -> None:
         c = Chip(host, "plain", mono=True, h=28)
         c.setToolTip("Click to remove")
-        c.setCursor(Qt.CursorShape.PointingHandCursor)
-        c.clicked.connect(lambda c=c: (self.hosts_flow.removeWidget(c), c.deleteLater(), self._refresh()))
+        c.on_click(lambda c=c: (self.hosts_flow.removeWidget(c), c.deleteLater(), self._refresh()))
         self.hosts_flow.add(c)
 
     def _add_host(self) -> None:
@@ -693,7 +693,7 @@ class NewService(QWidget):
             done = j <= self.done_upto and j != i
             b.setIcon(_step_icon(j + 1, "done" if done else "on" if j == i else "", t))
             b.setStyleSheet(f"QToolButton {{ background: {t.raised2 if j == i else 'transparent'}; color: "
-                            f"{t.text if j == i else t.muted}; border: 0; border-radius: 6px; text-align: left; padding: 0 10px; }}")
+                            f"{t.text if j == i else t.muted}; border: 0; border-radius: {th.RC}px; text-align: left; padding: 0 10px; }}")
         self.back.setEnabled(i > 0)
         show_if(self.trial, i in (1, 2, 3))
         self.next.setText(f"Next: {STEPS[i + 1]}".replace("&", "&&") if i < 4 else "Approve and start")  # & is a mnemonic

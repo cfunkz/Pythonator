@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import time
+import zlib
 from collections import deque
 from collections.abc import Callable
+from html import escape
 from typing import Any
 
-from PyQt6.QtCore import QModelIndex, QPoint, QPointF, QRect, QRectF, QSettings, QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QModelIndex, QPoint, QPointF, QRect, QRectF, QSettings, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFontMetrics, QPainter, QPaintEvent, QPen
 from PyQt6.QtWidgets import (
     QListWidget,
@@ -33,7 +35,7 @@ PHASE_TEXT = {
     "failed": "Gave up", "blocked": "Blocked",
 }
 PHASE_TONE = {"running": "ok", "starting": "info", "backoff": "warn", "blocked": "warn", "failed": "bad"}
-ROLE_SVC, ROLE_NAME, ROLE_GROUP = Qt.ItemDataRole.UserRole, Qt.ItemDataRole.UserRole + 1, Qt.ItemDataRole.UserRole + 2
+ROLE_SVC, ROLE_NAME = Qt.ItemDataRole.UserRole, Qt.ItemDataRole.UserRole + 1
 
 def dur(s: float) -> str:
     s = int(max(0, s))
@@ -78,11 +80,19 @@ def needs_you(s: dict[str, Any]) -> bool:
     return bool(not s.get("approved") or s.get("refused") or s["observed"].get("phase") in ("failed", "blocked"))
 
 # --- service list -----------------------------------------------------------------------------------------------
+def group_color(group: str) -> QColor:
+    """A group's own colour, the same on every run and machine (its tag in the filters and the dot on its cards)."""
+    return QColor.fromHsl(zlib.crc32(group.encode()) % 360, 150, 150 if th.current() is th.DARK else 95)
+
 class ServiceDelegate(QStyledItemDelegate):
-    H, GH = 90, 28
+    """A card per service: layer rings · group dot, name, state and status dot · mode and port chips · its CPU line
+    along the bottom. Compact (the list header's switch) is a shorter card without the CPU line."""
+
+    SIZE = {False: (76, 12, 14, 20), True: (54, 10, 13, 18)}  # compact → (row height, ring radius, name px, chip h)
+    compact = False
 
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
-        return QSize(260, self.GH if index.data(ROLE_GROUP) else self.H)
+        return QSize(240, self.SIZE[self.compact][0])
 
     def paint(self, p: QPainter | None, option: QStyleOptionViewItem, index: QModelIndex) -> None:
         if p is None:
@@ -90,59 +100,57 @@ class ServiceDelegate(QStyledItemDelegate):
         t = th.current()
         p.save()
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        group = index.data(ROLE_GROUP)
-        if group:
-            p.setFont(th.label_font(10))
-            p.setPen(QColor(t.faint))
-            p.drawText(QRect(option.rect).adjusted(18, 8, -8, 0), Qt.AlignmentFlag.AlignVCenter, group)
-            p.restore()
-            return
         s: dict[str, Any] = index.data(ROLE_SVC) or {}
         spec, ob = s.get("spec", {}), s.get("observed", {})
+        _h, ring, name_px, ch = self.SIZE[self.compact]
         r = QRectF(option.rect).adjusted(8, 2, -8, -2)
         sel = bool(option.state & QStyle.StateFlag.State_Selected)
-        hov = bool(option.state & QStyle.StateFlag.State_MouseOver)
-        if sel or hov:
+        if sel or option.state & QStyle.StateFlag.State_MouseOver:
             p.setPen(QPen(QColor(t.border_strong if sel else t.border), 1))
             p.setBrush(QColor(t.raised2 if sel else t.raised))
             p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), th.RC, th.RC)
-        x0, y0 = r.left() + 10, r.top() + 9
-        paint_rings(p, QPointF(x0 + 18, y0 + 22), layer_states(s), 16)
-        tx = int(x0 + 46)
-        p.setFont(th.ui_font(13.5, 600))
-        p.setPen(QColor(t.text))
-        fm = QFontMetrics(p.font())
-        p.drawText(QRect(tx, int(y0), int(r.right() - tx - 30), 20), Qt.AlignmentFlag.AlignVCenter,
-                   fm.elidedText(spec.get("name", "?"), Qt.TextElideMode.ElideRight, int(r.right() - tx - 30)))
-        ph = ob.get("phase", "stopped")
-        paint_dot(p, QPointF(r.right() - 16, y0 + 10), "off" if ph == "stopped" else PHASE_DOT.get(ph, "idle"))
-        cy = int(y0 + 24)
-        text, ico, tone = mode_label(spec)
-        x = tx + chip(p, tx, cy, text, tone, ico) + 6
-        for port in (spec.get("network") or {}).get("ports", [])[:1]:
-            label = f":{port['port']} {'local' if port['reach'] == 'this-computer' else 'LAN'}"
-            x += chip(p, x, cy, label, "acc", "in") + 6
-        p.setFont(th.ui_font(11.5))
+        x0, y0 = r.left() + 12, r.top() + 8
+        paint_rings(p, QPointF(x0 + ring, r.center().y() if self.compact else y0 + 20), layer_states(s), ring)
+        tx, ph = int(x0 + 2 * ring + 14), ob.get("phase", "stopped")
+        paint_dot(p, QPointF(r.right() - 14, y0 + 10), "off" if ph == "stopped" else PHASE_DOT.get(ph, "idle"))
+        if group := spec.get("group"):
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(group_color(group))
+            p.drawEllipse(QPointF(tx + 4, y0 + 10), 4, 4)
+            tx += 14
+        p.setFont(th.ui_font(11.5))  # the state (up 3h 12m, refused …) sits on the name's line, on the right
+        room, words, name = int(r.right() - 28 - tx), meta(s), spec.get("name", "?")
+        name_w = QFontMetrics(th.ui_font(name_px, 600)).horizontalAdvance(name)  # the name first, the state gets the rest
+        mw = min(QFontMetrics(p.font()).horizontalAdvance(words) + 2, max(56, room - name_w - 16))
         p.setPen(QColor(t.muted))
-        room = int(r.right() - 10 - x)
-        if room > 16:
-            p.drawText(QRect(x, cy, room, 22), Qt.AlignmentFlag.AlignVCenter,
-                       QFontMetrics(p.font()).elidedText(meta(s), Qt.TextElideMode.ElideRight, room))
-        tone_s = "bad" if ph == "failed" else "warn" if ph in ("backoff", "blocked") else "accent"
-        paint_spark(p, QRectF(x0, r.bottom() - 22, r.width() - 20, 16), s.get("_spark") or [], th.tone(tone_s))
+        p.drawText(QRect(int(r.right()) - 28 - mw, int(y0), mw, 20), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                   QFontMetrics(p.font()).elidedText(words, Qt.TextElideMode.ElideRight, mw))
+        p.setFont(th.ui_font(name_px, 600))
+        p.setPen(QColor(t.text))
+        nw = room - mw - 8
+        p.drawText(QRect(tx, int(y0), nw, 20), Qt.AlignmentFlag.AlignVCenter,
+                   QFontMetrics(p.font()).elidedText(name, Qt.TextElideMode.ElideRight, nw))
+        cy = int(y0 + (23 if self.compact else 26))
+        text, ico, tone = mode_label(spec)
+        x = tx + chip(p, tx, cy, text, tone, ico, ch) + 8
+        for port in (spec.get("network") or {}).get("ports", [])[:1]:
+            chip(p, x, cy, f":{port['port']} {'local' if port['reach'] == 'this-computer' else 'LAN'}", "acc", "in", ch)
+        if not self.compact:
+            tone_s = "bad" if ph == "failed" else "warn" if ph in ("backoff", "blocked") else "accent"
+            paint_spark(p, QRectF(x0, r.bottom() - 15, r.width() - 24, 11), s.get("_spark") or [], th.tone(tone_s), False, 1.2)
         p.restore()
 
 def chip(p: QPainter, x: int, y: int, text: str, tone: str, ico: str | None = None, h: int = 22) -> int:
     """Paint a `.chip` at (x, y); returns its width."""
     t = th.current()
-    f = th.ui_font(11.5, 500)
-    w = QFontMetrics(f).horizontalAdvance(text) + 16 + (17 if ico else 0)
+    f = th.ui_font(11.5 if h >= 22 else 10.5, 500)
+    pad = 8 if h >= 22 else 6
+    w = QFontMetrics(f).horizontalAdvance(text) + 2 * pad + (17 if ico else 0)
     fg = t.accent_text if tone == "acc" else th.tone(tone) if tone else t.muted
-    bg = th.mix(t.accent if tone == "acc" else fg, t.bg, 0.14) if tone else QColor(t.chip)
-    p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(bg)
-    p.drawRoundedRect(QRectF(x, y, w, h), th.RC, th.RC)
-    tx = x + 8
+    p.setPen(QPen(th.mix(fg, t.raised, 0.38), 1))  # as kit.Chip: a hairline in its colour, barely tinted
+    p.setBrush(th.mix(fg, t.raised, 0.07))
+    p.drawRoundedRect(QRectF(x + 0.5, y + 0.5, w - 1, h - 1), th.RC, th.RC)
+    tx = x + pad
     if ico:
         p.drawPixmap(QPoint(tx, y + (h - 12) // 2), pixmap(ico, fg, 12))
         tx += 17
@@ -152,17 +160,22 @@ def chip(p: QPainter, x: int, y: int, text: str, tone: str, ico: str | None = No
     return w
 
 class ServiceList(QListWidget):
-    """Grouped by the service's group; filter chips All / Running / Action required / a tag."""
+    """Grouped by the service's group; filter chips All / Running / Action required / a tag. Drag a service, or press
+    Alt+Up / Alt+Down, to change its place in its group."""
 
     picked = pyqtSignal(str)
 
     def __init__(self) -> None:
         super().__init__()
         self.setObjectName("ServiceList")
-        self.setItemDelegate(ServiceDelegate(self))
+        self.cards = ServiceDelegate(self)
+        self.cards.compact = QSettings().value("services/compact", False) in (True, "true")
+        self.setItemDelegate(self.cards)
         self.setMouseTracking(True)
         self.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setDragDropMode(QListWidget.DragDropMode.InternalMove)
+        self.setAccessibleName("Services")
         self.sparks: dict[str, deque[float]] = {}
         self.services: list[dict[str, Any]] = []
         self.filter: Callable[[dict[str, Any]], bool] = lambda s: True
@@ -180,18 +193,38 @@ class ServiceList(QListWidget):
     def _rank(self, name: str) -> tuple[int, str]:
         return (self.order.index(name) if name in self.order else len(self.order), name)
 
-    def move(self, name: str, step: int) -> None:
-        """Move a service up or down within its group (Alt+Up / Alt+Down); the order is kept in your settings."""
+    def dropEvent(self, e: Any) -> None:
+        """A drop only says where to: Qt's own move is cancelled, and the list is rebuilt from your order once the drag
+        has finished (never while Qt still holds the dragged rows)."""
+        src, dst = self.currentItem(), self.itemAt(e.position().toPoint())
+        e.setDropAction(Qt.DropAction.IgnoreAction)
+        e.accept()
+        if src is not None and dst is not None and dst.data(ROLE_NAME):
+            a, b = src.data(ROLE_NAME), dst.data(ROLE_NAME)
+            QTimer.singleShot(0, lambda: self.move(a, to=b))
+
+    def move(self, name: str, step: int = 0, to: str = "") -> None:
+        """Move a service by `step` places, or to where `to` is, within its group; the order is kept in your settings."""
         names = sorted((s["spec"]["name"] for s in self.services), key=self._rank)
         group = {s["spec"]["name"]: s["spec"].get("group") or "" for s in self.services}
         mates = [n for n in names if group.get(n) == group.get(name)]
-        if name not in mates or not 0 <= (j := mates.index(name) + step) < len(mates):
+        if name not in mates or not (to or 0 <= mates.index(name) + step < len(mates)):
             return
-        a, b = names.index(name), names.index(mates[j])
-        names[a], names[b] = names[b], names[a]
+        to = to or mates[mates.index(name) + step]
+        if to == name or to not in mates:
+            return
+        down = names.index(to) > names.index(name)
+        names.remove(name)
+        names.insert(names.index(to) + down, name)
         self.order = names
         QSettings().setValue("services/order", names)
         self.update_services(self.services)
+
+    def set_compact(self, on: bool) -> None:
+        """Cards or compact rows, at once; kept in your settings."""
+        self.cards.compact = on
+        QSettings().setValue("services/compact", on)
+        self.doItemsLayout()
 
     def _changed(self, cur: QListWidgetItem | None, _old: QListWidgetItem | None) -> None:
         if cur and cur.data(ROLE_NAME):
@@ -215,34 +248,23 @@ class ServiceList(QListWidget):
 
     def update_services(self, services: list[dict[str, Any]]) -> None:
         self.services = services
-        shown = [s for s in services if self.filter(s) and (not self.text or self.text in s["spec"]["name"])]
-        groups: dict[str, list[dict[str, Any]]] = {}
-        for s in shown:
-            groups.setdefault(s["spec"].get("group") or "", []).append(s)
-        rows: list[tuple[str, dict[str, Any] | None]] = []
-        named = len(groups) > 1 or "" not in groups
-        for g in sorted(groups, key=lambda g: (g == "", g.lower())):
-            if named:
-                rows.append((g or "Other", None))
-            rows += [("", s) for s in sorted(groups[g], key=lambda s: self._rank(s["spec"]["name"]))]
-        keys = [(g, s["spec"]["name"] if s else "") for g, s in rows]
+        rows = sorted((s for s in services if self.filter(s) and (not self.text or self.text in s["spec"]["name"])),
+                      key=lambda s: (not s["spec"].get("group"), (s["spec"].get("group") or "").lower(), self._rank(s["spec"]["name"])))
         current = self.currentItem().data(ROLE_NAME) if self.currentItem() else None
-        if [(self.item(i).data(ROLE_GROUP) or "", self.item(i).data(ROLE_NAME) or "") for i in range(self.count())] != keys:
+        if [self.item(i).data(ROLE_NAME) for i in range(self.count())] != [s["spec"]["name"] for s in rows]:
             self.blockSignals(True)
             self.clear()
-            for g, s in rows:
-                it = QListWidgetItem()
-                if s is None:
-                    it.setData(ROLE_GROUP, g)
-                    it.setFlags(Qt.ItemFlag.NoItemFlags)
-                else:
-                    it.setData(ROLE_NAME, s["spec"]["name"])
+            for s in rows:  # grouped by group (a coloured dot on each card), then in your order
+                (it := QListWidgetItem()).setData(ROLE_NAME, s["spec"]["name"])
                 self.addItem(it)
             self.blockSignals(False)
-        for i, (_g, s) in enumerate(rows):
-            if s is not None:
-                s["_spark"] = list(self.sparks.get(s["spec"]["name"], ()))
-                self.item(i).setData(ROLE_SVC, s)
+        for i, s in enumerate(rows):
+            s["_spark"] = list(self.sparks.get(s["spec"]["name"], ()))
+            group = f" · group {s['spec']['group']}" if s["spec"].get("group") else ""
+            it, words = self.item(i), f"{s['spec']['name']}{group} · {mode_label(s['spec'])[0]} · {meta(s)}"
+            it.setData(ROLE_SVC, s)
+            it.setToolTip(f"<qt>{escape(words)}</qt>")  # plain text: a name or message is never markup
+            it.setData(Qt.ItemDataRole.AccessibleTextRole, words)
         if current:
             self.select(current)
         self.viewport().update()
@@ -315,7 +337,7 @@ class JailStack(QWidget):
         prog = QRectF(r.left(), r.top() + 1, r.width(), 32)
         p.setPen(QPen(QColor(t.border), 1))
         p.setBrush(QColor(t.console))
-        p.drawRoundedRect(prog, 5, 5)
+        p.drawRoundedRect(prog, th.RC, th.RC)
         p.setFont(th.mono_font(12, 600))
         p.setPen(QColor(t.console_text))
         p.drawText(prog, Qt.AlignmentFlag.AlignCenter,

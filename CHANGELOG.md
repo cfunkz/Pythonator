@@ -3,6 +3,45 @@
 All notable changes are recorded here, in the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 Dates are UTC.
 
+## [0.0.3] · 2026-11-09
+
+A visual pass: a sharper, calmer window that reads well in both themes.
+
+### Changed
+
+- A new palette: graphite (dark) and aluminium (light), cool neutral greys with one steel-blue accent and muted
+  status colours, in place of navy and chartreuse (dark) or paper and navy (light). Chips are a 1 px hairline in
+  their colour with an almost flat fill, status dots lose their halo, layer rings and CPU lines are thinner, and
+  the service header, chips and cards have more room between them.
+
+- Services list: the cards keep their look with the CPU line along the bottom, but are shorter (76 px, was 90). The
+  state (up 3h 12m, refused …) moved up next to the name, which keeps its room first. Groups are coloured dots, on
+  each card and as the filters, instead of name chips and section headings; hover a dot, or use a screen reader,
+  for the group's name. The new list switch in the Services header turns on compact cards (54 px, no CPU line) at
+  once, and the window remembers it.
+- New service names and renames can be up to 24 characters, so they fit a card. Existing names up to 48 keep working.
+- Start all, Stop all, Move up and Move down sit in the Services header. You can also drag a service to a new place
+  in its group. Stop all asks first when more than one service is running. App settings no longer repeat Start all
+  and Stop all; the tray menu still has them.
+- Corners are 4 px on controls and 6 px on panels (were 6 and 8), and toggle knobs are softly squared.
+- Files shows the service name only, so a long name is no longer cut at the front.
+
+### Fixed
+
+- Light theme: the command boxes on Engines, the console's header lines, the ruff pop-up in the editor and the diff
+  views showed dark text on the navy console. The console is navy in both themes and always uses light text.
+- Light and dark themes: faint text (group names, timestamps, hints) now meets WCAG AA contrast (4.5:1).
+- Doubled or offset lines in the System check table, the plugin list footer and the command palette, where a
+  border meant for one frame was applied to every label and button inside it.
+
+### Accessibility
+
+- Buttons take focus from Tab only, so the focus border shows for the keyboard and doesn't stick after a click.
+  Rail buttons, tabs, side menus, toggles and the filter chips show where the focus is; chips work with Space and
+  Enter.
+- Buttons, toggles, rail buttons and service rows have accessible names for screen readers, and each service row
+  has a tooltip with its full name, mode and state.
+
 ## [0.0.2] · 2026-11-09
 
 Security fixes from the audit of 0.0.1-alpha.
@@ -21,6 +60,13 @@ Security fixes from the audit of 0.0.1-alpha.
   and the container engines can't block addresses for one program without admin rights; use Allowed hosts (macOS)
   or Sandbox mode (Linux) to keep a service off your network. Linux Sandbox and Windows Sandbox already block it
   for each service (network namespace with blackhole routes; AppContainer without the private-network capability).
+- macOS Sandbox: a service with Traffic Anywhere could reach the keychain service (`com.apple.SecurityServer`). An
+  item Pythonator stores trusts the program that stored it, and a service may run that same Python, so it could have
+  read your services' secrets without a prompt. The keychain services are now denied in every Seatbelt profile;
+  certificate checks still work through `trustd`.
+- Windows Sandbox: a service could exit with "access denied" on purpose to make Pythonator set its folders'
+  permissions again, spreading them through junctions it had planted in its own folder. The retry now sets only
+  the read-only folders (its runtime) again, which the service can't write.
 - Linux Sandbox: a service could create a set-user-ID or set-group-ID file through `creat()`, `mknod()` or
   `mknodat()`, which another local account could then run as you. The seccomp filter now refuses those modes, as
   0.0.19 did (a regression in the rewrite).

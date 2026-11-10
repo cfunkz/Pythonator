@@ -133,7 +133,7 @@ def guard_card(res: dict[str, Any]) -> QWidget | None:
     c = t.accent if ok else t.bad
     box.setObjectName("GuardBox")
     box.setStyleSheet(f"#GuardBox {{ background: {th.mix(c, t.raised, 0.06).name()}; border: 1px solid "
-                      f"{th.mix(c, t.raised, 0.45).name()}; border-radius: 6px; }}")
+                      f"{th.mix(c, t.raised, 0.45).name()}; border-radius: {th.RC}px; }}")
     return frame("", vbox(box, margins=(22, 12, 22, 14)))
 
 # --- the plan sheet -----------------------------------------------------------------------------------------------
@@ -210,7 +210,7 @@ class EdgeCard(QFrame):
         t = th.current()
         c = th.tone(self.tone)
         self.setStyleSheet(f"#EdgeCard {{ background: {t.raised}; border: 1px solid {t.border}; border-left: 3px solid {c};"
-                           f" border-radius: 8px; }}")
+                           f" border-radius: {th.RCARD}px; }}")
 
 class DriftInbox(QWidget):
     def __init__(self, main: Main) -> None:
@@ -487,7 +487,7 @@ class PlanPage(QWidget):
             d.pop("generation", None)
         a = json.dumps(base, indent=2, sort_keys=True).splitlines()
         b = json.dumps(spec, indent=2, sort_keys=True).splitlines()
-        t = th.current()
+        t = th.DARK  # on the navy console
         html = []
         for line in difflib.unified_diff(a, b, "approved", "this plan", lineterm="", n=2):
             c = t.ok if line.startswith("+") else t.bad if line.startswith("-") else t.info if line.startswith("@") else t.muted

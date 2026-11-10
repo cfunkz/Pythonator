@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from pythonator.policy.paths import is_absolute
 
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,47}$")
+NAME_MAX = 24  # for new names and renames: they fit a list row; older names up to 48 keep working
 GROUP_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _-]{0,47}")
 HOST_RE = re.compile(r"^(?=.{1,253}$)(\*\.)?([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
 ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")

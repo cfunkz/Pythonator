@@ -116,8 +116,13 @@ A watchdog stops the service when it goes over memory; it doesn't cap CPU or tas
 
 ## Groups
 
-Give related services the same group (`--group web`) and the service list gets a filter for it. The command palette
+Give related services the same group (`--group web`) and the service list gets a filter for it: a coloured dot,
+the same colour as the dot on each of its cards (hover it for the name). The command palette
 (Ctrl+K) can restart every service in a group.
+
+The Services header has **Start all**, **Stop all**, **Move up** and **Move down**. To change a service's place in
+its group, drag it, use the arrows, or press Alt+Up / Alt+Down. The order is kept on this computer. Stop all asks
+first when more than one service is running. The list button next to them switches between cards and compact rows.
 
 ## Snapshots
 

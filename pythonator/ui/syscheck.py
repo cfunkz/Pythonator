@@ -235,9 +235,7 @@ class SystemCheck(QWidget):
             hl.setStyleSheet(f"font-size: 11px; letter-spacing: 0.6px; color: {t.muted};")
             g.addWidget(frame("", hbox(hl, margins=(12, 12, 12, 12))), 0, c)
         for r, row in enumerate(m.get("rows", []), start=1):
-            line = f"border-top: 1px solid {t.border};"
-            title = frame("", hbox(label(row["title"], wrap=True), margins=(14, 0, 12, 0)))
-            title.setStyleSheet(line)
+            title = frame("TopRule", hbox(label(row["title"], wrap=True), margins=(14, 0, 12, 0)))  # a top rule, from the theme
             title.setMinimumHeight(66)
             g.addWidget(title, r, 0)
             for c, col in enumerate(cols, start=1):
@@ -247,14 +245,11 @@ class SystemCheck(QWidget):
                         box = vbox(Chip("not here", "line"), label(esc(ref["message"]), "Small", wrap=True), spacing=6,
                                    margins=(12, 12, 12, 12))
                         box.addStretch(1)
-                        w = frame("", box)
+                        w = frame("TopRule", box)
                         w.setToolTip(ref.get("fix", ""))
-                        w.setStyleSheet(line)
                         g.addWidget(w, r, c, len(m["rows"]), 1)
                     continue
-                cell = status_cell(col["cells"].get(row["key"]), col["here"])
-                cell.setStyleSheet(cell.styleSheet() + f" QFrame#Cell {{ {line} }}")
-                g.addWidget(cell, r, c)
+                g.addWidget(status_cell(col["cells"].get(row["key"]), col["here"]), r, c)
         g.setColumnStretch(0, 10)
         for c in range(1, len(cols) + 1):
             g.setColumnStretch(c, 9)

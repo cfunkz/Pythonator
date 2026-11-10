@@ -9,7 +9,8 @@ import time
 from collections import deque
 from typing import TYPE_CHECKING, Any
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QPointF, QSize, Qt, pyqtSignal
+from PyQt6.QtGui import QPainter
 from PyQt6.QtWidgets import QFrame, QLineEdit, QMenu, QScrollArea, QStackedWidget, QVBoxLayout, QWidget
 
 from pythonator.ui import theme as th
@@ -17,6 +18,7 @@ from pythonator.ui.console import Console
 from pythonator.ui.kit import (
     Btn,
     Chip,
+    Dot,
     Flow,
     Icon,
     InfoBtn,
@@ -35,7 +37,7 @@ from pythonator.ui.kit import (
     splitter,
     vbox,
 )
-from pythonator.ui.widgets import PHASE_TEXT, PHASE_TONE, JailStack, ServiceList, mode_label, needs_you, stack_rows
+from pythonator.ui.widgets import PHASE_TEXT, PHASE_TONE, JailStack, ServiceList, group_color, mode_label, needs_you, stack_rows
 
 if TYPE_CHECKING:
     from pythonator.ui.app import Main
@@ -54,6 +56,26 @@ TRAFFIC_CARD = {
     ),
 }
 
+class GroupDot(Chip):
+    """A group's filter: its colour only, to save room; the name is in the tooltip and read out by screen readers."""
+
+    def __init__(self, group: str) -> None:
+        super().__init__("", "line", h=22)
+        self.group = group
+        self.setToolTip(f"Group {group}: show only its services")
+        self.setAccessibleName(f"Group {group}")
+
+    def sizeHint(self) -> QSize:
+        return QSize(22, 22)
+
+    def paintEvent(self, e: Any) -> None:
+        super().paintEvent(e)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(group_color(self.group))
+        p.drawEllipse(QPointF(11, 11), 5, 5)
+
 class ListPane(QFrame):
     def __init__(self, main: Main) -> None:
         super().__init__()
@@ -61,26 +83,35 @@ class ListPane(QFrame):
         self.main = main
         self.count = Chip("0")
         self.find = Btn(ico="search", kind="ghost", size="sm", tip="Find a service", on=self._toggle_find)
+        self.start_all = Btn(ico="play", kind="ghost", size="sm", tip="Start all", on=lambda: main.all_services("start"))
+        self.stop_all = Btn(ico="stop", kind="ghost", size="sm", tip="Stop all", on=lambda: main.all_services("stop"))
+        self.up = Btn(ico="up", kind="ghost", size="sm", tip="Move up in its group (Alt+Up, or drag it)",
+                      on=lambda: self.list.move(main.current, -1))
+        self.down = Btn(ico="down", kind="ghost", size="sm", tip="Move down in its group (Alt+Down, or drag it)",
+                        on=lambda: self.list.move(main.current, 1))
+        self.dense = Btn(ico="list", kind="ghost", size="sm", tip="Compact list: one short row per service")
+        self.dense.setCheckable(True)
         self.search = QLineEdit()
         self.search.setPlaceholderText("Filter by name")
         show_if(self.search, False)
         self.list = ServiceList()
         self.list.picked.connect(main.pick)
+        self.dense.setChecked(self.list.cards.compact)
+        self.dense.toggled.connect(self.list.set_compact)
         self.search.textChanged.connect(self.list.set_text)
         self.chips: dict[str, Chip] = {}
-        self.flow = Flow(6)
+        self.flow = Flow(8)
         chips = QWidget()
         chips.setLayout(self.flow)
         for key, text, tone in (("all", "All", "acc"), ("running", "Running", ""), ("needs", "Action required", "bad")):
-            c = Chip(text, tone)
-            c.setCursor(Qt.CursorShape.PointingHandCursor)
-            c.clicked.connect(lambda k=key: self.set_filter(k))
+            c = Chip(text, tone).on_click(lambda k=key: self.set_filter(k))
             self.chips[key] = c
             self.flow.add(c)
         self.key, self.tags = "all", set[str]()
         self.setLayout(vbox(
-            hbox(lbl("Services"), 0, self.count, self.find, spacing=8, margins=(14, 12, 10, 8)),
-            hbox(self.search, margins=(14, 0, 14, 8)), hbox(chips, margins=(14, 0, 14, 8)), self.list, spacing=0,
+            frame("ListHead", hbox(lbl("Services"), 6, self.count, 1, self.start_all, self.stop_all, self.up, self.down,
+                                   self.dense, self.find, spacing=3, margins=(14, 10, 8, 8))),
+            hbox(self.search, margins=(14, 0, 14, 8)), hbox(chips, margins=(14, 0, 14, 10)), self.list, spacing=0,
         ))
 
     def _toggle_find(self) -> None:
@@ -108,14 +139,16 @@ class ListPane(QFrame):
         self.count.set(str(len(services)))
         running = sum(1 for s in services if s["observed"]["phase"] in ("running", "starting", "backoff"))
         need = sum(1 for s in services if needs_you(s))
+        self.start_all.setEnabled(any(s["approved"] and not s["spec"].get("schedule") for s in services) and running < len(services))
+        self.stop_all.setEnabled(running > 0)
+        for b in (self.up, self.down):
+            b.setEnabled(len(services) > 1)
         self.chips["running"].set(f"Running {running}")
         self.chips["needs"].set(f"Action required {need}")
         show_if(self.chips["needs"], need > 0)
         for g in sorted({s["spec"].get("group") for s in services if s["spec"].get("group")}):
             if f"tag:{g}" not in self.chips:
-                c = Chip(g.capitalize(), "line", "tag")
-                c.setCursor(Qt.CursorShape.PointingHandCursor)
-                c.clicked.connect(lambda k=f"tag:{g}": self.set_filter(k))
+                c = GroupDot(g).on_click(lambda k=f"tag:{g}": self.set_filter(k))
                 self.chips[f"tag:{g}"] = c
                 self.flow.add(c)
         self.list.update_services(services)
@@ -236,8 +269,6 @@ class Inspector(QScrollArea):
         if not notes:
             self.notify_rows.addWidget(label("Nothing to report.", "Small"))
         for n in notes[-3:][::-1]:
-            from pythonator.ui.kit import Dot
-
             dot = Dot({"error": "bad", "warn": "warn"}.get(n.get("level", ""), "run"))
             text = label(n["text"], wrap=True)
             text.setStyleSheet("font-size: 12px;")
@@ -272,14 +303,12 @@ class Work(QFrame):
         menu.addAction("Try in a copy", main.try_copy)
         menu.addAction("Settings", lambda: main.open_settings())
         menu.addAction("Rename…", main.rename_service)
-        menu.addAction("Move up", lambda: main.services_page.list.list.move(main.current, -1))
-        menu.addAction("Move down", lambda: main.services_page.list.list.move(main.current, 1))
         menu.addSeparator()
         menu.addAction("Remove", main.remove_service)
         self.more.setMenu(menu)
         self.drawer = Btn(ico="drawer", tip="Inspector", on=main.toggle_drawer)
         self.drawer.hide()
-        self.enf = Flow(6)
+        self.enf = Flow(8)
         enf = QWidget()
         enf.setLayout(self.enf)
         self.enf_info = InfoBtn("What protects it here", "", foot="From this machine's EnforcementPlan", ico="shield")
@@ -311,7 +340,7 @@ class Work(QFrame):
         head = hbox(self.back, self.title, self.phase, 1, self.restart, self.stop, self.start, self.more, self.drawer,
                     spacing=10, margins=(16, 14, 16, 10))
         self.setLayout(vbox(
-            head, hbox(enf, margins=(16, 0, 16, 6)), hbox(self.message, margins=(16, 0, 16, 6)), self.tabs, self.pages,
+            head, hbox(enf, margins=(16, 0, 16, 10)), hbox(self.message, margins=(16, 0, 16, 10)), self.tabs, self.pages,
             spacing=0,
         ))
         self._enf_widget = enf

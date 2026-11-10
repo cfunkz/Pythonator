@@ -12,6 +12,7 @@ from PyQt6.QtCore import QPoint, QPointF, QRect, QRectF, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFontMetrics, QMouseEvent, QPainter, QPainterPath, QPaintEvent, QPen
 from PyQt6.QtWidgets import (
     QAbstractButton,
+    QBoxLayout,
     QButtonGroup,
     QFrame,
     QHBoxLayout,
@@ -166,7 +167,8 @@ class Icon(QLabel):
         self.setPixmap(pixmap(self.name_, th.tone(self.tone), self.size_))
 
 class Btn(QPushButton):
-    """`.btn`: 32 px, 6 px corners, one solid fill. kind: '' | primary | danger | ghost; size: '' | sm."""
+    """`.btn`: 30 px, 4 px corners, one solid fill. kind: '' | primary | danger | ghost; size: '' | sm.
+    Focus comes from Tab only, so the focus border shows for the keyboard and never sticks after a click."""
 
     def __init__(
         self,
@@ -191,6 +193,8 @@ class Btn(QPushButton):
             self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.setToolTip(tip or ("" if text else ""))
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        self.setAccessibleName(text or tip)
         self.setIconSize(QSize(13, 13) if size == "sm" else QSize(16, 16))
         if on:
             self.clicked.connect(lambda _=False: on())
@@ -216,7 +220,7 @@ class Kbd(QLabel):
 
 # --- chips, dots, badges -----------------------------------------------------------------------------------------
 class Chip(QWidget):
-    """`.chip`: 22 px high, 6 px corners, tinted fill. tone: '' (neutral), ok, warn, bad, info, acc, line, m_sandbox…"""
+    """`.chip`: 22 px high, 4 px corners, tinted fill. tone: '' (neutral), ok, warn, bad, info, acc, line, m_sandbox…"""
 
     clicked = pyqtSignal()
 
@@ -225,6 +229,13 @@ class Chip(QWidget):
         self.text_, self.tone, self.ico, self.mono, self.h = text, tone, ico, mono, h
         self.font_ = th.mono_font(11 if h >= 22 else 10) if mono else th.ui_font(11.5 if h >= 22 else 10.5, 500)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+
+    def on_click(self, fn: Callable[..., object]) -> Chip:
+        """A chip you can press: with the mouse, or Tab to it and press Space or Enter."""
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        self.clicked.connect(lambda: fn())
+        return self
 
     def set(self, text: str, tone: str | None = None, ico: str | None = None) -> None:
         self.text_ = text
@@ -250,14 +261,14 @@ class Chip(QWidget):
             return QColor(t.muted), None, QColor(t.border)
         if self.tone == "plain":
             return QColor(t.text), QColor(t.raised2), None
-        fg = t.accent_text if self.tone == "acc" else th.tone(self.tone)
-        base = t.accent if self.tone == "acc" else fg
-        return QColor(fg), th.mix(base, t.bg, 0.14), None
+        fg = t.accent_text if self.tone == "acc" else th.tone(self.tone)  # a hairline in its colour, barely tinted
+        return QColor(fg), th.mix(fg, t.raised, 0.07), th.mix(fg, t.raised, 0.38)
 
     def paintEvent(self, _e: QPaintEvent | None) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         fg, fill, line = self.colors()
+        line = QColor(th.current().accent) if self.hasFocus() else line
         r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         p.setPen(QPen(line, 1) if line else Qt.PenStyle.NoPen)
         p.setBrush(fill if fill else Qt.BrushStyle.NoBrush)
@@ -272,6 +283,12 @@ class Chip(QWidget):
 
     def mousePressEvent(self, e: QMouseEvent | None) -> None:
         self.clicked.emit()
+
+    def keyPressEvent(self, e: Any) -> None:
+        if e.key() in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.clicked.emit()
+        else:
+            super().keyPressEvent(e)
 
 class Dot(QWidget):
     """`.dot`: 8 px status dot with a soft 3 px halo. state: run | warn | bad | off | idle."""
@@ -292,14 +309,10 @@ def paint_dot(p: QPainter, c: QPointF, state: str) -> None:
     t = th.current()
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
     col = {"run": t.ok, "warn": t.warn, "bad": t.bad}.get(state)
-    if col:
-        halo = QColor(col)
-        halo.setAlphaF(0.22)
+    if col:  # crisp, no halo
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(halo)
-        p.drawEllipse(c, 7, 7)
         p.setBrush(QColor(col))
-        p.drawEllipse(c, 4, 4)
+        p.drawEllipse(c, 3.5, 3.5)
     elif state == "off":
         p.setPen(QPen(QColor(t.faint), 1.6))
         p.setBrush(Qt.BrushStyle.NoBrush)
@@ -310,7 +323,7 @@ def paint_dot(p: QPainter, c: QPointF, state: str) -> None:
         p.drawEllipse(c, 4, 4)
 
 class Badge(QWidget):
-    """Red count badge, 15 px, 6 px corners. On a button, it sits inside its top-right corner (never clipped)."""
+    """Red count badge, 15 px, 4 px corners. On a button, it sits inside its top-right corner (never clipped)."""
 
     def __init__(self, n: int = 0, on: QWidget | None = None) -> None:
         super().__init__(on)
@@ -343,14 +356,14 @@ class Badge(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QColor(th.current().bad))
-        p.drawRoundedRect(QRectF(self.rect()), 6, 6)
+        p.drawRoundedRect(QRectF(self.rect()), th.RC, th.RC)
         p.setPen(QColor("#ffffff"))
         p.setFont(th.ui_font(9, 700))
         p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, str(self.n))
 
 # --- inputs ------------------------------------------------------------------------------------------------------
 class Toggle(QAbstractButton):
-    """`.tog`: 34 × 20, 6 px corners, round knob."""
+    """`.tog`: 34 × 20, 4 px corners, softly squared knob; an accent ring when it has the keyboard focus."""
 
     def __init__(self, on: bool = False, tip: str = "") -> None:
         super().__init__()
@@ -358,7 +371,9 @@ class Toggle(QAbstractButton):
         self.setChecked(on)
         self.setFixedSize(34, 20)
         self.setToolTip(tip)
+        self.setAccessibleName(tip)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
 
     def paintEvent(self, _e: QPaintEvent | None) -> None:
         t = th.current()
@@ -373,9 +388,12 @@ class Toggle(QAbstractButton):
             p.setBrush(c)
         if not self.isEnabled():
             p.setOpacity(0.45)
-        p.drawRoundedRect(QRectF(0, 0, 34, 20), 6, 6)
+        if self.hasFocus():
+            p.setPen(QPen(QColor(t.text), 1.5))
+        p.drawRoundedRect(QRectF(0.75, 0.75, 32.5, 18.5), th.RC, th.RC)
+        p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QColor(t.accent_ink if self.isChecked() else "#ffffff"))
-        p.drawEllipse(QRectF(17 if self.isChecked() else 3, 3, 14, 14))
+        p.drawRoundedRect(QRectF(17 if self.isChecked() else 3, 3, 14, 14), 3, 3)
 
 class Seg(QFrame):
     """`.seg`: a segmented control. Emits the chosen key."""
@@ -513,7 +531,7 @@ class InfoBtn(QAbstractButton):
         else:
             p.setPen(QPen(QColor(t.faint), 1.4))
             p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawRoundedRect(r, 4, 4)
+        p.drawRoundedRect(r, th.RC, th.RC)
         pen = QPen(QColor(t.accent_ink if on else t.muted), 1.7)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         p.setPen(pen)
@@ -552,7 +570,7 @@ class Popover(QFrame):
 
 # --- containers --------------------------------------------------------------------------------------------------
 class Panel(QFrame):
-    """`.panel`: raised, 1 px border, 6 px corners, a head row with an icon, title, (i) and right-side items."""
+    """`.panel`: raised, 1 px border, 4 px corners, a head row with an icon, title, (i) and right-side items."""
 
     def __init__(
         self,
@@ -608,7 +626,7 @@ class Note(QFrame):
         c = th.tone(self.tone)
         t = th.current()
         self.setStyleSheet(
-            f"Note {{ background: {th.mix(c, t.bg, 0.10).name()}; border: 1px solid {th.mix(c, t.bg, 0.27).name()}; border-radius: 6px; }}"
+            f"Note {{ background: {th.mix(c, t.bg, 0.05).name()}; border: 1px solid {th.mix(c, t.bg, 0.30).name()}; border-radius: {th.RC}px; }}"
         )
         self.icon_.retheme()
 
@@ -655,7 +673,7 @@ def paint_rings(p: QPainter, c: QPointF, layers: Sequence[str], radius: float = 
         col = QColor(th.tone(LAYER_TONE.get(st, "faint")))
         if st == "off":
             col.setAlphaF(0.6)
-        p.setPen(QPen(col, 2.6))
+        p.setPen(QPen(col, 1.4))
         p.setBrush(Qt.BrushStyle.NoBrush)
         rr = radius - i * step
         p.drawEllipse(c, rr, rr)
@@ -705,9 +723,9 @@ class Meter(QWidget):
         track = QRectF(70, 8, max(10, self.width() - 70 - 78), 6)
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QColor(t.chip))
-        p.drawRoundedRect(track, 3, 3)
+        p.drawRoundedRect(track, 2.5, 2.5)
         p.setBrush(QColor(t.warn if self.frac > 0.85 else t.accent))
-        p.drawRoundedRect(QRectF(track.left(), track.top(), max(6.0, track.width() * self.frac), 6), 3, 3)
+        p.drawRoundedRect(QRectF(track.left(), track.top(), max(6.0, track.width() * self.frac), 6), 2.5, 2.5)
         p.setFont(th.mono_font(11.5))
         p.setPen(QColor(t.muted))
         p.drawText(QRect(self.width() - 76, 0, 76, 22), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, self.value)
@@ -800,8 +818,6 @@ class TwoColumns(QWidget):
 
     def __init__(self, main_col: QWidget, side: QWidget, side_width: int = 430) -> None:
         super().__init__()
-        from PyQt6.QtWidgets import QBoxLayout
-
         self.side, self.side_width = side, side_width
         self.lay = QBoxLayout(QBoxLayout.Direction.LeftToRight)
         self.lay.setContentsMargins(0, 0, 0, 0)
@@ -812,8 +828,6 @@ class TwoColumns(QWidget):
         self.layout_for(2000)
 
     def layout_for(self, w: int) -> None:
-        from PyQt6.QtWidgets import QBoxLayout
-
         narrow = w < 1000
         self.lay.setDirection(QBoxLayout.Direction.TopToBottom if narrow else QBoxLayout.Direction.LeftToRight)
         if narrow:

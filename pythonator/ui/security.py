@@ -189,7 +189,7 @@ class SecurityPage(QWidget):
         info = InfoBtn("Security timeline", "Every refusal, block, permission change and self-heal, written by the "
                        "background service as it happens. Services and plugins can't add to it or remove from it.",
                        [("Kept", "30 days"), ("File", "security.jsonl, private")])
-        self.sub = label("Every refusal, block and permission change, from the background service's own log.", "Muted")
+        self.sub = label("Every refusal, block and permission change, from the background service's own log.", "Muted", wrap=True)
         self.sub.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         head = hbox(label("Security", "H1"), info, self.sub, self.seg, spacing=10)
         head.setStretch(2, 1)
@@ -276,13 +276,11 @@ class SecurityPage(QWidget):
         counts = d.get("counts", {})
         self.chips.clear()
         allc = Chip(f"All {len(rows)}", "acc" if not self.only else "line")
-        allc.setCursor(Qt.CursorShape.PointingHandCursor)
-        allc.clicked.connect(lambda: self._filter(""))
+        allc.on_click(lambda: self._filter(""))
         self.chips.add(allc)
         for k, (ico, tone, text) in KIND.items():
             c = Chip(f"{text} {counts.get(k, 0)}", tone if self.only in ("", k) else "line", ico)
-            c.setCursor(Qt.CursorShape.PointingHandCursor)
-            c.clicked.connect(lambda k=k: self._filter(k))
+            c.on_click(lambda k=k: self._filter(k))
             self.chips.add(c)
         self.chips.invalidate()
         shown = [r for r in rows if not self.only or r["kind"] == self.only]
@@ -309,12 +307,13 @@ class SecurityPage(QWidget):
         tm = label(when.strftime("%H:%M") if self.days == 1 else when.strftime("%d %b %H:%M"), "MonoMuted")
         tm.setFixedWidth(110 if self.days > 1 else 64)
         narrow = self.width() < 700
-        who = label(r["who"], "H3")
+        who = label(r["who"] if len(r["who"]) <= (12 if narrow else 22) else r["who"][:(11 if narrow else 21)] + "…", "H3")
         who.setFixedWidth(110 if narrow else 200)
         who.setToolTip(r["who"])
         title = r["title"] + (f"  ×{r['count']}" if r.get("count", 1) > 1 else "")
         t1 = label(esc(title), rich=True)
         t1.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        t1.setToolTip(title)
         t2 = label(r.get("detail", ""), "MonoMuted")
         t2.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         text = vbox(t1, t2, spacing=2)

@@ -581,3 +581,13 @@ def test_an_older_background_service_is_replaced_never_a_newer_one():
 
     assert _older("0.0.1", "0.0.2") and _older("0.0.9", "0.1.0") and _older("0.0.1", "0.0.2-alpha")
     assert not _older("0.0.2", "0.0.2") and not _older("0.1.0", "0.0.9") and not _older("dev", "0.0.2")
+
+
+def test_macos_sandbox_can_never_ask_the_keychain():
+    from pythonator.policy import seatbelt
+
+    for network in (False, True):
+        text, _ = seatbelt.profile([("/tmp/x", True)], network=network, ports=[(8000, False)], base="system.sb")
+        last = [x for x in text.splitlines() if "mach-lookup" in x][-1]
+        assert last.startswith("(deny mach-lookup") and "com.apple.SecurityServer" in last
+        assert all("SecurityServer" not in x for x in text.splitlines() if x.startswith("(allow"))

@@ -34,9 +34,11 @@ SERVICES = (
 )
 NET_SERVICES = (
     "com.apple.SystemConfiguration.configd", "com.apple.SystemConfiguration.DNSConfiguration",
-    "com.apple.dnssd.service", "com.apple.networkd", "com.apple.nehelper", "com.apple.SecurityServer",
-    "com.apple.trustd", "com.apple.trustd.agent", "com.apple.ocspd",
+    "com.apple.dnssd.service", "com.apple.networkd", "com.apple.nehelper",
+    "com.apple.trustd", "com.apple.trustd.agent", "com.apple.ocspd",  # certificate checks need only trustd
 )
+# The keychain: an item Pythonator stores trusts the program that stored it, and a service may run that same Python.
+KEYCHAIN = ("com.apple.SecurityServer", "com.apple.securityd.xpc", "com.apple.security.keychain-agent")
 
 def profile(
     grants: list[tuple[str, bool]],
@@ -113,6 +115,7 @@ def profile(
     for port, lan in ports:
         host = "*" if lan else "localhost"
         lines.append(f'(allow network-bind network-inbound (local tcp "{host}:{port}"))')
+    lines.append(f"(deny mach-lookup {names(KEYCHAIN)})")  # last, so no base profile can allow it back
     return "\n".join(lines) + "\n", params
 
 def argv(sandbox_exec: str, text: str, params: dict[str, str]) -> list[str]:

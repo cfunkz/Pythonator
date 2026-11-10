@@ -31,6 +31,7 @@ from PyQt6.QtWidgets import (
 )
 
 from pythonator import __version__
+from pythonator.model.service import NAME_MAX
 from pythonator.store.files import data_dir
 from pythonator.ui import theme as th
 from pythonator.ui.icons import icon
@@ -100,18 +101,23 @@ class Main(QMainWindow):
         self.activateWindow()
 
     def all_services(self, what: str) -> None:
-        """Start every approved service that isn't running, or stop every one that is (the tray's Start/Stop all)."""
-        for s in self.services:
-            on = s["observed"]["phase"] in ("running", "starting", "backoff")
-            if (what == "stop" and on) or (what == "start" and not on and s["approved"] and not s["spec"].get("schedule")):
-                self.link.call(what, self.after, name=s["spec"]["name"])
+        """Start every approved service that isn't running, or stop every one that is (the list header and the tray).
+        Stopping more than one asks first."""
+        on = [s["spec"]["name"] for s in self.services if s["observed"]["phase"] in ("running", "starting", "backoff")]
+        names = on if what == "stop" else [s["spec"]["name"] for s in self.services
+                                           if s["spec"]["name"] not in on and s["approved"] and not s["spec"].get("schedule")]
+        if what == "stop" and len(names) > 1 and QMessageBox.question(
+                self, "Stop all", f"Stop {len(names)} running services?") != QMessageBox.StandardButton.Yes:
+            return
+        for name in names:
+            self.link.call(what, self.after, name=name)
 
     def quit_app(self) -> None:
         self.quitting = True
         QApplication.quit()
 
     def app_settings(self) -> None:
-        """This app on this computer: switches that take effect at once, and Start all / Stop all."""
+        """This app on this computer: switches that take effect at once."""
         from pythonator.service import osservice
         from pythonator.ui.kit import Popover, Toggle
 
@@ -133,8 +139,6 @@ class Main(QMainWindow):
         switch("Open this window at login, in the tray", osservice.window_at_login(), osservice.window_at_login)
         switch("Closing the window keeps it in the tray", pref("tray"), lambda on: set_pref("tray", on))
         switch("Tell me when a service stops working", pref("notify"), lambda on: set_pref("notify", on))
-        lay.addLayout(hbox(Btn("Start all", "play", size="sm", on=lambda: self.all_services("start")),
-                           Btn("Stop all", "stop", size="sm", on=lambda: self.all_services("stop")), 1, spacing=8))
         pop.setFixedWidth(380)
         self._app_pop = pop  # kept, or it would be collected while showing
         pop.show_near(self.app_btn)
@@ -166,7 +170,7 @@ class Main(QMainWindow):
         self.bell = Btn(ico="bell", tip="Notifications", on=self.show_notes)
         self.bell_badge = Badge(0, self.bell)
         self.theme_btn = Btn(ico="moon", tip="Light theme", on=self.toggle_theme)
-        self.app_btn = Btn(ico="wrench", tip="App settings: login, tray, Start all / Stop all", on=self.app_settings)
+        self.app_btn = Btn(ico="wrench", tip="App settings: login, tray and alerts", on=self.app_settings)
         mid = QWidget()
         ml = hbox(1, self.search, 1, spacing=0, margins=(24, 0, 24, 0))
         ml.setStretch(0, 1)
@@ -193,6 +197,7 @@ class Main(QMainWindow):
             b.setFixedSize(38, 38)
             b.setIconSize(QSize(20, 20))
             b.setToolTip(tip)
+            b.setAccessibleName(tip)
             b.setProperty("ico", ico)
             b.clicked.connect(lambda _=False, k=key: self.go(k))
             self.rail_group.addButton(b)
@@ -612,7 +617,6 @@ class Main(QMainWindow):
     def toast(self, level: str, who: str, text: str) -> None:
         t = th.current()
         col = {"warn": t.warn, "error": t.bad, "bad": t.bad}.get(level, t.accent_text)
-
         self.sb_toast.setText(f"<span style='color:{col}'>●</span> <b>{escape(who[:60])}</b> · {escape(text[:240])}")
         self.sb_toast.setToolTip(text)
         self._toast_timer.start()
@@ -667,10 +671,8 @@ class Main(QMainWindow):
         self.show_overlay_page(SettingsPage(self, s, section))
 
     def show_plan(self, name: str | None = None) -> None:
-        s = self._svc(name)
-        if not s:
-            return
-        self._open_plan(s)
+        if s := self._svc(name):
+            self._open_plan(s)
 
     def _open_plan(self, s: dict[str, Any] | None, inbox: bool = False, try_now: bool = False) -> None:
         from pythonator.ui.plan import PlanPage
@@ -682,8 +684,7 @@ class Main(QMainWindow):
         self._layout()
 
     def try_copy(self) -> None:
-        s = self._svc()
-        if s:
+        if s := self._svc():
             self._open_plan(s, try_now=True)
 
     def show_notes(self) -> None:
@@ -705,8 +706,10 @@ class Main(QMainWindow):
 
     def rename_service(self) -> None:
         old = self.current
-        new, ok = QInputDialog.getText(self, "Rename", f"New name for {old} (stop it first):", text=old)
-        if ok and new.strip() and new.strip() != old:
+        new, ok = QInputDialog.getText(self, "Rename", f"New name for {old} (stop it first, up to {NAME_MAX} characters):", text=old)
+        if ok and len(new.strip()) > NAME_MAX:
+            QMessageBox.warning(self, "Rename", f"A name can be up to {NAME_MAX} characters, so it fits the list.")
+        elif ok and new.strip() and new.strip() != old:
             self.link.call("rename", lambda r, e: (self.after(r, e), None if e else self.pick(new.strip().lower())),
                            name=old, new=new)
 
@@ -748,8 +751,6 @@ class Main(QMainWindow):
         self._palette.show()
 
     def eventFilter(self, obj: Any, e: Any) -> bool:
-        from PyQt6.QtCore import QEvent
-
         if obj is self.search.edit and e.type() == QEvent.Type.MouseButtonPress:
             self.palette_open()
             return True
